@@ -1,0 +1,75 @@
+{
+  "api_information": {
+    "api_id": "00",
+    "api_name": "주문체결",
+    "method": "WebSocket",
+    "domain": {
+      "production": "wss://api.kiwoom.com:10000",
+      "mock": "wss://mockapi.kiwoom.com:10000"
+    },
+    "url": "/api/dostk/websocket",
+    "format": "JSON",
+    "description": "ACCESS TOKEN 계좌의 주문·체결·정정·취소 등이 발생하면 수신합니다. 종목코드는 불필요하며 type=00 + item 빈 문자열로 REG합니다."
+  },
+  "request_body": [
+    { "element": "trnm", "name_kr": "서비스명", "required": "Y", "description": "REG: 등록, REMOVE: 해지" },
+    { "element": "grp_no", "name_kr": "그룹번호", "required": "Y", "description": "" },
+    { "element": "refresh", "name_kr": "기존등록유지여부", "required": "Y", "description": "REG시 0:유지안함 1:유지(Default)" },
+    { "element": "data", "name_kr": "실시간 등록 리스트", "required": "N", "description": "[{item:[\"\"], type:[\"00\"]}]" },
+    { "element": "item", "name_kr": "실시간 등록 요소", "required": "N", "description": "주문체결은 빈 문자열(계좌 단위)" },
+    { "element": "type", "name_kr": "실시간 항목", "required": "Y", "description": "00" }
+  ],
+  "realtime_values": [
+    { "element": "9001", "name_kr": "종목코드", "description": "" },
+    { "element": "302", "name_kr": "종목명", "description": "" },
+    { "element": "900", "name_kr": "주문수량", "description": "" },
+    { "element": "901", "name_kr": "주문가격", "description": "" },
+    { "element": "902", "name_kr": "미체결수량", "description": "" },
+    { "element": "903", "name_kr": "체결누계금액", "description": "" },
+    { "element": "904", "name_kr": "원주문번호", "description": "" },
+    { "element": "905", "name_kr": "주문구분", "description": "+매수, -매도 등" },
+    { "element": "906", "name_kr": "매매구분", "description": "보통, 시장가 등" },
+    { "element": "907", "name_kr": "매도수구분", "description": "1:매도, 2:매수" },
+    { "element": "908", "name_kr": "주문/체결시간", "description": "HHMMSS" },
+    { "element": "909", "name_kr": "체결번호", "description": "" },
+    { "element": "910", "name_kr": "체결가", "description": "" },
+    { "element": "911", "name_kr": "체결량", "description": "" },
+    { "element": "912", "name_kr": "주문업무분류", "description": "JJ:주식주문" },
+    { "element": "913", "name_kr": "주문상태", "description": "접수, 확인, 체결" },
+    { "element": "914", "name_kr": "단위체결가", "description": "" },
+    { "element": "915", "name_kr": "단위체결량", "description": "" },
+    { "element": "920", "name_kr": "체결가(대체FID)", "description": "환경에 따라 910 대신 사용" },
+    { "element": "921", "name_kr": "체결량(대체FID)", "description": "환경에 따라 911 대신 사용" },
+    { "element": "938", "name_kr": "당일매매수수료", "description": "해당 체결분 수수료(원)" },
+    { "element": "939", "name_kr": "당일매매세금", "description": "매도 시 증권거래세 등(원)" },
+    { "element": "9203", "name_kr": "주문번호", "description": "" }
+  ],
+  "examples": {
+    "request": {
+      "trnm": "REG",
+      "grp_no": "1",
+      "refresh": "1",
+      "data": [{ "item": [""], "type": ["00"] }]
+    },
+    "response": {
+      "trnm": "REAL",
+      "data": [
+        {
+          "type": "00",
+          "name": "주문체결",
+          "item": "005930",
+          "values": {
+            "9001": "005930",
+            "302": "삼성전자",
+            "905": "+매수",
+            "913": "체결",
+            "910": "70100",
+            "911": "5",
+            "902": "0",
+            "9203": "00024"
+          }
+        }
+      ]
+    }
+  }
+}

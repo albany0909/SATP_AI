@@ -1,0 +1,43 @@
+# --- secrets (never commit) ---
+.env
+.env.*
+!.env.example
+!.env*.example
+
+# API key folder
+key/
+
+# local overrides
+config/config.local.py
+config/dbConfig.local.py
+*.local.py
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# --- IDE / OS ---
+.idea/
+.vscode/
+.cursor/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- logs / temp / cache ---
+*.log
+*.tmp
+.cache/
+
+# --- runtime trading state & daily reviews (regenerable) ---
+config/data/algDayReview/
+config/data/stratValRun/
+config/data/*State.json

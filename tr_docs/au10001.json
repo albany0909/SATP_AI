@@ -1,0 +1,179 @@
+{
+  "api_information": {
+    "api_id": "au10001",
+    "api_name": "접근토큰 발급",
+    "menu_path": "OAuth 인증 > 접근토큰발급 > 접근토큰 발급(au10001)",
+    "method": "POST",
+    "domain": {
+      "production": "https://api.kiwoom.com",
+      "mock": "https://mockapi.kiwoom.com"
+    },
+    "url": "/oauth2/token",
+    "format": "JSON",
+    "content_type": "application/json;charset=UTF-8",
+    "description": "OAuth 2.0 인증을 거쳐 API 요청에 필요한 Bearer 접근 토큰(Access Token)을 발급받습니다."
+  },
+  "request_spec": {
+    "headers": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": "8자리 TR코드 (ex: au10001)"
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "1000",
+        "description": "토큰 지정시 토큰타입('Bearer') 붙여서 호출 (예: Bearer Egicyx...)"
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음 데이터 요청 시 응답 Header의 cont-yn값 세팅"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음 데이터 요청 시 응답 Header의 next-key값 세팅"
+      }
+    ],
+    "body": [
+      {
+        "element": "grant_type",
+        "name_kr": "grant_type",
+        "type": "String",
+        "required": "Y",
+        "length": null,
+        "description": "client_credentials 입력"
+      },
+      {
+        "element": "appkey",
+        "name_kr": "앱키",
+        "type": "String",
+        "required": "Y",
+        "length": null,
+        "description": "발급받은 앱키(App Key)"
+      },
+      {
+        "element": "secretkey",
+        "name_kr": "시크릿키",
+        "type": "String",
+        "required": "Y",
+        "length": null,
+        "description": "발급받은 시크릿키(Secret Key)"
+      }
+    ]
+  },
+  "response_spec": {
+    "headers": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": "8자리 TR코드"
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "다음 데이터가 있을 시 Y값 전달"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "다음 데이터가 있을 시 다음 키값 전달"
+      }
+    ],
+    "body": [
+      {
+        "element": "expires_dt",
+        "name_kr": "만료일",
+        "type": "String",
+        "required": "Y",
+        "length": null,
+        "description": "접근 토큰 만료 일시 (YYYYMMDDHHmmss)"
+      },
+      {
+        "element": "token_type",
+        "name_kr": "토큰타입",
+        "type": "String",
+        "required": "Y",
+        "length": null,
+        "description": "토큰 유형 (bearer)"
+      },
+      {
+        "element": "token",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": null,
+        "description": "발급받은 접근 토큰 문자열"
+      },
+      {
+        "element": "return_code",
+        "name_kr": "결과코드",
+        "type": "Number/String",
+        "required": "Y",
+        "length": null,
+        "description": "0: 정상 처리"
+      },
+      {
+        "element": "return_msg",
+        "name_kr": "결과메시지",
+        "type": "String",
+        "required": "Y",
+        "length": null,
+        "description": "처리 결과 메시지"
+      }
+    ]
+  },
+  "examples": {
+    "request": {
+      "grant_type": "client_credentials",
+      "appkey": "AxserEsdcredca.....",
+      "secretkey": "SEefdcwcforehDre2fdvc...."
+    },
+    "response": {
+      "expires_dt": "20241107083713",
+      "token_type": "bearer",
+      "token": "WQJCwyqInphKnR3bSRtB9NE1lv...",
+      "return_code": 0,
+      "return_msg": "정상적으로 처리되었습니다"
+    }
+  },
+  "notes_and_errors": {
+    "usage_notes": [
+      "grant_type 항목에는 반드시 'client_credentials'를 입력해야 합니다.",
+      "운영 환경(https://api.kiwoom.com)과 모의투자 환경(https://mockapi.kiwoom.com)의 도메인이 다르므로 요청 환경에 맞추어 호출해야 합니다.",
+      "실전/모의 구분에 맞지 않는 App Key 또는 Token 사용 시 8030/8031 에러가 발생합니다."
+    ],
+    "related_error_codes": [
+      { "code": 8001, "message": "App Key와 Secret Key 검증에 실패했습니다" },
+      { "code": 8002, "message": "App Key와 Secret Key 검증에 실패했습니다. 실패사유={?}" },
+      { "code": 8006, "message": "Access Token을 생성하는데 실패했습니다. 실패사유={?}" },
+      { "code": 8009, "message": "Access Token을 발급하는데 실패했습니다. 실패사유={?}" },
+      { "code": 8011, "message": "Access Token을 발급하는데 실패했습니다. 입력값에 grant_type이 들어오지 않았습니다" },
+      { "code": 8012, "message": "Access Token을 발급하는데 실패했습니다. grant_type의 값이 맞지 않습니다" },
+      { "code": 8020, "message": "입력파라미터로 appkey 또는 secretkey가 들어오지 않았습니다." },
+      { "code": 8030, "message": "투자구분(실전/모의)이 달라서 Appkey를 사용할수가 없습니다" }
+    ]
+  }
+}

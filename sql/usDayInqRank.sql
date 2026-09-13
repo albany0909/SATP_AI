@@ -1,0 +1,31 @@
+-- usa01980 미국주식 실시간종목조회순위 일별 스냅샷
+-- PK: 일자 + 조회구분 + 순위
+
+CREATE TABLE IF NOT EXISTS AI_US_DAY_INQ_RANK (
+  TRADE_DT          CHAR(8)       NOT NULL COMMENT '기준일자 YYYYMMDD',
+  QRY_TP            CHAR(1)       NOT NULL COMMENT '구분 1:1분 2:10분 3:1시간 4:당일누적 5:30초',
+  RANK_NO           INT           NOT NULL COMMENT '종목순위',
+
+  STK_CD            VARCHAR(20)   NOT NULL COMMENT '티커',
+  STK_NM            VARCHAR(80)   NULL COMMENT '종목명',
+  STEX_TP           CHAR(2)       NULL COMMENT '거래소 ND/NY/NA',
+  IND_GRP           VARCHAR(40)   NULL COMMENT '테마/업종그룹',
+  RANK_CHG          INT           NULL COMMENT '순위등락(0=변동없음)',
+  RANK_CHG_SIGN     VARCHAR(4)    NULL COMMENT '순위등락부호 + / - / N',
+  CUR_PRC           DECIMAL(16,4) NULL COMMENT '현재가(USD)',
+  BASE_COMP_SIGN    CHAR(1)       NULL COMMENT '기준가대비부호 + / - / 공백',
+  BASE_COMP_CHGR    DECIMAL(12,4) NULL COMMENT '기준가대비등락율(%)',
+  PREV_BASE_SIGN    CHAR(1)       NULL COMMENT '직전기준대비부호',
+  PREV_BASE_CHGR    DECIMAL(12,4) NULL COMMENT '직전기준대비등락율(%)',
+  BASE_TM           CHAR(6)       NULL COMMENT '기준시간 HHmmss',
+  SRC_TR            VARCHAR(20)   NULL COMMENT '원천 TR (usa01980)',
+
+  CREATED_AT        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UPDATED_AT        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (TRADE_DT, QRY_TP, RANK_NO),
+  KEY IDX_AI_US_DAY_INQ_RANK_STK_DT (STK_CD, TRADE_DT),
+  KEY IDX_AI_US_DAY_INQ_RANK_DT_QRY (TRADE_DT, QRY_TP),
+  KEY IDX_AI_US_DAY_INQ_RANK_IND (IND_GRP)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  COMMENT='usa01980 미국주식 실시간종목조회순위';

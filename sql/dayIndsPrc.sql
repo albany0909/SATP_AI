@@ -1,0 +1,29 @@
+-- 국내/미국 지수·업종 일봉 적재 테이블
+-- PK: 시장구분 + 업종/지수도드 + 일자
+-- KR: ka20006 (지수값은 API 100배 → 적재 시 /100 하여 DECIMAL 저장 권장)
+-- US: 추후 미국지수 TR (소수 지수 그대로 DECIMAL)
+
+CREATE TABLE AI_DAY_INDS_PRC (
+  MKT_TP          VARCHAR(8)      NOT NULL COMMENT '시장구분 KR / US',
+  INDS_CD         VARCHAR(20)     NOT NULL COMMENT '업종/지수도드 (KR:001코스피,101코스닥 등 / US:심볼또는코드)',
+  TRADE_DT        CHAR(8)         NOT NULL COMMENT '일자 YYYYMMDD',
+
+  OPEN_PRC        DECIMAL(16,4)   NULL COMMENT '시가(지수)',
+  HIGH_PRC        DECIMAL(16,4)   NULL COMMENT '고가(지수)',
+  LOW_PRC         DECIMAL(16,4)   NULL COMMENT '저가(지수)',
+  CLOSE_PRC       DECIMAL(16,4)   NULL COMMENT '종가/현재가(지수)',
+  TRDE_QTY        BIGINT          NULL COMMENT '거래량',
+  TRDE_PRICA      DECIMAL(20,2)   NULL COMMENT '거래대금 (KR:백만원 등 시장별 단위)',
+
+  INDS_NM         VARCHAR(100)    NULL COMMENT '업종/지수명(선택)',
+  SRC_TR          VARCHAR(20)     NULL COMMENT '적재 원천 TR (예:ka20006)',
+
+  CREATED_AT      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UPDATED_AT      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (MKT_TP, INDS_CD, TRADE_DT),
+  KEY IDX_AI_DAY_INDS_PRC_TRADE_DT (TRADE_DT),
+  KEY IDX_AI_DAY_INDS_PRC_MKT_DT (MKT_TP, TRADE_DT),
+  KEY IDX_AI_DAY_INDS_PRC_INDS_DT (INDS_CD, TRADE_DT)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  COMMENT='국내/미국 지수·업종 일봉';

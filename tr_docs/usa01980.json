@@ -1,0 +1,245 @@
+{
+  "usa01980": {
+    "api_information": {
+      "api_id": "usa01980",
+      "api_name": "미국주식 실시간 종목 조회 순위",
+      "menu_path": "미국주식 > 순위정보 > 미국주식 실시간 종목 조회 순위(usa01980)",
+      "method": "POST",
+      "domain": {
+        "production": "https://api.kiwoom.com",
+        "mock": "https://mockapi.kiwoom.com"
+      },
+      "url": "/api/us/rkinfo",
+      "format": "JSON",
+      "content_type": "application/json;charset=UTF-8",
+      "description": "미국주식 실시간 종목 순위 정보를 조회합니다."
+    },
+    "request_spec": {
+      "headers": [
+        {
+          "element": "api-id",
+          "name_kr": "TR명",
+          "type": "String",
+          "required": "Y",
+          "length": "10",
+          "description": "8자리 TR코드, ex) ka00001, usa10099"
+        },
+        {
+          "element": "authorization",
+          "name_kr": "접근토큰",
+          "type": "String",
+          "required": "Y",
+          "length": "1000",
+          "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 예) Bearer Egicyx..."
+        },
+        {
+          "element": "cont-yn",
+          "name_kr": "연속조회여부",
+          "type": "String",
+          "required": "N",
+          "length": "1",
+          "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+        },
+        {
+          "element": "next-key",
+          "name_kr": "연속조회키",
+          "type": "String",
+          "required": "N",
+          "length": "50",
+          "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+        }
+      ],
+      "body": [
+        {
+          "element": "svc_type",
+          "name_kr": "서비스 유형",
+          "type": "String",
+          "required": "N",
+          "length": "4",
+          "description": "B286:30초, B281:1분, B282:10분, B283:1시간, B284:당일"
+        }
+      ]
+    },
+    "response_spec": {
+      "headers": [
+        {
+          "element": "api-id",
+          "name_kr": "TR명",
+          "type": "String",
+          "required": "Y",
+          "length": "10",
+          "description": "8자리 TR코드, ex) ka00001, usa10099"
+        },
+        {
+          "element": "cont-yn",
+          "name_kr": "연속조회여부",
+          "type": "String",
+          "required": "N",
+          "length": "1",
+          "description": "다음 데이터가 있을시 Y값 전달"
+        },
+        {
+          "element": "next-key",
+          "name_kr": "연속조회키",
+          "type": "String",
+          "required": "N",
+          "length": "50",
+          "description": "다음 데이터가 있을시 다음 키값 전달"
+        }
+      ],
+      "body": [
+        {
+          "element": "base_date",
+          "name_kr": "기준날짜",
+          "type": "String",
+          "required": "N",
+          "length": "8",
+          "description": "YYYYMMDD"
+        },
+        {
+          "element": "base_time",
+          "name_kr": "기준시간",
+          "type": "String",
+          "required": "N",
+          "length": "6",
+          "description": "HHmmss"
+        },
+        {
+          "element": "result_list",
+          "name_kr": "결과리스트",
+          "type": "List<Map>",
+          "required": "N",
+          "length": null,
+          "description": ""
+        },
+        {
+          "element": "- rank",
+          "name_kr": "종목순위",
+          "type": "String",
+          "required": "N",
+          "length": "2",
+          "description": ""
+        },
+        {
+          "element": "- stk_cd",
+          "name_kr": "종목코드",
+          "type": "String",
+          "required": "N",
+          "length": "16",
+          "description": ""
+        },
+        {
+          "element": "- stk_nm",
+          "name_kr": "종목명",
+          "type": "String",
+          "required": "N",
+          "length": "40",
+          "description": ""
+        },
+        {
+          "element": "- sign",
+          "name_kr": "등락부호",
+          "type": "String",
+          "required": "N",
+          "length": "1",
+          "description": "+: 상승, -:하락, \"\": 보합"
+        },
+        {
+          "element": "- chg_val",
+          "name_kr": "직전대비 순위변화값",
+          "type": "String",
+          "required": "N",
+          "length": "2",
+          "description": ""
+        },
+        {
+          "element": "- curr_pric",
+          "name_kr": "현재가",
+          "type": "String",
+          "required": "N",
+          "length": "16",
+          "description": "소수점 넷째 자리까지 포맷된 숫자"
+        },
+        {
+          "element": "- sign_for_gjga",
+          "name_kr": "기준가대비 부호",
+          "type": "String",
+          "required": "N",
+          "length": "1",
+          "description": "+: 상승, -:하락, \"\": 보합"
+        },
+        {
+          "element": "- diff_rate_for_gjga",
+          "name_kr": "기준가대비 등락률",
+          "type": "String",
+          "required": "N",
+          "length": "10",
+          "description": "단위: %, 소수점 넷째 자리까지 포맷된 백분율"
+        },
+        {
+          "element": "- sign_for_prev",
+          "name_kr": "직전기준대비 부호",
+          "type": "String",
+          "required": "N",
+          "length": "1",
+          "description": "+: 상승, -:하락, \"\": 보합"
+        },
+        {
+          "element": "- diff_rate_for_prev",
+          "name_kr": "직전기준대비 등락률",
+          "type": "String",
+          "required": "N",
+          "length": "10",
+          "description": "단위: %, 소수점 넷째 자리까지 포맷된 백분율"
+        },
+        {
+          "element": "- stex_tp",
+          "name_kr": "거래소구분",
+          "type": "String",
+          "required": "N",
+          "length": "2",
+          "description": "ND:NASDAQ, NY:NYSE, NA:AMEX"
+        }
+      ]
+    },
+    "examples": {
+      "request": {
+        "svc_type": "B281"
+      },
+      "response": {
+        "base_date": "20260624",
+        "base_time": "210500",
+        "result_list": [
+          {
+            "rank": "01",
+            "stk_cd": "MU",
+            "stk_nm": "마이크론 테크놀로지",
+            "sign": "",
+            "chg_val": "00",
+            "curr_pric": "1097.2200",
+            "sign_for_gjga": "+",
+            "diff_rate_for_gjga": "4.3200",
+            "sign_for_prev": "-",
+            "diff_rate_for_prev": "0.1300",
+            "stex_tp": "ND"
+          },
+          {
+            "rank": "02",
+            "stk_cd": "SPCX",
+            "stk_nm": "스페이스X",
+            "sign": "",
+            "chg_val": "00",
+            "curr_pric": "154.6000",
+            "sign_for_gjga": "-",
+            "diff_rate_for_gjga": "0.9700",
+            "sign_for_prev": "-",
+            "diff_rate_for_prev": "0.1600",
+            "stex_tp": "ND"
+          }
+        ],
+        "return_code": 0,
+        "return_msg": "정상적으로 처리되었습니다"
+      }
+    }
+  }
+}

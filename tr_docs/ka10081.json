@@ -1,0 +1,235 @@
+{
+  "api_information": {
+    "api_id": "ka10081",
+    "api_name": "주식일봉차트조회요청",
+    "menu_path": "국내주식 > 차트 > 주식일봉차트조회요청(ka10081)",
+    "method": "POST",
+    "domain": {
+      "production": "https://api.kiwoom.com",
+      "mock": "https://mockapi.kiwoom.com"
+    },
+    "url": "/api/dostk/chart",
+    "format": "JSON",
+    "content_type": "application/json;charset=UTF-8",
+    "description": "국내주식 일봉 차트 정보를 조회한다. 이동평균 산출 시 upd_stkpc_tp=1(수정주가) 권장."
+  },
+  "request_spec": {
+    "headers": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": "ka10081"
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "1000",
+        "description": "Bearer {token}"
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "응답 Header cont-yn이 Y일 때 다음 요청에 Y 세팅"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "응답 Header next-key 값을 다음 요청에 세팅"
+      }
+    ],
+    "body": [
+      {
+        "element": "stk_cd",
+        "name_kr": "종목코드",
+        "type": "String",
+        "required": "Y",
+        "length": "20",
+        "description": "거래소별 종목코드 (KRX:039490, NXT:039490_NX, SOR:039490_AL)"
+      },
+      {
+        "element": "base_dt",
+        "name_kr": "기준일자",
+        "type": "String",
+        "required": "Y",
+        "length": "8",
+        "description": "YYYYMMDD. 수정주가 적용 시 권리발생일 이후 일자로 조회·연속조회"
+      },
+      {
+        "element": "upd_stkpc_tp",
+        "name_kr": "수정주가구분",
+        "type": "String",
+        "required": "Y",
+        "length": "1",
+        "description": "0:미적용, 1:수정주가 적용. 이동평균 산출 시 반드시 1"
+      }
+    ]
+  },
+  "response_spec": {
+    "headers": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": "ka10081"
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "다음 데이터 있으면 Y"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "다음 조회 키"
+      }
+    ],
+    "body": [
+      {
+        "element": "stk_cd",
+        "name_kr": "종목코드",
+        "type": "String",
+        "required": "N",
+        "length": "6",
+        "description": ""
+      },
+      {
+        "element": "stk_dt_pole_chart_qry",
+        "name_kr": "주식일봉차트조회",
+        "type": "List<Map>",
+        "required": "N",
+        "length": null,
+        "description": "일봉 배열 (보통 최신일 우선)"
+      },
+      {
+        "element": "- cur_prc",
+        "name_kr": "현재가(종가)",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "단위: 원. SMA 계산에 사용"
+      },
+      {
+        "element": "- trde_qty",
+        "name_kr": "거래량",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "단위: 1주"
+      },
+      {
+        "element": "- trde_prica",
+        "name_kr": "거래대금",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "단위: 백만원"
+      },
+      {
+        "element": "- dt",
+        "name_kr": "일자",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "YYYYMMDD"
+      },
+      {
+        "element": "- open_pric",
+        "name_kr": "시가",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "단위: 원"
+      },
+      {
+        "element": "- high_pric",
+        "name_kr": "고가",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "단위: 원"
+      },
+      {
+        "element": "- low_pric",
+        "name_kr": "저가",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "단위: 원"
+      },
+      {
+        "element": "- pred_pre",
+        "name_kr": "전일대비",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "현재가 - 전일종가"
+      },
+      {
+        "element": "- pred_pre_sig",
+        "name_kr": "전일대비기호",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "1상한 2상승 3보합 4하한 5하락"
+      },
+      {
+        "element": "- trde_tern_rt",
+        "name_kr": "거래회전율",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "단위: %"
+      }
+    ]
+  },
+  "examples": {
+    "request": {
+      "stk_cd": "005930",
+      "base_dt": "20250908",
+      "upd_stkpc_tp": "1"
+    },
+    "response": {
+      "stk_cd": "005930",
+      "stk_dt_pole_chart_qry": [
+        {
+          "cur_prc": "70100",
+          "trde_qty": "9263135",
+          "trde_prica": "648525",
+          "dt": "20250908",
+          "open_pric": "69800",
+          "high_pric": "70500",
+          "low_pric": "69600",
+          "pred_pre": "+600",
+          "pred_pre_sig": "2",
+          "trde_tern_rt": "+0.16"
+        }
+      ],
+      "return_code": 0,
+      "return_msg": "정상적으로 처리되었습니다"
+    }
+  },
+  "notes": [
+    "이동평균(5/10/20/60/120/240) 산출 시 최소 240영업일 종가 필요 → cont-yn 연속조회",
+    "upd_stkpc_tp는 반드시 1(수정주가)로 설정",
+    "조회 TR 호출 제한(모의 1초 1회 등)을 지켜 연속조회 간격을 둔다"
+  ]
+}

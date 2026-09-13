@@ -1,0 +1,196 @@
+{
+  "api_information": {
+    "api_id": "ka10001",
+    "api_name": "주식기본정보요청",
+    "menu_path": "국내주식 > 종목정보 > 주식기본정보요청(ka10001)",
+    "method": "POST",
+    "domain": {
+      "production": "https://api.kiwoom.com",
+      "mock": "https://mockapi.kiwoom.com"
+    },
+    "url": "/api/dostk/stkinfo",
+    "format": "JSON",
+    "content_type": "application/json;charset=UTF-8",
+    "description": "종목 코드로 주식 기본 정보를 조회한다."
+  },
+  "request_spec": {
+    "headers": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": "8자리 TR코드, ex) ka00001, usa10099"
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "1000",
+        "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 예) Bearer Egicyx..."
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+      }
+    ],
+    "body": [
+      {
+        "element": "stk_cd",
+        "name_kr": "종목코드",
+        "type": "String",
+        "required": "Y",
+        "length": "20",
+        "description": "거래소별 종목코드 (KRX:039490, NXT:039490_NX, SOR:039490_AL)"
+      }
+    ]
+  },
+  "response_spec": {
+    "headers": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": "8자리 TR코드, ex) ka00001, usa10099"
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "다음 데이터가 있을시 Y값 전달"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "다음 데이터가 있을시 다음 키값 전달"
+      }
+    ],
+    "body": [
+      { "element": "stk_cd", "name_kr": "종목코드", "type": "String", "required": "N", "length": "20", "description": "" },
+      { "element": "stk_nm", "name_kr": "종목명", "type": "String", "required": "N", "length": "40", "description": "" },
+      { "element": "setl_mm", "name_kr": "결산월", "type": "String", "required": "N", "length": "20", "description": "" },
+      { "element": "fav", "name_kr": "액면가", "type": "String", "required": "N", "length": "20", "description": "단위: 원" },
+      { "element": "cap", "name_kr": "자본금", "type": "String", "required": "N", "length": "20", "description": "단위: 억원" },
+      { "element": "flo_stk", "name_kr": "상장주식", "type": "String", "required": "N", "length": "20", "description": "단위: 천원" },
+      { "element": "crd_rt", "name_kr": "신용비율", "type": "String", "required": "N", "length": "20", "description": "단위: %, 부호 포함 소수점 둘째 자리까지 포맷된 백분율" },
+      { "element": "oyr_hgst", "name_kr": "연중최고", "type": "String", "required": "N", "length": "20", "description": "단위: 원, 부호가 포함된 숫자" },
+      { "element": "oyr_lwst", "name_kr": "연중최저", "type": "String", "required": "N", "length": "20", "description": "단위: 원, 부호가 포함된 숫자" },
+      { "element": "mac", "name_kr": "시가총액", "type": "String", "required": "N", "length": "20", "description": "단위: 억원" },
+      { "element": "mac_wght", "name_kr": "시가총액비중", "type": "String", "required": "N", "length": "20", "description": "" },
+      { "element": "for_exh_rt", "name_kr": "외인소진률", "type": "String", "required": "N", "length": "20", "description": "단위: %, 부호 포함 소수점 둘째 자리까지 포맷된 백분율" },
+      { "element": "repl_pric", "name_kr": "대용가", "type": "String", "required": "N", "length": "20", "description": "단위: 원" },
+      { "element": "per", "name_kr": "PER", "type": "String", "required": "N", "length": "20", "description": "[주의] PER, ROE 값들은 외부벤더사에서 제공되는 데이터이며 일주일에 한번 또는 실적발표 시즌에 업데이트 됨" },
+      { "element": "eps", "name_kr": "EPS", "type": "String", "required": "N", "length": "20", "description": "" },
+      { "element": "roe", "name_kr": "ROE", "type": "String", "required": "N", "length": "20", "description": "[주의] PER, ROE 값들은 외부벤더사에서 제공되는 데이터이며 일주일에 한번 또는 실적발표 시즌에 업데이트 됨" },
+      { "element": "pbr", "name_kr": "PBR", "type": "String", "required": "N", "length": "20", "description": "" },
+      { "element": "ev", "name_kr": "EV", "type": "String", "required": "N", "length": "20", "description": "" },
+      { "element": "bps", "name_kr": "BPS", "type": "String", "required": "N", "length": "20", "description": "" },
+      { "element": "sale_amt", "name_kr": "매출액", "type": "String", "required": "N", "length": "20", "description": "단위: 억원" },
+      { "element": "bus_pro", "name_kr": "영업이익", "type": "String", "required": "N", "length": "20", "description": "단위: 억원" },
+      { "element": "cup_nga", "name_kr": "당기순이익", "type": "String", "required": "N", "length": "20", "description": "단위: 억원" },
+      { "element": "250hgst", "name_kr": "250최고", "type": "String", "required": "N", "length": "20", "description": "단위: 원, 부호가 포함된 숫자" },
+      { "element": "250lwst", "name_kr": "250최저", "type": "String", "required": "N", "length": "20", "description": "단위: 원, 부호가 포함된 숫자" },
+      { "element": "open_pric", "name_kr": "시가", "type": "String", "required": "N", "length": "20", "description": "단위: 원, 부호가 포함된 숫자" },
+      { "element": "high_pric", "name_kr": "고가", "type": "String", "required": "N", "length": "20", "description": "단위: 원, 부호가 포함된 숫자" },
+      { "element": "low_pric", "name_kr": "저가", "type": "String", "required": "N", "length": "20", "description": "단위: 원, 부호가 포함된 숫자" },
+      { "element": "upl_pric", "name_kr": "상한가", "type": "String", "required": "N", "length": "20", "description": "단위: 원, 부호가 포함된 숫자" },
+      { "element": "Ist_pric", "name_kr": "하한가", "type": "String", "required": "N", "length": "20", "description": "단위: 원, 부호가 포함된 숫자" },
+      { "element": "base_pric", "name_kr": "기준가", "type": "String", "required": "N", "length": "20", "description": "단위: 원" },
+      { "element": "exp_cntr_pric", "name_kr": "예상체결가", "type": "String", "required": "N", "length": "20", "description": "" },
+      { "element": "exp_cntr_qty", "name_kr": "예상체결수량", "type": "String", "required": "N", "length": "20", "description": "" },
+      { "element": "250hgst_pric_dt", "name_kr": "250최고가일", "type": "String", "required": "N", "length": "20", "description": "YYYYMMDD" },
+      { "element": "250hgst_pric_pre_rt", "name_kr": "250최고가대비율", "type": "String", "required": "N", "length": "20", "description": "단위: %, 부호 포함 소수점 둘째 자리까지 포맷된 백분율" },
+      { "element": "250lwst_pric_dt", "name_kr": "250최저가일", "type": "String", "required": "N", "length": "20", "description": "YYYYMMDD" },
+      { "element": "250lwst_pric_pre_rt", "name_kr": "250최저가대비율", "type": "String", "required": "N", "length": "20", "description": "단위: %, 부호 포함 소수점 둘째 자리까지 포맷된 백분율" },
+      { "element": "cur_prc", "name_kr": "현재가", "type": "String", "required": "N", "length": "20", "description": "단위: 원, 부호가 포함된 숫자" },
+      { "element": "pre_sig", "name_kr": "대비기호", "type": "String", "required": "N", "length": "20", "description": "1: 상한가, 2:상승, 3:보합, 4:하한가, 5:하락" },
+      { "element": "pred_pre", "name_kr": "전일대비", "type": "String", "required": "N", "length": "20", "description": "단위: 원, 부호가 포함된 숫자" },
+      { "element": "flu_rt", "name_kr": "등락율", "type": "String", "required": "N", "length": "20", "description": "단위: %, 부호 포함 소수점 둘째 자리까지 포맷된 백분율" },
+      { "element": "trde_qty", "name_kr": "거래량", "type": "String", "required": "N", "length": "20", "description": "단위: 1주" },
+      { "element": "trde_pre", "name_kr": "거래대비", "type": "String", "required": "N", "length": "20", "description": "단위: %, 부호 포함 소수점 둘째 자리까지 포맷된 백분율" },
+      { "element": "fav_unit", "name_kr": "액면가단위", "type": "String", "required": "N", "length": "20", "description": "" },
+      { "element": "dstr_stk", "name_kr": "유통주식", "type": "String", "required": "N", "length": "20", "description": "단위: 1주" },
+      { "element": "dstr_rt", "name_kr": "유통비율", "type": "String", "required": "N", "length": "20", "description": "단위: %, 부호 포함 소수점 첫째 자리까지 포맷된 백분율" }
+    ]
+  },
+  "examples": {
+    "request": {
+      "stk_cd": "005930"
+    },
+    "response": {
+      "stk_cd": "005930",
+      "stk_nm": "삼성전자",
+      "setl_mm": "12",
+      "fav": "5000",
+      "cap": "1311",
+      "flo_stk": "25527",
+      "crd_rt": "+0.08",
+      "oyr_hgst": "+181400",
+      "oyr_lwst": "-91200",
+      "mac": "24352",
+      "mac_wght": "",
+      "for_exh_rt": "0.00",
+      "repl_pric": "66780",
+      "per": "",
+      "eps": "",
+      "roe": "",
+      "pbr": "",
+      "ev": "",
+      "bps": "-75300",
+      "sale_amt": "0",
+      "bus_pro": "0",
+      "cup_nga": "0",
+      "250hgst": "+124000",
+      "250lwst": "-66800",
+      "high_pric": "95400",
+      "open_pric": "-0",
+      "low_pric": "0",
+      "upl_pric": "20241016",
+      "Ist_pric": "-47.41",
+      "base_pric": "20231024",
+      "exp_cntr_pric": "+26.69",
+      "exp_cntr_qty": "95400",
+      "250hgst_pric_dt": "3",
+      "250hgst_pric_pre_rt": "0",
+      "250lwst_pric_dt": "0.00",
+      "250lwst_pric_pre_rt": "0",
+      "cur_prc": "0.00",
+      "pre_sig": "",
+      "pred_pre": "",
+      "flu_rt": "0",
+      "trde_qty": "0",
+      "trde_pre": "0",
+      "fav_unit": "0",
+      "dstr_stk": "0",
+      "dstr_rt": "0",
+      "return_code": 0,
+      "return_msg": "정상적으로 처리되었습니다"
+    }
+  },
+  "notes_and_errors": {
+    "usage_notes": [
+      "PER, ROE 값들은 외부 벤더사에서 제공되는 데이터이며 일주일에 한번 또는 실적발표 시즌에 업데이트됩니다."
+    ]
+  }
+}

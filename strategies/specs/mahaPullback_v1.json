@@ -1,0 +1,40 @@
+{
+  "stratId": "mahaPullback_v1",
+  "algCd": "MHP01",
+  "name": "마하세븐 눌림목(정배열+프랙탈)",
+  "status": "test",
+  "version": 1,
+  "enabled": true,
+  "timeframe": "1",
+  "docPath": "strategies/docs/mahaPullback_v1.md",
+  "universe": {
+    "type": "list",
+    "stkCds": ["005930"]
+  },
+  "params": {
+    "maType": "ema",
+    "maFast": 20,
+    "maMid": 50,
+    "maSlow": 100,
+    "stopMa": 5,
+    "fractalPeriod": 7,
+    "fractalLeft": 2,
+    "fractalRight": 2,
+    "rrMult": 1.5,
+    "stopUse": "close"
+  },
+  "rules": {
+    "trend": "maFast > maMid > maSlow",
+    "pullback": "close < maFast",
+    "buyFractal": "williamsDown",
+    "entry": "closeCrossAbove maFast",
+    "stop": "priceBreakBelow stopMa",
+    "takeProfit": "entry + (entry - stopPrice) * rrMult"
+  },
+  "fill": {
+    "entryPrice": "close",
+    "exitPrice": "close",
+    "feeRate": 0
+  },
+  "notes": "1분봉 원천 적재 후 상위 TF는 리샘플. status=draft — 엔진 미연동."
+}

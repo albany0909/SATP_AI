@@ -1,0 +1,54 @@
+{
+  "api_information": {
+    "api_id": "0J",
+    "api_name": "업종지수",
+    "method": "WebSocket",
+    "domain": {
+      "production": "wss://api.kiwoom.com:10000",
+      "mock": "wss://mockapi.kiwoom.com:10000"
+    },
+    "url": "/api/dostk/websocket",
+    "format": "JSON",
+    "description": "업종·지수 실시간 체결. item은 업종코드(001 코스피, 101 코스닥, 201 코스피200). 국내주식 WS 세션을 쓴다. 선물 근월물 시세가 아니라 코스피200 지수다."
+  },
+  "request_body": [
+    { "element": "trnm", "name_kr": "서비스명", "required": "Y", "description": "REG: 등록, REMOVE: 해지" },
+    { "element": "grp_no", "name_kr": "그룹번호", "required": "Y", "description": "" },
+    { "element": "refresh", "name_kr": "기존등록유지여부", "required": "Y", "description": "REG시 0:유지안함 1:유지(Default)" },
+    { "element": "data", "name_kr": "실시간 등록 리스트", "required": "N", "description": "[{item:[...], type:[...]}]" },
+    { "element": "item", "name_kr": "실시간 등록 요소", "required": "N", "description": "업종코드 (001:종합KOSPI, 101:종합KOSDAQ, 201:KOSPI200 — ka20006.json과 동일)" },
+    { "element": "type", "name_kr": "실시간 항목", "required": "Y", "description": "0J" }
+  ],
+  "realtime_values": [
+    { "element": "20", "name_kr": "체결시간", "description": "HHmmss" },
+    { "element": "10", "name_kr": "현재가", "description": "지수. 부호 포함. 소수점 없으며 절대값이 크면 100배값일 수 있음" },
+    { "element": "11", "name_kr": "전일대비", "description": "부호 포함" },
+    { "element": "12", "name_kr": "등락율", "description": "단위: %" },
+    { "element": "15", "name_kr": "거래량", "description": "체결량" },
+    { "element": "13", "name_kr": "누적거래량", "description": "" },
+    { "element": "14", "name_kr": "누적거래대금", "description": "" },
+    { "element": "16", "name_kr": "시가", "description": "" },
+    { "element": "17", "name_kr": "고가", "description": "" },
+    { "element": "18", "name_kr": "저가", "description": "" },
+    { "element": "25", "name_kr": "전일대비기호", "description": "" }
+  ],
+  "examples": {
+    "request": {
+      "trnm": "REG",
+      "grp_no": "3",
+      "refresh": "1",
+      "data": [{ "item": ["001", "101", "201"], "type": ["0J"] }]
+    },
+    "response": {
+      "trnm": "REAL",
+      "data": [
+        {
+          "type": "0J",
+          "name": "업종지수",
+          "item": "001",
+          "values": { "10": "+261234", "11": "+1234", "12": "+0.47", "20": "090015" }
+        }
+      ]
+    }
+  }
+}

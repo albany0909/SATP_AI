@@ -1,0 +1,49 @@
+{
+  "api_information": {
+    "api_id": "ka10173",
+    "api_name": "조건검색 요청 실시간",
+    "menu_path": "국내주식 > 조건검색 > 조건검색 요청 실시간(ka10173)",
+    "method": "WebSocket",
+    "domain": {
+      "production": "wss://api.kiwoom.com:10000",
+      "mock": "wss://mockapi.kiwoom.com:10000"
+    },
+    "url": "/api/dostk/websocket",
+    "format": "JSON",
+    "description": "조건검색 목록(CNSRLST) 선행 후 실시간 조회. 영웅문4 조건식 사용."
+  },
+  "request_body": [
+    { "element": "trnm", "name_kr": "서비스명", "required": "Y", "description": "CNSRREQ 고정" },
+    { "element": "seq", "name_kr": "조건검색식 일련번호", "required": "Y", "description": "" },
+    { "element": "search_type", "name_kr": "조회타입", "required": "Y", "description": "1: 조건검색+실시간" },
+    { "element": "stex_tp", "name_kr": "거래소구분", "required": "Y", "description": "K:KRX, A:통합" }
+  ],
+  "response_initial": [
+    { "element": "trnm", "description": "CNSRREQ" },
+    { "element": "data[].jmcode", "description": "접두어+종목코드 (예: A005930)" }
+  ],
+  "response_realtime": [
+    { "element": "trnm", "description": "REAL" },
+    { "element": "type", "description": "02 조건검색" },
+    { "element": "values.841", "description": "조건식 일련번호" },
+    { "element": "values.9001", "description": "종목코드" },
+    { "element": "values.843", "description": "I:편입 D:이탈" }
+  ],
+  "examples": {
+    "request": {
+      "trnm": "CNSRREQ",
+      "seq": "4",
+      "search_type": "1",
+      "stex_tp": "K"
+    }
+  },
+  "related": {
+    "clear": "ka10174 / CNSRCLR {trnm, seq}",
+    "list": "ka10171 / CNSRLST"
+  },
+  "notes": [
+    "세션당 국내 실시간 조건검색 최대 10건",
+    "결과 최대 100종목",
+    "토큰당 WS 세션 1개 재사용"
+  ]
+}

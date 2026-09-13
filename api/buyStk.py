@@ -1,0 +1,117 @@
+"""키움 주식 매수주문 API (kt10000)"""
+
+import requests
+
+from utils.stkCdUtil import normStkCd
+
+
+def buyStk(
+    hostUrl,
+    token,
+    dmstStexTp,
+    stkCd,
+    ordQty,
+    trdeTp,
+    ordUv="",
+    condUv="",
+    contYn="N",
+    nextKey="",
+    tokenType="bearer",
+):
+    """
+    kt10000 주식 매수주문 호출 후 Response 반환.
+    body: dmst_stex_tp, stk_cd, ord_qty, ord_uv, trde_tp, cond_uv
+    """
+    url = hostUrl + "/api/dostk/ordr"
+    # 토큰타입은 보통 bearer — 앞에 Bearer 붙여 authorization 구성
+    authType = (tokenType or "bearer").strip()
+    if authType.lower() == "bearer":
+        authType = "Bearer"
+
+    headers = {
+        "Content-Type": "application/json;charset=UTF-8",
+        "authorization": f"{authType} {token}",
+        "cont-yn": contYn,
+        "next-key": nextKey,
+        "api-id": "kt10000",
+    }
+    data = {
+        "dmst_stex_tp": dmstStexTp,
+        "stk_cd": normStkCd(stkCd),
+        "ord_qty": str(ordQty),
+        "ord_uv": str(ordUv) if ordUv not in (None, "") else "",
+        "trde_tp": str(trdeTp),
+        "cond_uv": str(condUv) if condUv not in (None, "") else "",
+    }
+    return requests.post(url, headers=headers, json=data, timeout=30)
+
+
+def placeBuyOrd(
+    hostUrl,
+    token,
+    dmstStexTp,
+    stkCd,
+    ordQty,
+    trdeTp,
+    ordUv="",
+    condUv="",
+    tokenType="bearer",
+):
+    """
+    kt10000 호출 결과를 dict로 반환한다.
+    성공: ok=True, body=응답본문, ordNo
+    실패: ok=False, errMsg=사유
+    """
+    try:
+        res = buyStk(
+            hostUrl,
+            token,
+            dmstStexTp,
+            stkCd,
+            ordQty,
+            trdeTp,
+            ordUv=ordUv,
+            condUv=condUv,
+            tokenType=tokenType,
+        )
+    except Exception as err:
+        return {"ok": False, "errMsg": f"요청 실패: {err}"}
+
+    try:
+        body = res.json()
+    except Exception as err:
+        return {"ok": False, "errMsg": f"응답 파싱 실패: {err}"}
+
+    if res.status_code != 200:
+        returnCode = body.get("return_code")
+        returnMsg = body.get("return_msg") or res.text
+        return {
+            "ok": False,
+            "errMsg": f"HTTP {res.status_code} [{returnCode}] {returnMsg}",
+            "body": body,
+        }
+
+    returnCode = body.get("return_code")
+    returnMsg = body.get("return_msg", "")
+    ordNo = body.get("ord_no", "") or ""
+
+    # 명세: return_code 0 = 정상. 주문번호도 확인
+    try:
+        codeOk = int(returnCode) == 0
+    except (TypeError, ValueError):
+        # return_code 누락 시 주문번호 유무로 판단 (하위 호환)
+        codeOk = bool(ordNo)
+
+    if not codeOk:
+        return {
+            "ok": False,
+            "errMsg": f"[{returnCode}] {returnMsg or '매수 주문 실패'}",
+            "body": body,
+        }
+
+    return {
+        "ok": True,
+        "body": body,
+        "ordNo": ordNo,
+        "returnMsg": returnMsg,
+    }

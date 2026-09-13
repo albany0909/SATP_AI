@@ -1,0 +1,311 @@
+{
+  "api_info": {
+    "api_id": "ka10016",
+    "api_name": "신고저가요청",
+    "menu_path": "국내주식 > 종목정보 > 신고저가요청(ka10016)",
+    "method": "POST",
+    "domain": {
+      "prod": "https://api.kiwoom.com",
+      "mock": "https://mockapi.kiwoom.com"
+    },
+    "url": "/api/dostk/stkinfo",
+    "format": "JSON",
+    "content_type": "application/json;charset=UTF-8",
+    "description": "신고저가 종목 정보를 조회합니다. (dt값을 250으로 설정 시 52주 신고가/신저가 조회 가능)"
+  },
+  "request": {
+    "headers": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": 10,
+        "description": "8자리 TR코드 (ex: ka10016)"
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": 1000,
+        "description": "토큰 지정시 토큰타입('Bearer') 붙혀서 호출 예) Bearer Egicyx..."
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": 1,
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": 50,
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+      }
+    ],
+    "body": [
+      {
+        "element": "mrkt_tp",
+        "name_kr": "시장구분",
+        "type": "String",
+        "required": "Y",
+        "length": 3,
+        "description": "000:전체, 001:코스피, 101:코스닥"
+      },
+      {
+        "element": "ntl_tp",
+        "name_kr": "신고저구분",
+        "type": "String",
+        "required": "Y",
+        "length": 1,
+        "description": "1:신고가, 2:신저가"
+      },
+      {
+        "element": "high_low_close_tp",
+        "name_kr": "고저종구분",
+        "type": "String",
+        "required": "Y",
+        "length": 1,
+        "description": "1:고저기준, 2:종가기준"
+      },
+      {
+        "element": "stk_cnd",
+        "name_kr": "종목조건",
+        "type": "String",
+        "required": "Y",
+        "length": 1,
+        "description": "0:전체조회, 1:관리종목제외, 3:우선주제외, 5:증100제외, 6:증100만보기, 7:증40만보기, 8:증30만보기"
+      },
+      {
+        "element": "trde_qty_tp",
+        "name_kr": "거래량구분",
+        "type": "String",
+        "required": "Y",
+        "length": 5,
+        "description": "00000:전체조회, 00010:만주이상, 00050:5만주이상, 00100:10만주이상, 00150:15만주이상, 00200:20만주이상, 00300:30만주이상, 00500:50만주이상, 01000: 백만주이상"
+      },
+      {
+        "element": "crd_cnd",
+        "name_kr": "신용조건",
+        "type": "String",
+        "required": "Y",
+        "length": 1,
+        "description": "0:전체조회, 1:신용융자A군, 2:신용융자B군, 3:신용융자C군, 4:신용융자D군, 7:신용융자군, 9:신용융자전체"
+      },
+      {
+        "element": "updown_incls",
+        "name_kr": "상하한포함",
+        "type": "String",
+        "required": "Y",
+        "length": 1,
+        "description": "0:미포함, 1:포함"
+      },
+      {
+        "element": "dt",
+        "name_kr": "기간",
+        "type": "String",
+        "required": "Y",
+        "length": 3,
+        "description": "5:5일, 10:10일, 20:20일, 60:60일, 250:250일, 250일까지 입력가능 (52주는 250 입력)"
+      },
+      {
+        "element": "stex_tp",
+        "name_kr": "거래소구분",
+        "type": "String",
+        "required": "Y",
+        "length": 1,
+        "description": "1:KRX, 2:NXT 3.통합"
+      }
+    ]
+  },
+  "response": {
+    "headers": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": 10,
+        "description": "8자리 TR코드"
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": 1,
+        "description": "다음 데이터가 있을시 Y값 전달"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": 50,
+        "description": "다음 데이터가 있을시 다음 키값 전달"
+      }
+    ],
+    "body": [
+      {
+        "element": "ntl_pric",
+        "name_kr": "신고저가",
+        "type": "List<Map>",
+        "required": "N",
+        "length": null,
+        "description": "신고저가 결과 리스트"
+      },
+      {
+        "element": "- stk_cd",
+        "name_kr": "종목코드",
+        "type": "String",
+        "required": "N",
+        "length": 20,
+        "description": "종목코드"
+      },
+      {
+        "element": "- stk_nm",
+        "name_kr": "종목명",
+        "type": "String",
+        "required": "N",
+        "length": 40,
+        "description": "종목명"
+      },
+      {
+        "element": "- cur_prc",
+        "name_kr": "현재가",
+        "type": "String",
+        "required": "N",
+        "length": 20,
+        "description": "단위: 원, 부호가 포함된 숫자"
+      },
+      {
+        "element": "- pred_pre_sig",
+        "name_kr": "전일대비기호",
+        "type": "String",
+        "required": "N",
+        "length": 20,
+        "description": "1: 상한가, 2:상승, 3:보합, 4:하한가, 5:하락"
+      },
+      {
+        "element": "- pred_pre",
+        "name_kr": "전일대비",
+        "type": "String",
+        "required": "N",
+        "length": 20,
+        "description": "단위: 원, 부호가 포함된 숫자"
+      },
+      {
+        "element": "- flu_rt",
+        "name_kr": "등락률",
+        "type": "String",
+        "required": "N",
+        "length": 20,
+        "description": "단위: %, 부호 포함 소수점 둘째 자리까지 포맷된 백분율"
+      },
+      {
+        "element": "- trde_qty",
+        "name_kr": "거래량",
+        "type": "String",
+        "required": "N",
+        "length": 20,
+        "description": "단위: 1주"
+      },
+      {
+        "element": "- pred_trde_qty_pre_rt",
+        "name_kr": "전일거래량대비율",
+        "type": "String",
+        "required": "N",
+        "length": 20,
+        "description": "단위: %, 부호 포함 소수점 둘째 자리까지 포맷된 백분율"
+      },
+      {
+        "element": "- sel_bid",
+        "name_kr": "매도호가",
+        "type": "String",
+        "required": "N",
+        "length": 20,
+        "description": "단위: 원, 부호가 포함된 숫자"
+      },
+      {
+        "element": "- buy_bid",
+        "name_kr": "매수호가",
+        "type": "String",
+        "required": "N",
+        "length": 20,
+        "description": "단위: 원, 부호가 포함된 숫자"
+      },
+      {
+        "element": "- high_pric",
+        "name_kr": "고가",
+        "type": "String",
+        "required": "N",
+        "length": 20,
+        "description": "단위: 원"
+      },
+      {
+        "element": "- low_pric",
+        "name_kr": "저가",
+        "type": "String",
+        "required": "N",
+        "length": 20,
+        "description": "단위: 원"
+      }
+    ]
+  },
+  "examples": {
+    "request": {
+      "mrkt_tp": "000",
+      "ntl_tp": "1",
+      "high_low_close_tp": "1",
+      "stk_cnd": "0",
+      "trde_qty_tp": "00000",
+      "crd_cnd": "0",
+      "updown_incls": "0",
+      "dt": "250",
+      "stex_tp": "1"
+    },
+    "response": {
+      "ntl_pric": [
+        {
+          "stk_cd": "005930",
+          "stk_nm": "삼성전자",
+          "cur_prc": "+214000",
+          "pred_pre_sig": "2",
+          "pred_pre": "+20900",
+          "flu_rt": "+10.82",
+          "trde_qty": "45",
+          "pred_trde_qty_pre_rt": "-0.05",
+          "sel_bid": "0",
+          "buy_bid": "+214000",
+          "high_pric": "214000",
+          "low_pric": "89800"
+        },
+        {
+          "stk_cd": "005930",
+          "stk_nm": "삼성전자",
+          "cur_prc": "+40300",
+          "pred_pre_sig": "2",
+          "pred_pre": "+1150",
+          "flu_rt": "+2.94",
+          "trde_qty": "86",
+          "pred_trde_qty_pre_rt": "-0.13",
+          "sel_bid": "+40550",
+          "buy_bid": "+40300",
+          "high_pric": "40300",
+          "low_pric": "14000"
+        }
+      ],
+      "return_code": 0,
+      "return_msg": "정상적으로 처리되었습니다"
+    }
+  },
+  "notes": [
+    "52주(1년) 신고가 및 신저가를 조회하려면 요청 파라미터 중 `dt`(기간) 값을 '250'으로 세팅해야 합니다.",
+    "요청 시 종목조건(stk_cnd), 거래량조건(trde_qty_tp) 등의 필터를 다양하게 조합하여 결과를 도출할 수 있습니다."
+  ]
+}

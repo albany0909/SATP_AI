@@ -1,0 +1,181 @@
+{
+  "api_information": {
+    "api_id": "kt00004",
+    "api_name": "계좌평가현황요청",
+    "menu_path": "국내주식 > 계좌 > 계좌평가현황요청(kt00004)",
+    "method": "POST",
+    "domain": {
+      "production": "https://api.kiwoom.com",
+      "mock": "https://mockapi.kiwoom.com"
+    },
+    "url": "/api/dostk/acnt",
+    "format": "JSON",
+    "content_type": "application/json;charset=UTF-8",
+    "description": "계좌 평가 현황 정보를 조회합니다."
+  },
+  "request_spec": {
+    "headers": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": "8자리 TR코드, ex) ka00001, usa10099"
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "1000",
+        "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 예) Bearer Egicyx..."
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+      }
+    ],
+    "body": [
+      {
+        "element": "qry_tp",
+        "name_kr": "상장폐지조회구분",
+        "type": "String",
+        "required": "Y",
+        "length": "1",
+        "description": "0:전체, 1:상장폐지종목제외"
+      },
+      {
+        "element": "dmst_stex_tp",
+        "name_kr": "국내거래소구분",
+        "type": "String",
+        "required": "Y",
+        "length": "6",
+        "description": "KRX:한국거래소, NXT: 넥스트트레이드"
+      }
+    ]
+  },
+  "response_spec": {
+    "headers": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": "8자리 TR코드, ex) ka00001, usa10099"
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "다음 데이터가 있을시 Y값 전달"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "다음 데이터가 있을시 다음 키값 전달"
+      }
+    ],
+    "body": [
+      { "element": "acnt_nm", "name_kr": "계좌명", "type": "String", "required": "N", "length": "30", "description": "" },
+      { "element": "brch_nm", "name_kr": "지점명", "type": "String", "required": "N", "length": "30", "description": "" },
+      { "element": "entr", "name_kr": "예수금", "type": "String", "required": "N", "length": "12", "description": "단위: 원, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "d2_entra", "name_kr": "D+2추정예수금", "type": "String", "required": "N", "length": "12", "description": "단위: 원, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "tot_est_amt", "name_kr": "유가잔고평가액", "type": "String", "required": "N", "length": "12", "description": "단위: 원, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "aset_evlt_amt", "name_kr": "예탁자산평가액", "type": "String", "required": "N", "length": "12", "description": "단위: 원, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "tot_pur_amt", "name_kr": "총매입금액", "type": "String", "required": "N", "length": "12", "description": "단위: 원, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "prsm_dpst_aset_amt", "name_kr": "추정예탁자산", "type": "String", "required": "N", "length": "12", "description": "단위: 원, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "tot_grnt_sella", "name_kr": "매도담보대출금", "type": "String", "required": "N", "length": "12", "description": "단위: 원, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "tdy_lspft_amt", "name_kr": "당일투자원금", "type": "String", "required": "N", "length": "12", "description": "단위: 원, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "invt_bsamt", "name_kr": "당월투자원금", "type": "String", "required": "N", "length": "12", "description": "단위: 원, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "lspft_amt", "name_kr": "누적투자원금", "type": "String", "required": "N", "length": "12", "description": "단위: 원, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "tdy_lspft", "name_kr": "당일투자손익", "type": "String", "required": "N", "length": "12", "description": "단위: 원, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "lspft2", "name_kr": "당월투자손익", "type": "String", "required": "N", "length": "12", "description": "단위: 원, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "lspft", "name_kr": "누적투자손익", "type": "String", "required": "N", "length": "12", "description": "단위: 원, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "tdy_lspft_rt", "name_kr": "당일손익율", "type": "String", "required": "N", "length": "12", "description": "단위: %, 소수점 둘째 자리까지 포맷된 백분율" },
+      { "element": "lspft_ratio", "name_kr": "당월손익율", "type": "String", "required": "N", "length": "12", "description": "단위: %, 소수점 둘째 자리까지 포맷된 백분율" },
+      { "element": "lspft_rt", "name_kr": "누적손익율", "type": "String", "required": "N", "length": "12", "description": "단위: %, 소수점 둘째 자리까지 포맷된 백분율" },
+      { "element": "stk_acnt_evlt_prst", "name_kr": "종목별계좌평가현황", "type": "List<Map>", "required": "N", "length": null, "description": "" },
+      { "element": "- stk_cd", "name_kr": "종목코드", "type": "String", "required": "N", "length": "12", "description": "접두어 1자리 + 종목코드 6자리, 접두어(A: 주식 / J: ELW / Q: ETN)" },
+      { "element": "- stk_nm", "name_kr": "종목명", "type": "String", "required": "N", "length": "30", "description": "" },
+      { "element": "- rmnd_qty", "name_kr": "보유수량", "type": "String", "required": "N", "length": "12", "description": "단위: 1주, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "- avg_prc", "name_kr": "평균단가", "type": "String", "required": "N", "length": "12", "description": "단위: 원, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "- cur_prc", "name_kr": "현재가", "type": "String", "required": "N", "length": "12", "description": "단위: 원, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "- evlt_amt", "name_kr": "평가금액", "type": "String", "required": "N", "length": "12", "description": "단위: 원, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "- pl_amt", "name_kr": "손익금액", "type": "String", "required": "N", "length": "12", "description": "단위: 원, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "- pl_rt", "name_kr": "손익율", "type": "String", "required": "N", "length": "12", "description": "단위: %, 소수점 넷째 자리까지 포맷된 백분율" },
+      { "element": "- loan_dt", "name_kr": "대출일", "type": "String", "required": "N", "length": "10", "description": "YYYYMMDD" },
+      { "element": "- pur_amt", "name_kr": "매입금액", "type": "String", "required": "N", "length": "12", "description": "단위: 원, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "- setl_remn", "name_kr": "결제잔고", "type": "String", "required": "N", "length": "12", "description": "단위: 1주, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "- pred_buyq", "name_kr": "전일매수수량", "type": "String", "required": "N", "length": "12", "description": "단위: 1주, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "- pred_sellq", "name_kr": "전일매도수량", "type": "String", "required": "N", "length": "12", "description": "단위: 1주, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "- tdy_buyq", "name_kr": "금일매수수량", "type": "String", "required": "N", "length": "12", "description": "단위: 1주, 좌측 0-padding 처리된 부호 포함 12자리 숫자" },
+      { "element": "- tdy_sellq", "name_kr": "금일매도수량", "type": "String", "required": "N", "length": "12", "description": "단위: 1주, 좌측 0-padding 처리된 부호 포함 12자리 숫자" }
+    ]
+  },
+  "examples": {
+    "request": {
+      "qry_tp": "0",
+      "dmst_stex_tp": "KRX"
+    },
+    "response": {
+      "acnt_nm": "김키움",
+      "brch_nm": "키움은행",
+      "entr": "000000017534",
+      "d2_entra": "000000012550",
+      "tot_est_amt": "000000000342",
+      "aset_evlt_amt": "000000761950",
+      "tot_pur_amt": "000000002786",
+      "prsm_dpst_aset_amt": "000000749792",
+      "tot_grnt_sella": "000000000000",
+      "tdy_lspft_amt": "000000000000",
+      "invt_bsamt": "000000000000",
+      "lspft_amt": "000000000000",
+      "tdy_lspft": "000000000000",
+      "lspft2": "000000000000",
+      "lspft": "000000000000",
+      "tdy_lspft_rt": "0.00",
+      "lspft_ratio": "0.00",
+      "lspft_rt": "0.00",
+      "stk_acnt_evlt_prst": [
+        {
+          "stk_cd": "A005930",
+          "stk_nm": "삼성전자",
+          "rmnd_qty": "000000000003",
+          "avg_prc": "000000124500",
+          "cur_prc": "000000070000",
+          "evlt_amt": "000000209542",
+          "pl_amt": "-00000163958",
+          "pl_rt": "-43.8977",
+          "loan_dt": "",
+          "pur_amt": "000000373500",
+          "setl_remn": "000000000003",
+          "pred_buyq": "000000000000",
+          "pred_sellq": "000000000000",
+          "tdy_buyq": "000000000000",
+          "tdy_sellq": "000000000000"
+        }
+      ],
+      "return_code": 0,
+      "return_msg": "조회가 완료되었습니다."
+    }
+  }
+}

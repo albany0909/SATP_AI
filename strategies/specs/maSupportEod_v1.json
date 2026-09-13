@@ -1,0 +1,54 @@
+{
+  "stratId": "maSupportEod_v1",
+  "algCd": "MSE01",
+  "name": "이평선지지 매매",
+  "status": "test",
+  "version": 9,
+  "enabled": true,
+  "timeframe": "D",
+  "docPath": "strategies/docs/maSupportEod_v1.md",
+  "universe": {
+    "type": "ka10016",
+    "requireBull": false,
+    "pickHm": "1600",
+    "pickTr": "ka10016",
+    "pickDt": "250",
+    "pickNtlTp": "1",
+    "pickHighLowCloseTp": "1",
+    "pickMkt": ["kospi", "kosdaq"],
+    "pickMrktTp": ["001", "101"],
+    "stexTp": "1",
+    "maxStk": 500,
+    "fullReplace": false,
+    "keepSmaLen": 20,
+    "dropIfCloseAtOrBelowSma20": true,
+    "note": "장마감 후 16:00 ka10016 52주 신고가(코스피 001+코스닥 101, 고저기준 dt=250) 편입. 종가≤전일확정 SMA20 이면 관심 제외. 종가>SMA20 이면 당일 신고가 목록에 없어도 유지. 원장 미청산 유지. 최초진입 필터 없음. 매수 규칙은 SMA5 돌파+약음봉/십자(이평터치 MTS01과 분리)."
+  },
+  "params": {
+    "maType": "sma",
+    "smaLen": 5,
+    "weakBearMaxPct": 2.5,
+    "dojiMaxPct": 0.5,
+    "buyAmtWon": 2000000,
+    "banSameDayBreakoutBuy": true,
+    "volCmpBullDays": 3,
+    "buyStartTm": "151800",
+    "buyEndTm": "152000",
+    "sellStartTm": "151800",
+    "sellEndTm": "152000",
+    "paperOnly": true
+  },
+  "rules": {
+    "breakout": "daily close crosses above SMA5 (prior closes only); same-day breakout bar does not buy",
+    "entry": "after breakout history, weak bear or doji/small body + SMA5 support + today volume < min(last volCmpBullDays bullish-day volumes) → buy (live: 15:18~15:20 exclusive — continuous session only, stops right before the closing auction; BT: day close)",
+    "exit": "while long, close < SMA5 → sell (live: 15:18~15:20 market, BT: day close)",
+    "reset": "if flat and close < SMA5 → clear breakout flag"
+  },
+  "fill": {
+    "entryPrice": "dayClose",
+    "exitPrice": "dayClose",
+    "feeRate": 0,
+    "btNote": "day bars; SMA5 excludes today close; force_close_eod at period end"
+  },
+  "notes": "status=test. Live: maSupportEodLive. BUY_SKIP 복기(종목당 1일 1건). 실전 당일 봉 = 1분봉 없으면 ka10001 시/고/저/현재가+누적거래량(구독 종목은 0B 현재가로 종가·고저 보정). 매수 창은 연속거래 마지막 2분(15:18~15:20) — 동시호가 직전까지. ka10001 은 폴링당 20종씩 나눠 조회(회전)하고 한도는 utils/trRateLimit 공용 게이트로 지킨다. 창 안에서 평가 가능한 종목은 약 110종."
+}

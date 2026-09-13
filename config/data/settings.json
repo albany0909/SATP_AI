@@ -1,0 +1,58 @@
+{
+  "mktOpenHm": "09:00",
+  "mktCloseHm": "15:30",
+  "notifyOpenHm": "08:00",
+  "notifyCloseHm": "20:00",
+  "tprPct": 5,
+  "slrPct": -10,
+  "maTouchLive": {
+    "enabled": true,
+    "paperOnly": false,
+    "buyAmt5": 1000000,
+    "buyAmt10": 1000000,
+    "buyAmt15": 1000000,
+    "halfTpPct": 1.4,
+    "halfTpFromStat": true,
+    "halfTpStatYmd": "20260911",
+    "halfTpStatFromYmd": "20260831",
+    "halfTpStatN": 13
+  },
+  "deskTradeExch": "KRX",
+  "deskTradeMode": "real",
+  "deskAlgTabs": [
+    "MTS01",
+    "MSE01"
+  ],
+  "stratLive": {
+    "MTS01": {
+      "buyAmt5": 1000000,
+      "buyAmt10": 1000000,
+      "buyAmt15": 1000000
+    },
+    "MSE01": {
+      "enabled": false,
+      "buyAmtWon": 2000000,
+      "paperOnly": false
+    }
+  },
+  "batchSched": {
+    "usMorningLoad": true,
+    "watchNewsDisc": true,
+    "dayInqRank": true,
+    "ntlFirst": true,
+    "dayInvSr": true
+  },
+  "telegramPush": {
+    "master": true,
+    "boot": true,
+    "batch": false,
+    "wnews": false,
+    "ordExec": true,
+    "closePnl": false,
+    "cnsr": false,
+    "rsv": false,
+    "stls": true,
+    "tokenRenew": true,
+    "btVal": true
+  }
+}

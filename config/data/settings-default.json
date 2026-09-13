@@ -1,0 +1,49 @@
+{
+  "mktOpenHm": "09:00",
+  "mktCloseHm": "15:30",
+  "notifyOpenHm": "08:00",
+  "notifyCloseHm": "20:00",
+  "tprPct": 5,
+  "slrPct": -10,
+  "maTouchLive": {
+    "enabled": true,
+    "paperOnly": true,
+    "buyAmt5": 1000000,
+    "buyAmt10": 1000000,
+    "buyAmt15": 1000000
+  },
+  "deskTradeExch": "KRX",
+  "deskTradeMode": "paper",
+  "deskAlgTabs": ["MTS01", "MSE01"],
+  "stratLive": {
+    "MTS01": {
+      "buyAmt5": 1000000,
+      "buyAmt10": 1000000,
+      "buyAmt15": 1000000
+    },
+    "MSE01": {
+      "enabled": false,
+      "buyAmtWon": 2000000
+    }
+  },
+  "batchSched": {
+    "usMorningLoad": true,
+    "watchNewsDisc": true,
+    "dayInqRank": true,
+    "ntlFirst": true,
+    "dayInvSr": true
+  },
+  "telegramPush": {
+    "master": true,
+    "boot": true,
+    "batch": true,
+    "wnews": true,
+    "ordExec": false,
+    "closePnl": true,
+    "cnsr": true,
+    "rsv": true,
+    "stls": true,
+    "tokenRenew": true,
+    "btVal": true
+  }
+}

@@ -1,0 +1,257 @@
+{
+  "usa20590": {
+    "api_information": {
+      "api_id": "usa20590[cite: 2]",
+      "api_name": "미국주식 일별주가[cite: 2]",
+      "menu_path": "미국주식 > 시세 > 미국주식 일별주가(usa20590)[cite: 2]",
+      "method": "POST[cite: 2]",
+      "domain": {
+        "production": "https://api.kiwoom.com[cite: 2]",
+        "mock": "https://mockapi.kiwoom.com[cite: 2]"
+      },
+      "url": "/api/us/mrkcond[cite: 2]",
+      "format": "JSON[cite: 2]",
+      "content_type": "application/json;charset=UTF-8[cite: 2]",
+      "description": "미국주식 일별 주가 정보를 조회합니다.[cite: 2]"
+    },
+    "request_spec": {
+      "headers": [
+        {
+          "element": "api-id",
+          "name_kr": "TR명",
+          "type": "String",
+          "required": "Y",
+          "length": "10",
+          "description": "8자리 TR코드, ex) ka00001, usa10099[cite: 2]"
+        },
+        {
+          "element": "authorization",
+          "name_kr": "접근토큰",
+          "type": "String",
+          "required": "Y",
+          "length": "1000",
+          "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 예) Bearer Egicyx...[cite: 2]"
+        },
+        {
+          "element": "cont-yn",
+          "name_kr": "연속조회여부",
+          "type": "String",
+          "required": "N",
+          "length": "1",
+          "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅[cite: 2]"
+        },
+        {
+          "element": "next-key",
+          "name_kr": "연속조회키",
+          "type": "String",
+          "required": "N",
+          "length": "50",
+          "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅[cite: 2]"
+        }
+      ],
+      "body": [
+        {
+          "element": "stex_tp",
+          "name_kr": "거래소구분",
+          "type": "String",
+          "required": "N",
+          "description": "NA:AMEX, ND:NASDAQ, NY:NYSE[cite: 2]"
+        },
+        {
+          "element": "stk_cd",
+          "name_kr": "종목코드",
+          "type": "String",
+          "required": "N",
+          "description": "[cite: 2]"
+        },
+        {
+          "element": "base_dt",
+          "name_kr": "기준일자",
+          "type": "String",
+          "required": "N",
+          "description": "기준일자 이전 내역 조회[cite: 2]"
+        }
+      ]
+    },
+    "response_spec": {
+      "headers": [
+        {
+          "element": "api-id",
+          "name_kr": "TR명",
+          "type": "String",
+          "required": "Y",
+          "length": "10",
+          "description": "8자리 TR코드, ex) ka00001, usa10099[cite: 2]"
+        },
+        {
+          "element": "cont-yn",
+          "name_kr": "연속조회여부",
+          "type": "String",
+          "required": "N",
+          "length": "1",
+          "description": "다음 데이터가 있을시 Y값 전달[cite: 2]"
+        },
+        {
+          "element": "next-key",
+          "name_kr": "연속조회키",
+          "type": "String",
+          "required": "N",
+          "length": "50",
+          "description": "다음 데이터가 있을시 다음 키값 전달[cite: 2]"
+        }
+      ],
+      "body": [
+        {
+          "element": "result_list",
+          "name_kr": "결과리스트",
+          "type": "List<Map>",
+          "required": "N",
+          "description": "[cite: 2]"
+        },
+        {
+          "element": "- dt",
+          "name_kr": "일자",
+          "type": "String",
+          "required": "N",
+          "description": "YYYYMMDD[cite: 2]"
+        },
+        {
+          "element": "- cur_prc",
+          "name_kr": "현재가(종가)",
+          "type": "String",
+          "required": "N",
+          "description": "단위: USD, 부호 포함 소수점 넷째 자리까지 포맷된 숫자[cite: 2]"
+        },
+        {
+          "element": "- pred_pre_sig",
+          "name_kr": "전일대비기호",
+          "type": "String",
+          "required": "N",
+          "description": "1: 상한가, 2:상승, 3:보합, 4:하한가, 5:하락[cite: 2]"
+        },
+        {
+          "element": "- pred_pre",
+          "name_kr": "전일대비",
+          "type": "String",
+          "required": "N",
+          "description": "단위: USD, 부호 포함 소수점 넷째 자리까지 포맷된 숫자[cite: 2]"
+        },
+        {
+          "element": "- flu_rt",
+          "name_kr": "등락률",
+          "type": "String",
+          "required": "N",
+          "description": "단위: %, 부호 포함 소수점 둘째 자리까지 포맷된 백분율[cite: 2]"
+        },
+        {
+          "element": "- acc_trde_qty",
+          "name_kr": "누적거래량",
+          "type": "String",
+          "required": "N",
+          "description": "단위: 1주[cite: 2]"
+        },
+        {
+          "element": "- trde_prica",
+          "name_kr": "누적금액",
+          "type": "String",
+          "required": "N",
+          "description": "단위: 천USD[cite: 2]"
+        },
+        {
+          "element": "- open_pric",
+          "name_kr": "시가",
+          "type": "String",
+          "required": "N",
+          "description": "단위: USD, 부호 포함 소수점 넷째 자리까지 포맷된 숫자[cite: 2]"
+        },
+        {
+          "element": "- high_pric",
+          "name_kr": "고가",
+          "type": "String",
+          "required": "N",
+          "description": "단위: USD, 부호 포함 소수점 넷째 자리까지 포맷된 숫자[cite: 2]"
+        },
+        {
+          "element": "- low_pric",
+          "name_kr": "저가",
+          "type": "String",
+          "required": "N",
+          "description": "단위: USD, 부호 포함 소수점 넷째 자리까지 포맷된 숫자[cite: 2]"
+        },
+        {
+          "element": "- base_pric",
+          "name_kr": "기준가",
+          "type": "String",
+          "required": "N",
+          "description": "단위: USD, 소수점 넷째 자리까지 포맷된 숫자[cite: 2]"
+        },
+        {
+          "element": "- base_open_flu_rt",
+          "name_kr": "기준가대비 시가등락율",
+          "type": "String",
+          "required": "N",
+          "description": "단위: %, 부호 포함 소수점 둘째 자리까지 포맷된 백분율[cite: 2]"
+        },
+        {
+          "element": "- base_high_flu_rt",
+          "name_kr": "기준가대비 고가등락율",
+          "type": "String",
+          "required": "N",
+          "description": "단위: %, 부호 포함 소수점 둘째 자리까지 포맷된 백분율[cite: 2]"
+        },
+        {
+          "element": "- base_low_flu_rt",
+          "name_kr": "기준가대비 저가등락율",
+          "type": "String",
+          "required": "N",
+          "description": "단위: %, 부호 포함 소수점 둘째 자리까지 포맷된 백분율[cite: 2]"
+        }
+      ]
+    },
+    "examples": {
+      "request": {
+        "stex_tp": "ND",
+        "stk_cd": "NVDA",
+        "base_dt": "20260501"
+      },
+      "response": {
+        "result_list": [
+          {
+            "dt": "20260501",
+            "cur_prc": "-198.4500",
+            "pred_pre_sig": "5",
+            "pred_pre": "-1.1200",
+            "flu_rt": "-0.56",
+            "acc_trde_qty": "128646996",
+            "trde_prica": "27062654154",
+            "open_pric": "+201.2800",
+            "high_pric": "+203.0000",
+            "low_pric": "-197.1200",
+            "base_pric": "199.5700",
+            "base_open_flu_rt": "+0.86",
+            "base_high_flu_rt": "+1.72",
+            "base_low_flu_rt": "-1.23"
+          },
+          {
+            "dt": "20260430",
+            "cur_prc": "-199.5700",
+            "pred_pre_sig": "5",
+            "pred_pre": "-9.6800",
+            "flu_rt": "-4.63",
+            "acc_trde_qty": "225239156",
+            "trde_prica": "53346497864",
+            "open_pric": "+209.9300",
+            "high_pric": "+210.3000",
+            "low_pric": "-198.7000",
+            "base_pric": "209.2500",
+            "base_open_flu_rt": "+0.32",
+            "base_high_flu_rt": "+0.50",
+            "base_low_flu_rt": "-5.04"
+          }
+        ],
+        "return_code": 0,
+        "return_msg": "정상적으로 처리되었습니다"
+      }
+    }
+  }
+}

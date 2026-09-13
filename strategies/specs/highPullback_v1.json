@@ -1,0 +1,52 @@
+{
+  "stratId": "highPullback_v1",
+  "algCd": "HPB01",
+  "name": "신고가 눌림목매매1",
+  "status": "test",
+  "version": 1,
+  "enabled": true,
+  "timeframe": "1",
+  "docPath": "strategies/docs/highPullback_v1.md",
+  "universe": {
+    "type": "first52wHigh",
+    "markets": ["KOSPI", "KOSDAQ"],
+    "requireFirst52w": true,
+    "minFluRt": 10,
+    "volAboveAvg": true,
+    "requireFrgnOrOrgnBuy": true,
+    "note": "val 2 watch 시 ntl first로 유니버스 선별 후 BT (관심종목 미사용)."
+  },
+  "params": {
+    "maType": "ema",
+    "maFast": 20,
+    "maMid": 50,
+    "maSlow": 100,
+    "exitStopMa": 60,
+    "buyAfterTm": "151500",
+    "exitAfterTm": "151800",
+    "buyAmtWon": 10000000,
+    "leaveQty": 1,
+    "requireCross": true,
+    "maxEntriesPerDay": 1,
+    "useBullFilter": false,
+    "setupMinFluRt": 10,
+    "lookbackHigh": 250,
+    "volMaPeriod": 20,
+    "volMult": 1.5,
+    "universePrefiltered": true,
+    "monitorDays": 20
+  },
+  "rules": {
+    "universe": "first52w + flu>=10 + vol spike + frgn|orgn buy",
+    "entry": "after setup and buyAfterTm, touch maFast (low<=ema)",
+    "stop": "after exitAfterTm, bearish break exitStopMa, leave leaveQty",
+    "takeProfit": "after exitAfterTm, profit and bearish break maFast, leave leaveQty"
+  },
+  "fill": {
+    "entryPrice": "close",
+    "exitPrice": "close",
+    "feeRate": 0,
+    "btLeaveQtyNote": "BT full close on exit; leaveQty for live"
+  },
+  "notes": "status=test. Live OFF. Validate via val/bt/ntl first."
+}

@@ -1,0 +1,55 @@
+{
+  "api_information": {
+    "api_id": "04",
+    "api_name": "잔고",
+    "method": "WebSocket",
+    "domain": {
+      "production": "wss://api.kiwoom.com:10000",
+      "mock": "wss://mockapi.kiwoom.com:10000"
+    },
+    "url": "/api/dostk/websocket",
+    "format": "JSON",
+    "description": "ACCESS TOKEN 계좌의 주문 체결 발생 시 잔고 데이터를 수신합니다. item 등록과 무관합니다."
+  },
+  "request_body": [
+    { "element": "trnm", "name_kr": "서비스명", "required": "Y", "description": "REG: 등록, REMOVE: 해지" },
+    { "element": "grp_no", "name_kr": "그룹번호", "required": "Y", "description": "" },
+    { "element": "refresh", "name_kr": "기존등록유지여부", "required": "Y", "description": "REG시 0:유지안함 1:유지(Default)" },
+    { "element": "data", "name_kr": "실시간 등록 리스트", "required": "N", "description": "[{item:[\"\"], type:[\"04\"]}]" },
+    { "element": "item", "name_kr": "실시간 등록 요소", "required": "N", "description": "잔고는 빈 문자열" },
+    { "element": "type", "name_kr": "실시간 항목", "required": "Y", "description": "04" }
+  ],
+  "realtime_values": [
+    { "element": "9001", "name_kr": "종목코드", "description": "" },
+    { "element": "302", "name_kr": "종목명", "description": "" },
+    { "element": "930", "name_kr": "보유수량", "description": "단위: 1주" },
+    { "element": "931", "name_kr": "매입단가", "description": "단위: 원" },
+    { "element": "933", "name_kr": "주문가능수량", "description": "단위: 1주" },
+    { "element": "10", "name_kr": "현재가", "description": "단위: 원, 부호 포함" }
+  ],
+  "examples": {
+    "request": {
+      "trnm": "REG",
+      "grp_no": "1",
+      "refresh": "1",
+      "data": [{ "item": [""], "type": ["04"] }]
+    },
+    "response": {
+      "trnm": "REAL",
+      "data": [
+        {
+          "type": "04",
+          "name": "현물잔고",
+          "item": "005930",
+          "values": {
+            "9001": "005930",
+            "302": "삼성전자",
+            "930": "102",
+            "931": "154116",
+            "10": "-60150"
+          }
+        }
+      ]
+    }
+  }
+}

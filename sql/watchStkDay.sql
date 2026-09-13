@@ -1,0 +1,31 @@
+-- 관심종목 일별 스냅샷 (장마감 후 AI_WATCH_STK STATUS=Y 상태 보관)
+-- 매매일지·과거 검증 유니버스 복원용. 당일 UPSERT 후 재실행 시 갱신.
+
+CREATE TABLE IF NOT EXISTS AI_WATCH_STK_DAY (
+  TRADE_DT       CHAR(8)       NOT NULL COMMENT '스냅샷 기준 거래일 YYYYMMDD',
+  STK_CD         VARCHAR(20)   NOT NULL COMMENT '종목코드',
+  MKT_TP         VARCHAR(4)    NOT NULL DEFAULT 'KR' COMMENT '시장 KR',
+
+  STK_NM         VARCHAR(80)   NULL COMMENT '종목명',
+  MARKET_NAME    VARCHAR(40)   NULL COMMENT '거래소명',
+  IND_GRP        VARCHAR(40)   NULL COMMENT '업종/테마',
+  GRP_CD         VARCHAR(40)   NULL COMMENT '그룹 RANK 등',
+  USE_BT         CHAR(1)       NOT NULL DEFAULT 'Y' COMMENT '백테스트 Y/N',
+  USE_TRADE      CHAR(1)       NOT NULL DEFAULT 'N' COMMENT '실매매 Y/N',
+  PRIORITY       INT           NOT NULL DEFAULT 100 COMMENT '우선순위',
+  RANK_NO        INT           NULL COMMENT '순위',
+  REF_TRADE_DT   CHAR(8)       NULL COMMENT '순위 기준일',
+  LOAD_DT        CHAR(8)       NULL COMMENT '관심 적재일',
+  OPEN_PRC       BIGINT        NULL COMMENT '기준일 시가',
+  CLOSE_PRC      BIGINT        NULL COMMENT '기준일 종가',
+  SRC            VARCHAR(40)   NULL COMMENT '출처',
+  NOTE           VARCHAR(200)  NULL COMMENT '메모',
+
+  SNAPSHOT_AT    DATETIME      NULL COMMENT '스냅샷 생성 시각',
+  CREATED_AT     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (TRADE_DT, STK_CD, MKT_TP),
+  KEY IDX_AI_WATCH_DAY_DT (TRADE_DT),
+  KEY IDX_AI_WATCH_DAY_TRADE (TRADE_DT, USE_TRADE)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  COMMENT='관심종목 일별 스냅샷';

@@ -1,0 +1,46 @@
+{
+  "stratId": "bullBodyMa2050_v1",
+  "algCd": "BBM01",
+  "name": "장대양봉 2050이평매매",
+  "status": "test",
+  "version": 1,
+  "enabled": true,
+  "timeframe": "1",
+  "docPath": "strategies/docs/bullBodyMa2050_v1.md",
+  "universe": {
+    "type": "kiwoomCondition",
+    "formula": "P and J and R and (S or T)",
+    "note": "키움 조건식: 1봉전 대금≥1만백만·양봉·20봉신고거래량 + (당일 SMA1×20 또는 전일 SMA1×50 골든). BT는 일봉 근사. 실전은 조건검색 연동 권장."
+  },
+  "params": {
+    "maType": "sma",
+    "smaTouchA": 20,
+    "smaTouchB": 60,
+    "smaFast": 20,
+    "smaMid": 50,
+    "minAmtMn": 10000,
+    "volLookback": 20,
+    "entryBarMin": 5,
+    "exitBarMin": 15,
+    "buyAmtWon": 1000000,
+    "exitEodTm": "151800",
+    "use15mTp": false,
+    "maxEntriesPerDay": 1,
+    "monitorDays": 10,
+    "universePrefiltered": true,
+    "preferSmaA": true
+  },
+  "rules": {
+    "universe": "P∧J∧R∧(S∨T) day setup",
+    "entry": "after setup, day SMA20|60 touch → first 5m bull on that ma → buyAmtWon",
+    "takeProfit": "buy day exitEodTm(151800) full flat",
+    "takeProfitOptional": "use15mTp: 15m bear close below touch ma"
+  },
+  "fill": {
+    "entryPrice": "5m_close",
+    "exitPrice": "1m_close_at_exitEodTm",
+    "feeRate": 0,
+    "note": "BT resamples 1m → day/5m (15m optional)"
+  },
+  "notes": "status=test. Live OFF. 익절=매수당일 15:18 전량."
+}

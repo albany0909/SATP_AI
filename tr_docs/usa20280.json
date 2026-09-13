@@ -1,0 +1,36 @@
+{
+  "api_information": {
+    "api_id": "usa20280",
+    "api_name": "미국주식 조건검색 목록조회",
+    "menu_path": "미국주식 > 조건검색 > 미국주식 조건검색 목록조회(usa20280)",
+    "method": "WebSocket",
+    "domain": {
+      "production": "wss://api.kiwoom.com:10000",
+      "mock": "wss://mockapi.kiwoom.com:10000"
+    },
+    "url": "/api/us/websocket",
+    "format": "JSON",
+    "description": "미국주식 조건검색식 목록을 조회합니다. 조건식 생성/수정은 영웅문Global에서 합니다."
+  },
+  "request_body": [
+    { "element": "trnm", "name_kr": "TR명", "required": "Y", "description": "GCNSRLST 고정값" }
+  ],
+  "response_body": [
+    { "element": "return_code", "name_kr": "결과코드", "description": "정상: 0" },
+    { "element": "return_msg", "name_kr": "결과메시지", "description": "" },
+    { "element": "trnm", "name_kr": "서비스명", "description": "GCNSRLST" },
+    { "element": "data", "name_kr": "조건검색식 목록", "description": "[[seq, name], ...]" }
+  ],
+  "examples": {
+    "request": { "trnm": "GCNSRLST" },
+    "response": {
+      "trnm": "GCNSRLST",
+      "return_code": 0,
+      "data": [["0", "조건1"], ["1", "조건2"]]
+    }
+  },
+  "notes": [
+    "WSS WebSocket 호출 (/api/us/websocket)",
+    "조건식은 영웅문Global HTS에서 선행 생성"
+  ]
+}

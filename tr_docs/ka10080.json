@@ -1,0 +1,88 @@
+{
+  "ka10080": {
+    "api_information": {
+      "api_id": "ka10080",
+      "api_name": "주식분봉차트조회요청",
+      "menu_path": "국내주식 > 차트 > 주식분봉차트조회요청(ka10080)[cite: 2]",
+      "method": "POST[cite: 2]",
+      "domain": {
+        "production": "https://api.kiwoom.com[cite: 2]",
+        "mock": "https://mockapi.kiwoom.com[cite: 2]"
+      },
+      "url": "/api/dostk/chart[cite: 2]",
+      "format": "JSON[cite: 2]",
+      "content_type": "application/json;charset=UTF-8[cite: 2]",
+      "description": "주식 분봉 차트 정보를 조회합니다.[cite: 2]"
+    },
+    "request_spec": {
+      "headers": [
+        { "element": "api-id", "name_kr": "TR명", "type": "String", "required": "Y", "length": "10", "description": "8자리 TR코드, ex) ka00001, usa10099[cite: 2]" },
+        { "element": "authorization", "name_kr": "접근토큰", "type": "String", "required": "Y", "length": "1000", "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 예) Bearer Egicyx...[cite: 2]" },
+        { "element": "cont-yn", "name_kr": "연속조회여부", "type": "String", "required": "N", "length": "1", "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅[cite: 2]" },
+        { "element": "next-key", "name_kr": "연속조회키", "type": "String", "required": "N", "length": "50", "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅[cite: 2]" }
+      ],
+      "body": [
+        { "element": "stk_cd", "name_kr": "종목코드", "type": "String", "required": "Y", "length": "20", "description": "거래소별 종목코드 (KRX:039490, NXT:039490_NX,SOR:039490_AL)[cite: 2]" },
+        { "element": "tic_scope", "name_kr": "틱범위", "type": "String", "required": "Y", "length": "2", "description": "1:1분, 3:3분, 5:5분, 10:10분, 15:15분, 30:30분, 45:45분, 60:60분[cite: 2]" },
+        { "element": "upd_stkpc_tp", "name_kr": "수정주가구분", "type": "String", "required": "Y", "length": "1", "description": "0 or 1[cite: 2]" },
+        { "element": "base_dt", "name_kr": "기준일자", "type": "String", "required": "N", "length": "8", "description": "YYYYMMDD[cite: 2]" }
+      ]
+    },
+    "response_spec": {
+      "headers": [
+        { "element": "api-id", "name_kr": "TR명", "type": "String", "required": "Y", "length": "10", "description": "8자리 TR코드, ex) ka00001, usa10099[cite: 2]" },
+        { "element": "cont-yn", "name_kr": "연속조회여부", "type": "String", "required": "N", "length": "1", "description": "다음 데이터가 있을시 Y값 전달[cite: 2]" },
+        { "element": "next-key", "name_kr": "연속조회키", "type": "String", "required": "N", "length": "50", "description": "다음 데이터가 있을시 다음 키값 전달[cite: 2]" }
+      ],
+      "body": [
+        { "element": "stk_cd", "name_kr": "종목코드", "type": "String", "required": "N", "length": "6", "description": "[cite: 2]" },
+        { "element": "stk_min_pole_chart_qry", "name_kr": "주식분봉차트조회", "type": "List<Map>", "required": "N", "length": null, "description": "[cite: 2]" },
+        { "element": "- cur_prc", "name_kr": "현재가(종가)", "type": "String", "required": "N", "length": "20", "description": "단위: 원, 부호가 포함된 숫자[cite: 2]" },
+        { "element": "- trde_qty", "name_kr": "거래량", "type": "String", "required": "N", "length": "20", "description": "단위: 1주[cite: 2]" },
+        { "element": "- cntr_tm", "name_kr": "체결시간", "type": "String", "required": "N", "length": "20", "description": "YYYYMMDDHHmmss[cite: 2]" },
+        { "element": "- open_pric", "name_kr": "시가", "type": "String", "required": "N", "length": "20", "description": "단위: 원, 부호가 포함된 숫자[cite: 2]" },
+        { "element": "- high_pric", "name_kr": "고가", "type": "String", "required": "N", "length": "20", "description": "단위: 원, 부호가 포함된 숫자[cite: 2]" },
+        { "element": "- low_pric", "name_kr": "저가", "type": "String", "required": "N", "length": "20", "description": "단위: 원, 부호가 포함된 숫자[cite: 2]" },
+        { "element": "- pred_pre", "name_kr": "전일대비", "type": "String", "required": "N", "length": "20", "description": "현재가 - 전일종가[cite: 2]" },
+        { "element": "- pred_pre_sig", "name_kr": "전일대비 기호", "type": "String", "required": "N", "length": "20", "description": "1: 상한가, 2:상승, 3:보합, 4:하한가, 5:하락[cite: 2]" }
+      ]
+    },
+    "examples": {
+      "request": {
+        "stk_cd": "005930",
+        "tic_scope": "1",
+        "upd_stkpc_tp": "1",
+        "base_dt": "20260202"
+      },
+      "response": {
+        "stk_cd": "005930",
+        "stk_min_pole_chart_qry": [
+          {
+            "cur_prc": "-78800",
+            "trde_qty": "7913",
+            "cntr_tm": "20250917132000",
+            "open_pric": "-78850",
+            "high_pric": "-78900",
+            "low_pric": "-78800",
+            "acc_trde_qty": "14947571",
+            "pred_pre": "-600",
+            "pred_pre_sig": "5"
+          },
+          {
+            "cur_prc": "-78900",
+            "trde_qty": "16084",
+            "cntr_tm": "20250917131900",
+            "open_pric": "-78900",
+            "high_pric": "-78900",
+            "low_pric": "-78800",
+            "acc_trde_qty": "14939658",
+            "pred_pre": "-500",
+            "pred_pre_sig": "5"
+          }
+        ],
+        "return_code": 0,
+        "return_msg": "정상적으로 처리되었습니다"
+      }
+    }
+  }
+}

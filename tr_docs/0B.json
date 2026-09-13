@@ -1,0 +1,46 @@
+{
+  "api_information": {
+    "api_id": "0B",
+    "api_name": "주식체결",
+    "method": "WebSocket",
+    "domain": {
+      "production": "wss://api.kiwoom.com:10000",
+      "mock": "wss://mockapi.kiwoom.com:10000"
+    },
+    "url": "/api/dostk/websocket",
+    "format": "JSON",
+    "description": "종목별 주식 체결 정보를 수신합니다. item에 종목코드를 설정하세요."
+  },
+  "request_body": [
+    { "element": "trnm", "name_kr": "서비스명", "required": "Y", "description": "REG: 등록, REMOVE: 해지" },
+    { "element": "grp_no", "name_kr": "그룹번호", "required": "Y", "description": "" },
+    { "element": "refresh", "name_kr": "기존등록유지여부", "required": "Y", "description": "REG시 0:유지안함 1:유지(Default)" },
+    { "element": "data", "name_kr": "실시간 등록 리스트", "required": "N", "description": "[{item:[...], type:[...]}]" },
+    { "element": "item", "name_kr": "실시간 등록 요소", "required": "N", "description": "종목코드 (KRX:039490, NXT:039490_NX)" },
+    { "element": "type", "name_kr": "실시간 항목", "required": "Y", "description": "0B" }
+  ],
+  "realtime_values": [
+    { "element": "10", "name_kr": "현재가", "description": "단위: 원, 부호 포함" },
+    { "element": "20", "name_kr": "체결시간", "description": "HHmmss" },
+    { "element": "12", "name_kr": "등락율", "description": "단위: %" }
+  ],
+  "examples": {
+    "request": {
+      "trnm": "REG",
+      "grp_no": "1",
+      "refresh": "1",
+      "data": [{ "item": ["005930"], "type": ["0B"] }]
+    },
+    "response": {
+      "trnm": "REAL",
+      "data": [
+        {
+          "type": "0B",
+          "name": "주식체결",
+          "item": "005930",
+          "values": { "10": "-20800", "20": "165208", "12": "-0.24" }
+        }
+      ]
+    }
+  }
+}

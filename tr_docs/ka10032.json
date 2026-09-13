@@ -1,0 +1,263 @@
+{
+  "api_information": {
+    "api_id": "ka10032",
+    "api_name": "거래대금상위요청",
+    "menu_path": "국내주식 > 순위정보 > 거래대금상위요청(ka10032)",
+    "method": "POST",
+    "domain": {
+      "production": "https://api.kiwoom.com",
+      "mock": "https://mockapi.kiwoom.com"
+    },
+    "url": "/api/dostk/rkinfo",
+    "format": "JSON",
+    "content_type": "application/json;charset=UTF-8",
+    "description": "거래대금 상위 종목 순위를 조회한다."
+  },
+  "request_spec": {
+    "headers": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": "8자리 TR코드, ex) ka10032"
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "1000",
+        "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 예) Bearer Egicyx..."
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+      }
+    ],
+    "body": [
+      {
+        "element": "mrkt_tp",
+        "name_kr": "시장구분",
+        "type": "String",
+        "required": "Y",
+        "length": "3",
+        "description": "000:전체, 001:코스피, 101:코스닥"
+      },
+      {
+        "element": "mang_stk_incls",
+        "name_kr": "관리종목포함",
+        "type": "String",
+        "required": "Y",
+        "length": "1",
+        "description": "0:미포함, 1:포함"
+      },
+      {
+        "element": "stex_tp",
+        "name_kr": "거래소구분",
+        "type": "String",
+        "required": "Y",
+        "length": "1",
+        "description": "1:KRX, 2:NXT, 3:통합"
+      }
+    ]
+  },
+  "response_spec": {
+    "headers": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": "8자리 TR코드, ex) ka10032"
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "다음 데이터가 있을시 Y값 전달"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "다음 데이터가 있을시 다음 키값 전달"
+      }
+    ],
+    "body": [
+      {
+        "element": "trde_prica_upper",
+        "name_kr": "거래대금상위",
+        "type": "List<Map>",
+        "required": "N",
+        "length": null,
+        "description": ""
+      },
+      {
+        "element": "- stk_cd",
+        "name_kr": "종목코드",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- now_rank",
+        "name_kr": "현재순위",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- pred_rank",
+        "name_kr": "전일순위",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- stk_nm",
+        "name_kr": "종목명",
+        "type": "String",
+        "required": "N",
+        "length": "40",
+        "description": ""
+      },
+      {
+        "element": "- cur_prc",
+        "name_kr": "현재가",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "단위: 원, 부호 포함"
+      },
+      {
+        "element": "- pred_pre_sig",
+        "name_kr": "전일대비기호",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "1:상한, 2:상승, 3:보합, 4:하한, 5:하락"
+      },
+      {
+        "element": "- pred_pre",
+        "name_kr": "전일대비",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "단위: 원"
+      },
+      {
+        "element": "- flu_rt",
+        "name_kr": "등락률",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "단위: %"
+      },
+      {
+        "element": "- sel_bid",
+        "name_kr": "매도호가",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "단위: 원, 부호 포함"
+      },
+      {
+        "element": "- buy_bid",
+        "name_kr": "매수호가",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "단위: 원, 부호 포함"
+      },
+      {
+        "element": "- now_trde_qty",
+        "name_kr": "현재거래량",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "단위: 1주"
+      },
+      {
+        "element": "- pred_trde_qty",
+        "name_kr": "전일거래량",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "단위: 1주"
+      },
+      {
+        "element": "- trde_prica",
+        "name_kr": "거래대금",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "단위: 백만원"
+      }
+    ]
+  },
+  "examples": {
+    "request": {
+      "mrkt_tp": "001",
+      "mang_stk_incls": "1",
+      "stex_tp": "3"
+    },
+    "response": {
+      "trde_prica_upper": [
+        {
+          "stk_cd": "005930",
+          "now_rank": "1",
+          "pred_rank": "1",
+          "stk_nm": "삼성전자",
+          "cur_prc": "-152000",
+          "pred_pre_sig": "5",
+          "pred_pre": "-100",
+          "flu_rt": "-0.07",
+          "sel_bid": "-152000",
+          "buy_bid": "-150000",
+          "now_trde_qty": "34954641",
+          "pred_trde_qty": "22532511",
+          "trde_prica": "5308092"
+        },
+        {
+          "stk_cd": "000660",
+          "now_rank": "2",
+          "pred_rank": "2",
+          "stk_nm": "SK하이닉스",
+          "cur_prc": "-53700",
+          "pred_pre_sig": "5",
+          "pred_pre": "-23000",
+          "flu_rt": "-29.99",
+          "sel_bid": "-76500",
+          "buy_bid": "+85100",
+          "now_trde_qty": "31821639",
+          "pred_trde_qty": "30279412",
+          "trde_prica": "2436091"
+        }
+      ],
+      "return_code": 0,
+      "return_msg": "정상적으로 처리되었습니다"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "api_information": {
+    "api_id": "ka10174",
+    "api_name": "조건검색 실시간 해제",
+    "method": "WebSocket",
+    "url": "/api/dostk/websocket",
+    "description": "조건검색 실시간(CNSRREQ) 해제"
+  },
+  "request_body": [
+    { "element": "trnm", "required": "Y", "description": "CNSRCLR 고정" },
+    { "element": "seq", "required": "Y", "description": "조건검색식 일련번호" }
+  ],
+  "examples": {
+    "request": { "trnm": "CNSRCLR", "seq": "4" }
+  }
+}

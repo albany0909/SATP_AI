@@ -1,0 +1,99 @@
+{
+  "api_information": {
+    "api_id": "ka00001",
+    "api_name": "계좌번호조회",
+    "menu_path": "국내주식 > 계좌 > 계좌번호조회(ka00001)",
+    "method": "POST",
+    "domain": {
+      "production": "https://api.kiwoom.com",
+      "mock": "https://mockapi.kiwoom.com"
+    },
+    "url": "/api/dostk/acnt",
+    "format": "JSON",
+    "content_type": "application/json;charset=UTF-8",
+    "description": "로그인 토큰에 연결된 계좌번호를 조회합니다."
+  },
+  "request_spec": {
+    "headers": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": "ka00001"
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "1000",
+        "description": "Bearer {token}"
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": ""
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": ""
+      }
+    ],
+    "body": []
+  },
+  "response_spec": {
+    "headers": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": ""
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": ""
+      }
+    ],
+    "body": [
+      {
+        "element": "acctNo",
+        "name_kr": "계좌번호",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "10자리 숫자. 뒤 2자리는 당사 계좌 분류용."
+      }
+    ]
+  },
+  "examples": {
+    "request": {},
+    "response": {
+      "acctNo": "0123456789",
+      "return_code": 0,
+      "return_msg": "정상적으로 처리되었습니다"
+    }
+  }
+}

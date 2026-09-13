@@ -1,0 +1,43 @@
+{
+  "stratId": "alignMaBreak_v1",
+  "algCd": "AMB01",
+  "name": "정배열 이평선 돌파매매1",
+  "status": "test",
+  "version": 1,
+  "enabled": true,
+  "timeframe": "1",
+  "docPath": "strategies/docs/alignMaBreak_v1.md",
+  "universe": {
+    "type": "rankWatch",
+    "requireBull": true,
+    "note": "실시간순위/AI_WATCH_STK 기반 + 양봉 필터(종목선정). 단일 bt는 종목 지정."
+  },
+  "params": {
+    "maType": "ema",
+    "maFast": 20,
+    "maMid": 50,
+    "maSlow": 100,
+    "exitStopMa": 60,
+    "buyAfterTm": "151500",
+    "exitAfterTm": "151800",
+    "buyAmtWon": 10000000,
+    "leaveQty": 1,
+    "requireCross": true,
+    "maxEntriesPerDay": 1,
+    "useBullFilter": true
+  },
+  "rules": {
+    "trend": "maFast > maMid > maSlow",
+    "universeBull": "close > open",
+    "entry": "after buyAfterTm, touch maFast (low<=ma), bull break close>maFast",
+    "stop": "after exitAfterTm, bearish break below exitStopMa, leave leaveQty",
+    "takeProfit": "after exitAfterTm, profit and bearish break below maFast, leave leaveQty"
+  },
+  "fill": {
+    "entryPrice": "close",
+    "exitPrice": "close",
+    "feeRate": 0,
+    "btLeaveQtyNote": "BT P&L treats exit as full close; leaveQty for live order size only"
+  },
+  "notes": "status=test. Live auto-trade OFF. Validate via val/bt."
+}

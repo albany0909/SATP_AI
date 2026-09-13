@@ -1,0 +1,30 @@
+-- 알고리즘 판단·체결 이벤트 (장마감 복기)
+-- 상용 알고리즘코드(ALG_CD) + 버전(ALG_VER)으로 연결한다.
+-- 규칙이 바뀌면 스펙 version 을 올리고, 과거 행은 당시 코드·버전에 남긴다.
+
+CREATE TABLE IF NOT EXISTS AI_ALG_EVT (
+  EVT_ID       BIGINT        NOT NULL AUTO_INCREMENT COMMENT '이벤트ID',
+  ALG_CD       CHAR(5)       NOT NULL COMMENT '상용 알고리즘코드 (MTS01)',
+  ALG_VER      VARCHAR(8)    NOT NULL DEFAULT '1' COMMENT '스펙 version. 규칙 변경 시 증가',
+  TRADE_DT     CHAR(8)       NOT NULL COMMENT '발생일 YYYYMMDD',
+  EVT_TM       CHAR(6)       NOT NULL COMMENT '발생시각 HHmmss',
+  EVT_TP       VARCHAR(16)   NOT NULL COMMENT 'BUY|BUY_SKIP|BUY_CNCL|BUY_FAIL|SELL|SELL_FAIL|RANK_IN',
+  REASON       VARCHAR(40)   NULL COMMENT '사유코드 SMA5|AFTER_1400|BELOW_SMA20 등',
+  STK_CD       CHAR(6)       NOT NULL COMMENT '종목코드',
+  STK_NM       VARCHAR(80)   NULL COMMENT '종목명',
+  TRADE_CD     CHAR(25)      NULL COMMENT '원장 거래코드(있으면)',
+  MODE         VARCHAR(8)    NOT NULL DEFAULT 'paper' COMMENT 'paper|real',
+  PX           DECIMAL(18,4) NULL COMMENT '당시 현재가',
+  SMA5         DECIMAL(18,4) NULL COMMENT '당시 SMA5',
+  SMA10        DECIMAL(18,4) NULL COMMENT '당시 SMA10',
+  SMA15        DECIMAL(18,4) NULL COMMENT '당시 SMA15',
+  SMA20        DECIMAL(18,4) NULL COMMENT '당시 SMA20',
+  QTY          INT           NULL COMMENT '주문수량',
+  NOTE         VARCHAR(200)  NULL COMMENT '메모',
+  CREATED_AT   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (EVT_ID),
+  KEY IDX_AI_ALG_EVT_ALG_DT (ALG_CD, TRADE_DT, EVT_TM),
+  KEY IDX_AI_ALG_EVT_STK (ALG_CD, STK_CD, TRADE_DT)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  COMMENT='알고리즘 복기 이벤트(ALG_CD+ALG_VER)';

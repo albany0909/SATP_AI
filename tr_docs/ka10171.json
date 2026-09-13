@@ -1,0 +1,43 @@
+{
+  "api_information": {
+    "api_id": "ka10171",
+    "api_name": "조건검색 목록조회",
+    "menu_path": "국내주식 > 조건검색 > 조건검색 목록조회(ka10171)",
+    "method": "WebSocket",
+    "domain": {
+      "production": "wss://api.kiwoom.com:10000",
+      "mock": "wss://mockapi.kiwoom.com:10000"
+    },
+    "url": "/api/dostk/websocket",
+    "format": "JSON",
+    "description": "국내주식 조건검색식 목록을 조회합니다. REST가 아닌 WebSocket으로 호출합니다. 조건식 생성/수정은 영웅문4에서 합니다."
+  },
+  "request_body": [
+    { "element": "trnm", "name_kr": "TR명", "required": "Y", "description": "CNSRLST 고정값" }
+  ],
+  "response_body": [
+    { "element": "return_code", "name_kr": "결과코드", "description": "정상: 0" },
+    { "element": "return_msg", "name_kr": "결과메시지", "description": "정상인 경우 메시지 없음" },
+    { "element": "trnm", "name_kr": "서비스명", "description": "CNSRLST" },
+    { "element": "data", "name_kr": "조건검색식 목록", "description": "[[seq, name], ...] 형식" },
+    { "element": "seq", "name_kr": "조건검색식 일련번호", "description": "data 요소" },
+    { "element": "name", "name_kr": "조건검색식 명", "description": "data 요소" }
+  ],
+  "examples": {
+    "request": { "trnm": "CNSRLST" },
+    "response": {
+      "trnm": "CNSRLST",
+      "return_code": 0,
+      "return_msg": "",
+      "data": [
+        ["0", "조건1"],
+        ["1", "조건2"]
+      ]
+    }
+  },
+  "notes": [
+    "HTTPS REST가 아닌 WSS WebSocket으로 호출",
+    "토큰당 웹소켓 세션 1개 — 기존 WS 허브 재사용",
+    "조건식은 영웅문4 HTS에서 선행 생성"
+  ]
+}

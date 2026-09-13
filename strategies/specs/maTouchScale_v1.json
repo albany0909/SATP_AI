@@ -1,0 +1,89 @@
+{
+  "stratId": "maTouchScale_v1",
+  "algCd": "MTS01",
+  "name": "이평선터치 매매",
+  "status": "test",
+  "version": 45,
+  "enabled": true,
+  "timeframe": "1",
+  "docPath": "strategies/docs/maTouchScale_v1.md",
+  "universe": {
+    "type": "rank16h",
+    "requireBull": false,
+    "pickHm": "1600",
+    "pickRankTr": "ka00198",
+    "pickRankQryTp": "1",
+    "pickMkt": [
+      "kospi",
+      "kosdaq"
+    ],
+    "minQtyPerStep": 1,
+    "maxStk": 50,
+    "rankMax": 20,
+    "pickTrdePrcaTr": "ka10032",
+    "maxTrdePrcaRank": 30,
+    "replaceDaily": true,
+    "keepOpenPos": true,
+    "note": "거래일 16:00 ka00198 당일누적 상위 20 ∪ ka10032 거래대금 상위 30 (중복 제거), 코스피/코스닥만. 매차 최소금액으로 1주 이상. 다음 거래일 관리종목(MTS01)·관심 USE_TRADE=Y. 매일 전량 교체, 원장 미청산 유지. 양봉 필터 없음. 장중 신규 편입 없음."
+  },
+  "params": {
+    "maType": "sma",
+    "maSteps": [
+      20
+    ],
+    "buyAmtByStep": {
+      "20": 1000000
+    },
+    "exitAfterTm": "151800",
+    "buyCutoffTm": "140000",
+    "buyCutoffIfNextClosed": true,
+    "stopMa": 20,
+    "takeMa": 10,
+    "confirmMode": "bar3BreakLimit",
+    "confirmBarMin": 3,
+    "limitWaitSec": 180,
+    "tp1Pct": 1.2,
+    "tp1QtyRatio": 0.3,
+    "tp2Pct": 2,
+    "tp2QtyRatio": 0.3,
+    "halfTpPct": 3,
+    "halfTpFromStat": false,
+    "nextClosedHalfTm": "151500",
+    "nextClosedHalfMinPct": 0,
+    "nextClosedHalfMaxPct": 3,
+    "hardStopPct": 2,
+    "afterHalfStopPct": 0,
+    "breakevenAfterTp1": true,
+    "buyBanUntilTm": "000000",
+    "reclaimMinPct": 0,
+    "banBuyIfOpenBelowSma": false,
+    "halfAddNextDay": false,
+    "halfAddMinPnlPct": 5,
+    "halfAddQtyRatio": 0.5,
+    "eodFlatIfNoProfit": true,
+    "rsiTpPeriod": 14,
+    "rsiTpMin": 70,
+    "tp3Pct": 4,
+    "tp3QtyRatio": 0.5,
+    "tp4Pct": 7.0,
+    "afterHalfTrailMinPct": 5,
+    "afterHalfTrailTpPct": 3,
+    "afterHalfRsiMin": 0,
+    "banRebuySameDay": true,
+    "paperOnly": true
+  },
+  "rules": {
+    "entry": "from above touch SMA20 once; do not buy on touch; same-day only: wait for a 3-min bar that closes bullish above SMA20 (close>open and close>SMA20); place a limit buy at the SMA20 nearby tick; if unfilled after 3 minutes cancel remainder and place market for leftover; wait expires same day; retouch resets; 14:00 cutoff only if next calendar day is closed; after full exit ban rebuy that stock same day",
+    "halfTp": "pnl>=tp1Pct sell tp1QtyRatio of holdings; then pnl>=tp2Pct sell tp2QtyRatio of remaining; after 2nd, remaining +tp3Pct sells tp3QtyRatio; then remaining +tp4Pct flattens; every day from 15:15, if 0%<=pnl<=3% flatten all remaining (keep losses and pnl>3%)",
+    "afterHalf": "after 1st or 2nd TP, remaining flattens at avg -afterHalfStopPct (0=breakeven); after 2nd, remaining +tp3Pct sells half then +tp4Pct flattens; after 3rd (residual): if peak>=afterHalfTrailMinPct and pnl<=peak-afterHalfTrailTpPct flatten residual (trail); else +tp4Pct flatten; trail and tp4 whichever first",
+    "stop": "before any TP: hard -2%; after 1st or 2nd TP: avg 0% (breakeven) flatten remaining; same-day entry flatten after 15:18 if px<=avg; prior-day SMA20 after 15:18",
+    "takeProfit": "intraday: 1st +1.2% sell 30%; 2nd +2% sell 30%; 3rd +4% sell 50% of remaining; 4th +7% flatten remaining; also profit (px>avg) and RSI14>=rsiTpMin flatten all remaining"
+  },
+  "fill": {
+    "entryPrice": "sma20NearTickLimit",
+    "exitPrice": "closeOrTick",
+    "feeRate": 0,
+    "btNote": "v45: residual trail peak>=5% then -3%p, keep tp4 +7.0% first-hit. v44: 1st +1.2%. v43: limit 3m then market. v42: 3rd +3%→+4%. v41: 1st +1.5% / 2nd +2% / 3rd +3%. v40 had 1st +1.2%. Live avgPx is broker kt00004."
+  },
+  "notes": "v45: residual trail 5/-3%p + tp4 keep. status=test. Paper live only. v44: 1st +1.2%. v43 = limit wait 3m then market leftover."
+}

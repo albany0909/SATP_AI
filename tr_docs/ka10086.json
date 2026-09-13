@@ -1,0 +1,360 @@
+{
+  "ka10086": {
+    "api_information": {
+      "api_id": "ka10086",
+      "api_name": "일별주가요청",
+      "menu_path": "국내주식 > 시세 > 일별주가요청(ka10086)",
+      "method": "POST",
+      "domain": {
+        "production": "https://api.kiwoom.com",
+        "mock": "https://mockapi.kiwoom.com"
+      },
+      "url": "/api/dostk/mrkcond",
+      "format": "JSON",
+      "content_type": "application/json;charset=UTF-8",
+      "description": "일별 주가 정보를 조회합니다."
+    },
+    "request_spec": {
+      "headers": [
+        {
+          "element": "api-id",
+          "name_kr": "TR명",
+          "type": "String",
+          "required": "Y",
+          "length": "10",
+          "description": "8자리 TR코드, ex) ka00001, usa10099"
+        },
+        {
+          "element": "authorization",
+          "name_kr": "접근토큰",
+          "type": "String",
+          "required": "Y",
+          "length": "1000",
+          "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 예) Bearer Egicyx..."
+        },
+        {
+          "element": "cont-yn",
+          "name_kr": "연속조회여부",
+          "type": "String",
+          "required": "N",
+          "length": "1",
+          "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+        },
+        {
+          "element": "next-key",
+          "name_kr": "연속조회키",
+          "type": "String",
+          "required": "N",
+          "length": "50",
+          "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+        }
+      ],
+      "body": [
+        {
+          "element": "stk_cd",
+          "name_kr": "종목코드",
+          "type": "String",
+          "required": "Y",
+          "length": "20",
+          "description": "거래소별 종목코드 (KRX:039490, NXT:039490_NX,SOR:039490_AL)"
+        },
+        {
+          "element": "qry_dt",
+          "name_kr": "조회일자",
+          "type": "String",
+          "required": "Y",
+          "length": "8",
+          "description": "YYYYMMDD"
+        },
+        {
+          "element": "indc_tp",
+          "name_kr": "표시구분",
+          "type": "String",
+          "required": "Y",
+          "length": "1",
+          "description": "0:수량, 1:금액(백만원)"
+        }
+      ]
+    },
+    "response_spec": {
+      "headers": [
+        {
+          "element": "api-id",
+          "name_kr": "TR명",
+          "type": "String",
+          "required": "Y",
+          "length": "10",
+          "description": "8자리 TR코드, ex) ka00001, usa10099"
+        },
+        {
+          "element": "cont-yn",
+          "name_kr": "연속조회여부",
+          "type": "String",
+          "required": "N",
+          "length": "1",
+          "description": "다음 데이터가 있을시 Y값 전달"
+        },
+        {
+          "element": "next-key",
+          "name_kr": "연속조회키",
+          "type": "String",
+          "required": "N",
+          "length": "50",
+          "description": "다음 데이터가 있을시 다음 키값 전달"
+        }
+      ],
+      "body": [
+        {
+          "element": "daly_stkpc",
+          "name_kr": "일별주가",
+          "type": "List<Map>",
+          "required": "N",
+          "length": null,
+          "description": ""
+        },
+        {
+          "element": "- date",
+          "name_kr": "날짜",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "YYYYMMDD"
+        },
+        {
+          "element": "- open_pric",
+          "name_kr": "시가",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: 원, 부호가 포함된 숫자"
+        },
+        {
+          "element": "- high_pric",
+          "name_kr": "고가",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: 원, 부호가 포함된 숫자"
+        },
+        {
+          "element": "- low_pric",
+          "name_kr": "저가",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: 원, 부호가 포함된 숫자"
+        },
+        {
+          "element": "- close_pric",
+          "name_kr": "종가",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: 원, 부호가 포함된 숫자"
+        },
+        {
+          "element": "- pred_rt",
+          "name_kr": "전일비",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: 원, 부호가 포함된 숫자"
+        },
+        {
+          "element": "- flu_rt",
+          "name_kr": "등락률",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: %, 부호 포함 소수점 둘째 자리까지 포맷된 백분율"
+        },
+        {
+          "element": "- trde_qty",
+          "name_kr": "거래량",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: 1주"
+        },
+        {
+          "element": "- amt_mn",
+          "name_kr": "금액(백만)",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: 백만원"
+        },
+        {
+          "element": "- crd_rt",
+          "name_kr": "신용비",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: %, 부호 포함 소수점 둘째 자리까지 포맷된 백분율"
+        },
+        {
+          "element": "- ind",
+          "name_kr": "개인",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: 백만원, 1주, 부호가 포함된 숫자"
+        },
+        {
+          "element": "- orgn",
+          "name_kr": "기관",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: 백만원, 1주, 부호가 포함된 숫자"
+        },
+        {
+          "element": "- for_qty",
+          "name_kr": "외인수량",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: 백만원, 1주, 부호가 포함된 숫자"
+        },
+        {
+          "element": "- frgn",
+          "name_kr": "외국계",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: 백만원, 1주, 부호가 포함된 숫자"
+        },
+        {
+          "element": "- prm",
+          "name_kr": "프로그램",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: 백만원, 1주, 부호가 포함된 숫자"
+        },
+        {
+          "element": "- for_rt",
+          "name_kr": "외인비",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: %, 부호 포함 소수점 둘째 자리까지 포맷된 백분율"
+        },
+        {
+          "element": "- for_poss",
+          "name_kr": "외인보유",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: %, 부호 포함 소수점 둘째 자리까지 포맷된 백분율"
+        },
+        {
+          "element": "- for_wght",
+          "name_kr": "외인비중",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: %, 부호 포함 소수점 둘째 자리까지 포맷된 백분율"
+        },
+        {
+          "element": "- for_netprps",
+          "name_kr": "외인순매수",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: 백만원, 1주, 부호가 포함된 숫자"
+        },
+        {
+          "element": "- orgn_netprps",
+          "name_kr": "기관순매수",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: 백만원, 1주, 부호가 포함된 숫자"
+        },
+        {
+          "element": "- ind_netprps",
+          "name_kr": "개인순매수",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: 백만원, 1주, 부호가 포함된 숫자"
+        },
+        {
+          "element": "- crd_remn_rt",
+          "name_kr": "신용잔고율",
+          "type": "String",
+          "required": "N",
+          "length": "20",
+          "description": "단위: %, 부호 포함 소수점 둘째 자리까지 포맷된 백분율"
+        }
+      ]
+    },
+    "examples": {
+      "request": {
+        "stk_cd": "005930",
+        "qry_dt": "20241125",
+        "indc_tp": "0"
+      },
+      "response": {
+        "daly_stkpc": [
+          {
+            "date": "20241125",
+            "open_pric": "+78800",
+            "high_pric": "+101100",
+            "low_pric": "-54500",
+            "close_pric": "-55000",
+            "pred_rt": "-22800",
+            "flu_rt": "-29.31",
+            "trde_qty": "20278",
+            "amt_mn": "1179",
+            "crd_rt": "0.00",
+            "ind": "--714",
+            "orgn": "+693",
+            "for_qty": "--266783",
+            "frgn": "0",
+            "prm": "0",
+            "for_rt": "+51.56",
+            "for_poss": "+51.56",
+            "for_wght": "+51.56",
+            "for_netprps": "--266783",
+            "orgn_netprps": "+693",
+            "ind_netprps": "--714",
+            "crd_remn_rt": "0.00"
+          },
+          {
+            "date": "20241122",
+            "open_pric": "-54500",
+            "high_pric": "77800",
+            "low_pric": "-54500",
+            "close_pric": "77800",
+            "pred_rt": "0",
+            "flu_rt": "0.00",
+            "trde_qty": "209653",
+            "amt_mn": "11447",
+            "crd_rt": "0.00",
+            "ind": "--196415",
+            "orgn": "+196104",
+            "for_qty": "--2965929",
+            "frgn": "0",
+            "prm": "--6",
+            "for_rt": "+51.56",
+            "for_poss": "+51.56",
+            "for_wght": "+51.56",
+            "for_netprps": "--2965929",
+            "orgn_netprps": "+196104",
+            "ind_netprps": "--196415",
+            "crd_remn_rt": "0.00"
+          }
+        ],
+        "return_code": 0,
+        "return_msg": "정상적으로 처리되었습니다"
+      }
+    },
+    "notes_and_errors": {
+      "usage_notes": [
+        "[주의] 외국인순매수 데이터는 거래소로부터 금액데이터가 제공되지 않고 수량으로만 조회됩니다."
+      ]
+    }
+  }
+}
