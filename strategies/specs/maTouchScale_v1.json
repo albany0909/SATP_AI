@@ -3,7 +3,7 @@
   "algCd": "MTS01",
   "name": "이평선터치 매매",
   "status": "test",
-  "version": 45,
+  "version": 46,
   "enabled": true,
   "timeframe": "1",
   "docPath": "strategies/docs/maTouchScale_v1.md",
@@ -41,7 +41,7 @@
     "takeMa": 10,
     "confirmMode": "bar3BreakLimit",
     "confirmBarMin": 3,
-    "limitWaitSec": 180,
+    "limitWaitSec": 600,
     "tp1Pct": 1.2,
     "tp1QtyRatio": 0.3,
     "tp2Pct": 2,
@@ -73,7 +73,7 @@
     "paperOnly": true
   },
   "rules": {
-    "entry": "from above touch SMA20 once; do not buy on touch; same-day only: wait for a 3-min bar that closes bullish above SMA20 (close>open and close>SMA20); place a limit buy at the SMA20 nearby tick; if unfilled after 3 minutes cancel remainder and place market for leftover; wait expires same day; retouch resets; 14:00 cutoff only if next calendar day is closed; after full exit ban rebuy that stock same day",
+    "entry": "from above touch SMA20 once; do not buy on touch; same-day only: wait for a 3-min bar that closes bullish above SMA20 (close>open and close>SMA20); place a limit buy at the SMA20 nearby tick; if unfilled after 10 minutes cancel remainder (no market follow-up); wait expires same day; retouch resets; 14:00 cutoff only if next calendar day is closed; after full exit ban rebuy that stock same day",
     "halfTp": "pnl>=tp1Pct sell tp1QtyRatio of holdings; then pnl>=tp2Pct sell tp2QtyRatio of remaining; after 2nd, remaining +tp3Pct sells tp3QtyRatio; then remaining +tp4Pct flattens; every day from 15:15, if 0%<=pnl<=3% flatten all remaining (keep losses and pnl>3%)",
     "afterHalf": "after 1st or 2nd TP, remaining flattens at avg -afterHalfStopPct (0=breakeven); after 2nd, remaining +tp3Pct sells half then +tp4Pct flattens; after 3rd (residual): if peak>=afterHalfTrailMinPct and pnl<=peak-afterHalfTrailTpPct flatten residual (trail); else +tp4Pct flatten; trail and tp4 whichever first",
     "stop": "before any TP: hard -2%; after 1st or 2nd TP: avg 0% (breakeven) flatten remaining; same-day entry flatten after 15:18 if px<=avg; prior-day SMA20 after 15:18",
@@ -83,7 +83,7 @@
     "entryPrice": "sma20NearTickLimit",
     "exitPrice": "closeOrTick",
     "feeRate": 0,
-    "btNote": "v45: residual trail peak>=5% then -3%p, keep tp4 +7.0% first-hit. v44: 1st +1.2%. v43: limit 3m then market. v42: 3rd +3%→+4%. v41: 1st +1.5% / 2nd +2% / 3rd +3%. v40 had 1st +1.2%. Live avgPx is broker kt00004."
+    "btNote": "v46: limit 10m then cancel only. v45: residual trail 5/-3%p. v44: 1st +1.2%. v43: limit 3m then market. Live avgPx is broker kt00004."
   },
-  "notes": "v45: residual trail 5/-3%p + tp4 keep. status=test. Paper live only. v44: 1st +1.2%. v43 = limit wait 3m then market leftover."
+  "notes": "v46: limit wait 10m then cancel leftover (no market). v45 trail keep. status=test."
 }

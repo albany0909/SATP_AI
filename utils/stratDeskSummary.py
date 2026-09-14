@@ -46,12 +46,12 @@ def _maTouchReclaimLine(p):
             f"그 봉 종가로 시장가 매수"
         )
     if mode in ("bar3BreakLimit", "bar3BreakBull", "bar3"):
-        waitSec = int(p.get("limitWaitSec") or 180)
+        waitSec = int(p.get("limitWaitSec") or 600)
         waitMin = max(1, int(round(waitSec / 60.0)))
         return (
             f"터치 후 {barMin}분봉이 SMA20을 종가 돌파하고 양봉(종가>시가)이면 "
-            f"SMA20 인근 호가 지정가 매수. {waitMin}분 미체결이면 취소 후 "
-            f"시장가 전환"
+            f"SMA20 인근 호가 지정가 매수. {waitMin}분 미체결이면 취소 "
+            f"(시장가 전환 없음)"
         )
     reclaimMin = float(p.get("reclaimMinPct") or 0)
     if reclaimMin > 0:
@@ -229,13 +229,15 @@ def buildMaTouchDeskText(algCd, stratId):
     steps = p.get("maSteps") or [20]
     stopMa = int(p.get("stopMa") or 20)
     hardPct = float(p.get("hardStopPct") or 2)
-    tp1Pct = float(p.get("tp1Pct") or 1.5)
+    tp1Pct = float(p.get("tp1Pct") or 1.2)
     tp1Ratio = float(p.get("tp1QtyRatio") or 0.3)
     tp2Pct = float(p.get("tp2Pct") or 2)
     tp2Ratio = float(p.get("tp2QtyRatio") or 0.3)
     tp3Pct = float(p.get("tp3Pct") or 4)
     tp3Ratio = float(p.get("tp3QtyRatio") or 0.5)
     tp4Pct = float(p.get("tp4Pct") or 7)
+    trailMin = float(p.get("afterHalfTrailMinPct") or 0)
+    trailDd = float(p.get("afterHalfTrailTpPct") or 0)
     afterHalfStop = float(p["afterHalfStopPct"]) if p.get("afterHalfStopPct") is not None else 0.0
     afterHalfStopLab = f"-{afterHalfStop:g}%" if afterHalfStop else "0%"
     halfAddOn = bool(p.get("halfAddNextDay", False))
@@ -310,6 +312,11 @@ def buildMaTouchDeskText(algCd, stratId):
     if tp4Pct > 0:
         buyLines.append(
             f"  4차 3차 후 잔량 +{tp4Pct:g}% → 전량"
+        )
+    if trailMin > 0 and trailDd > 0:
+        buyLines.append(
+            f"  잔량 고점 +{trailMin:g}% 이후 고점 대비 -{trailDd:g}%p → 전량 "
+            f"(3차 후·4차와 먼저 충족)"
         )
     if halfAddOn:
         buyLines.append(
@@ -414,13 +421,15 @@ def buildMaTouchRuleRows(algCd, stratId):
     steps = p.get("maSteps") or [20]
     stopMa = int(p.get("stopMa") or 20)
     hardPct = float(p.get("hardStopPct") or 2)
-    tp1Pct = float(p.get("tp1Pct") or 1.5)
+    tp1Pct = float(p.get("tp1Pct") or 1.2)
     tp1Ratio = float(p.get("tp1QtyRatio") or 0.3)
     tp2Pct = float(p.get("tp2Pct") or 2)
     tp2Ratio = float(p.get("tp2QtyRatio") or 0.3)
     tp3Pct = float(p.get("tp3Pct") or 4)
     tp3Ratio = float(p.get("tp3QtyRatio") or 0.5)
     tp4Pct = float(p.get("tp4Pct") or 7)
+    trailMin = float(p.get("afterHalfTrailMinPct") or 0)
+    trailDd = float(p.get("afterHalfTrailTpPct") or 0)
     afterHalfStop = float(p["afterHalfStopPct"]) if p.get("afterHalfStopPct") is not None else 0.0
     afterHalfStopLab = f"-{afterHalfStop:g}%" if afterHalfStop else "0%"
     halfAddOn = bool(p.get("halfAddNextDay", False))
@@ -469,6 +478,11 @@ def buildMaTouchRuleRows(algCd, stratId):
         )
     if tp4Pct > 0:
         halfParts.append(f"4차 3차 후 잔량 +{tp4Pct:g}% → 전량")
+    if trailMin > 0 and trailDd > 0:
+        halfParts.append(
+            f"잔량 고점 +{trailMin:g}% 이후 고점 대비 -{trailDd:g}%p → 전량 "
+            f"(3차 후·4차와 먼저 충족)"
+        )
     if halfAddOn:
         halfParts.append(
             f"2차 다음날 잔량 +{halfAddMin:g}% 이상 → 잔량의 50% 추가"

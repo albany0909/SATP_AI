@@ -46,6 +46,7 @@ _REASON_LABEL = {
     "LIMIT_UNFILL_BELOW_MA": "지정가미체결·이평아래",
     "LIMIT_UNFILL_5M": "5분미체결취소",
     "LIMIT_UNFILL_3M": "3분미체결→시장가",
+    "LIMIT_UNFILL_10M": "10분미체결취소",
     "LIMIT_CNCL_FAIL": "지정가취소실패",
     "QTY0": "수량0",
     "FILLED": "이미매수",
@@ -152,6 +153,8 @@ def _reasonTxt(raw):
     if text.startswith("after_half_stop_"):
         pct = text[16:].replace("pct", "")
         return f"익절후손절 {pct}%" if pct != "0" else "익절후손절 0%"
+    if text.startswith("trail_peak"):
+        return "잔량트레일"
     if text.upper().startswith("SMA") and text[3:].isdigit():
         return f"{text[3:]}일선"
     return text

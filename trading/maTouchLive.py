@@ -4,7 +4,7 @@
 - 관심종목(USE_TRADE=Y) 0B 현재가 + 전일 확정 일봉 SMA
 - 모의 세션만 주문 (paperOnly)
 - SMA20 터치 후 **당일** 3분봉이 SMA20을 종가 돌파하고 **그 봉이 양봉**이면
-  SMA20 **인근 호가 지정가** 매수. **3분** 미체결이면 잔량 취소 후 **시장가** 전환
+  SMA20 **인근 호가 지정가** 매수. **10분** 미체결이면 잔량 취소만 (시장가 전환 없음)
   (터치 즉시·틱 회복 매수 없음. confirmMode=reclaim 이면 예전 회복 매수)
 - 1차: 평단 **+1.5%** 보유 **30%** / 2차: **+2%** 보유 **30%** / 3차: **+4%** 보유 **50%** / 4차: **+7%** 잔량 전량
 - 1·2차 전 하드 **-2%** / **1차 또는 2차 후** 잔량 **0%(본전)** 이하면 전량 / 수익 중 **RSI14≥70** 전량
@@ -70,7 +70,7 @@ _ALG_CD = "MTS01"
 _TRDE_TP_LIMIT = "0"
 _TRDE_TP_MARKET = "3"
 _PAPER_WAIT_SEC = 1.05
-_LIMIT_WAIT_SEC = 180.0
+_LIMIT_WAIT_SEC = 600.0
 
 _lock = threading.Lock()
 # stkCd → {qty, avgPx, filled, halfTaken, lastPx, tradeDt}
@@ -162,9 +162,9 @@ def _loadParams():
         p["_paperOnly"] = bool(live.get("paperOnly", True))
         # v41: 1차 +1.5%. 예전 1차 절반 MFE 통계는 덮어쓰지 않는다.
         p["halfTpFromStat"] = False
-        # v43: 3분봉 양봉 돌파 → SMA20 인근 지정가, 3분 미체결 취소 후 시장가
+        # v46: 3분봉 양봉 돌파 → SMA20 인근 지정가, 10분 미체결 취소만 (시장가 없음)
         p["confirmMode"] = "bar3BreakLimit"
-        p["limitWaitSec"] = 180
+        p["limitWaitSec"] = 600
         p.setdefault("tp1Pct", 1.5)
         p.setdefault("tp1QtyRatio", 0.3)
         p.setdefault("tp2Pct", 2)
@@ -182,7 +182,7 @@ def _loadParams():
     p.setdefault("takeMa", 10)
     p.setdefault("confirmMode", "bar3BreakLimit")
     p.setdefault("confirmBarMin", 3)
-    p.setdefault("limitWaitSec", 180)
+    p.setdefault("limitWaitSec", 600)
     p.setdefault("halfTpPct", 3)
     p.setdefault("halfTpFromStat", False)
     p.setdefault("tp1Pct", 1.5)
@@ -429,7 +429,7 @@ def _dropExpiredWaits():
     for key, wait in list(_ordWait.items()):
         if int(wait.get("gotQty") or 0) > 0:
             continue
-        # 지정가 매수는 3분 체결 대기가 있다. 60초 만료로 지우면 안 된다
+        # 지정가 매수는 10분 체결 대기가 있다. 60초 만료로 지우면 안 된다
         if str(wait.get("trdeTp") or "") == _TRDE_TP_LIMIT:
             continue
         if now - float(wait.get("at") or 0) < 60.0:
@@ -1211,7 +1211,7 @@ def holdsOrPendingBuy(stkCd):
 def _placeBuy(stkCd, qty, px, step, isAdd=False, isRemain=False, maPx=None):
     """
     매수 주문. 신규 3분확인은 SMA20 인근 호가 지정가.
-    isRemain 이면 지정가 3분 미체결 잔량의 시장가 전환.
+    isRemain 이면 예전 잔량 시장가 경로(v46은 타임아웃에서 쓰지 않음).
     """
     if (not isAdd) and (not isRemain) and _isBuyBanned(stkCd):
         _notify(f"[이평터치] 당일재매수금지 — {stkCd} SMA{step} 매수 생략")
@@ -1463,7 +1463,7 @@ def _unfillStepIfEmpty(stkCd, step):
 
 
 def _enqueueLimitTimeouts():
-    """지정가 3분이 지났으면 워커에 취소→시장가 작업을 넣는다."""
+    """지정가 10분이 지났으면 워커에 취소 작업을 넣는다."""
     now = time.time()
     jobs = []
     with _lock:
@@ -1502,7 +1502,7 @@ def _enqueueLimitTimeouts():
 
 
 def _limitTimeoutThenMarket(stkCd, step, waitKey):
-    """지정가 3분 미체결 → 잔량 취소 후 시장가 전환."""
+    """지정가 10분 미체결 → 잔량 취소만. 시장가로 바꾸지 않는다."""
     with _lock:
         wait = _ordWait.get(waitKey)
         if wait is None:
@@ -1556,40 +1556,29 @@ def _limitTimeoutThenMarket(stkCd, step, waitKey):
         _dropOrdWait(waitKey)
     if leftover <= 0:
         return
-    _notify(f"[이평터치] 지정가 3분 미체결 취소→시장가 {stkCd} {leftover}주")
+    _notify(f"[이평터치] 지정가 10분 미체결 취소 {stkCd} {leftover}주")
     # 부분체결 잔량 취소만 BUY_CNCL. 전량 미체결은 BUY 가 없으므로 ORD 취소만.
     if gotQty > 0:
         _writeAlgEvt(
             "BUY_CNCL",
             stkCd,
-            reason="LIMIT_UNFILL_3M",
+            reason="LIMIT_UNFILL_10M",
             px=pxNow or maPx,
             qty=leftover,
-            note=f"SMA{step} 지정가→시장가",
+            note=f"SMA{step} 지정가",
         )
     else:
         _writeAlgEvt(
             "BUY_ORD_CNCL",
             stkCd,
-            reason="LIMIT_UNFILL_3M",
+            reason="LIMIT_UNFILL_10M",
             px=pxNow or maPx,
             qty=leftover,
-            note=f"SMA{step} 미체결→시장가",
+            note=f"SMA{step} 미체결취소",
         )
-    mktPx = pxNow if pxNow > 0 else maPx
-    if mktPx <= 0:
-        _notify(f"[이평터치] 시장가전환 생략(가격없음) {stkCd} {leftover}주")
-        if gotQty <= 0:
-            _unfillStepIfEmpty(stkCd, step)
-            _voidUnfilledLedger(stkCd, reason="LIMIT_UNFILL_3M")
-        return
-    # 잔량은 시장가로. 실패 시에만 매차/원장 정리
-    ok = _placeBuy(
-        stkCd, leftover, float(mktPx), step, isRemain=True, maPx=None
-    )
-    if (not ok) and gotQty <= 0:
+    if gotQty <= 0:
         _unfillStepIfEmpty(stkCd, step)
-        _voidUnfilledLedger(stkCd, reason="LIMIT_UNFILL_3M")
+        _voidUnfilledLedger(stkCd, reason="LIMIT_UNFILL_10M")
 
 
 def _placeSell(stkCd, qty, px, reason):

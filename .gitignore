@@ -41,3 +41,13 @@ Thumbs.db
 config/data/algDayReview/
 config/data/stratValRun/
 config/data/*State.json
+# --- extra secrets / local ops (GitHub safety) ---
+*.pem
+*.p12
+*.pfx
+*_appkey.txt
+*_secretkey.txt
+**/credentials*.json
+**/secrets*.json
+config/data/settings.local.json
+!.env.example

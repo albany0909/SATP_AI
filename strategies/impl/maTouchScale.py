@@ -3,7 +3,7 @@
 
 - 전일 확정 일봉 SMA20 터치 후, **당일** 3분봉이 SMA20을 종가 돌파하고
   그 봉이 양봉(종가>시가)으로 끝나면 SMA20 **인근 호가 지정가** 매수.
-  **3분** 안에 안 체결되면 취소 후 **그 봉 종가 시장가**로 전환.
+  **10분** 안에 안 체결되면 취소만 (시장가 전환 없음).
   confirmMode=bar3BreakMarket 이면 돌파 봉 종가 시장가
 - 터치 즉시 매수하지 않음. 확인 대기 중 날짜가 바뀌면 소멸. 14:00 컷은 다음날 휴장일만
 - confirmMode=reclaim 이면 예전처럼 당일 현재가>SMA20 틱/봉 회복 매수
@@ -169,11 +169,11 @@ def addBarTmMin(hms, addMin):
 
 
 def limitWaitMin(params):
-    """지정가 미체결 대기(분). 기본 3분."""
+    """지정가 미체결 대기(분). 기본 10분."""
     try:
-        sec = float((params or {}).get("limitWaitSec") or 180)
+        sec = float((params or {}).get("limitWaitSec") or 600)
     except (TypeError, ValueError):
-        sec = 180.0
+        sec = 600.0
     return max(1, int(round(sec / 60.0)))
 
 
@@ -227,7 +227,7 @@ def applyBar3Confirm(pend, closedBar, maPx):
 def resolveBar3LimitFill(closedBar, maPx, limitPx):
     """
     지정가 대기 중 한 봉의 체결 모형.
-    저가 ≤ 지정가 → 지정가 체결. 아니면 wait (3분 뒤 시장가 전환은 호출측).
+    저가 ≤ 지정가 → 지정가 체결. 아니면 wait (10분 뒤 취소는 호출측).
     반환: ("limit"|"wait", fillPx|None)
     """
     if not closedBar:
@@ -664,7 +664,7 @@ class MaTouchScaleStrategy:
         return None
 
     def _resolveBar3LimitOnMin(self, bar, tradeDt, cntrTm, events):
-        """지정가 대기: 이후 1분봉 저가가 호가면 체결. 3분이 지나면 종가 시장가."""
+        """지정가 대기: 이후 1분봉 저가가 호가면 체결. 10분이 지나면 취소만."""
         if not bar or not self._limitWait:
             return
         barTm = self._barTm(bar)
@@ -692,24 +692,8 @@ class MaTouchScaleStrategy:
                     events.append(ev)
                 continue
             if expireTm and barTm >= expireTm:
+                # 실전과 동일: 미체결은 취소만 (시장가 전환 없음)
                 self._limitWait.pop(int(step), None)
-                # 실전과 동일: 미체결 잔량을 그 봉 종가 시장가로
-                try:
-                    closePx = float(bar.get("close") or bar.get("c") or 0)
-                except (TypeError, ValueError):
-                    closePx = 0.0
-                if closePx <= 0:
-                    continue
-                ev = self._buyStep(
-                    step,
-                    closePx,
-                    tradeDt,
-                    cntrTm,
-                    f"ma{step}_bar3_mkt_after_limit",
-                    ordQty=ordQty if ordQty > 0 else None,
-                )
-                if ev:
-                    events.append(ev)
 
     def _tryBar3Buy(self, closed3, tradeDt, cntrTm, events, allowBuy):
         """완성된 3분봉이 양봉 돌파면 SMA20 인근 호가 지정가(또는 시장가 모드)."""
@@ -740,7 +724,7 @@ class MaTouchScaleStrategy:
                 if qty < 1:
                     self.pendingConfirm.pop(int(step), None)
                     continue
-                # 실전: 지정가 후 3분 대기. BT는 이후 1분봉 저가로 체결, 만료 시 종가 시장가
+                # 실전: 지정가 후 10분 대기. BT는 이후 1분봉 저가로 체결, 만료 시 취소
                 self._limitWait[int(step)] = {
                     "maPx": maPx,
                     "limitPx": limitPx,

@@ -10,12 +10,7 @@
     "paperOnly": false,
     "buyAmt5": 1000000,
     "buyAmt10": 1000000,
-    "buyAmt15": 1000000,
-    "halfTpPct": 1.4,
-    "halfTpFromStat": true,
-    "halfTpStatYmd": "20260911",
-    "halfTpStatFromYmd": "20260831",
-    "halfTpStatN": 13
+    "buyAmt15": 1000000
   },
   "deskTradeExch": "KRX",
   "deskTradeMode": "real",
@@ -45,12 +40,12 @@
   "telegramPush": {
     "master": true,
     "boot": true,
-    "batch": false,
-    "wnews": false,
-    "ordExec": true,
-    "closePnl": false,
-    "cnsr": false,
-    "rsv": false,
+    "batch": true,
+    "wnews": true,
+    "ordExec": false,
+    "closePnl": true,
+    "cnsr": true,
+    "rsv": true,
     "stls": true,
     "tokenRenew": true,
     "btVal": true
