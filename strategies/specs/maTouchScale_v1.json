@@ -3,7 +3,7 @@
   "algCd": "MTS01",
   "name": "이평선터치 매매",
   "status": "test",
-  "version": 46,
+  "version": 47,
   "enabled": true,
   "timeframe": "1",
   "docPath": "strategies/docs/maTouchScale_v1.md",
@@ -83,7 +83,7 @@
     "entryPrice": "sma20NearTickLimit",
     "exitPrice": "closeOrTick",
     "feeRate": 0,
-    "btNote": "v46: limit 10m then cancel only. v45: residual trail 5/-3%p. v44: 1st +1.2%. v43: limit 3m then market. Live avgPx is broker kt00004."
+    "btNote": "v47: no TP/SL until 00 buy fill; acnt sync ignored while BUY ord wait pending. v46: limit 10m then cancel only. v45: residual trail 5/-3%p. v44: 1st +1.2%. v43: limit 3m then market. Live avgPx is broker kt00004."
   },
-  "notes": "v46: limit wait 10m then cancel leftover (no market). v45 trail keep. status=test."
+  "notes": "v47: block exits/acnt-qty while BUY wait gotQty=0 (Ananti race). v46: limit wait 10m then cancel leftover (no market). v45 trail keep. status=test."
 }

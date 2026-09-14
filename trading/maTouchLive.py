@@ -93,6 +93,8 @@ _pending = set()
 _workerStarted = False
 # 주문번호 → 미체결 대기. 평단은 00 체결·kt00004 까지 시세가로 올리지 않는다
 _ordWait = {}
+# 만료된 매도 대기. 손절 봉인을 풀어도 늦은 00 체결은 여기서 찾는다
+_ordWaitGone = {}
 # 같은 날·종목·매차·사유 스킵은 1회만 복기에 남긴다
 _skipOnce = set()
 # 당일: 이평 터치는 됐지만 3분봉 확인(또는 회복)을 기다리는 매차
@@ -410,6 +412,26 @@ def _hasOrdWait(cd, side=None):
     return False
 
 
+
+def _buyFillPending(cd, side="BUY"):
+    """
+    00 체결 전 매수 대기면 True.
+    계좌동기(kt00004)가 지정가 체결을 먼저 보여줘도, gotQty==0 이면
+    아직 공식 매수 반영 전으로 본다 (아난티 레이스 방지).
+    """
+    cd = normStkCd(cd)
+    if not cd:
+        return False
+    for wait in _ordWait.values():
+        if wait.get("cd") != cd:
+            continue
+        if side and wait.get("side") != side:
+            continue
+        if int(wait.get("gotQty") or 0) <= 0:
+            return True
+    return False
+
+
 def _registerOrdWait(ordNo, wait):
     key = _normOrdNo(ordNo) or (
         f"{wait.get('side')}:{wait.get('cd')}:{int(time.time() * 1000)}"
@@ -419,12 +441,37 @@ def _registerOrdWait(ordNo, wait):
     return key
 
 
+def _pruneGoneWaits():
+    """만료 매도 대기는 당일·4시간만 유지. 다음날 오매칭 방지."""
+    now = time.time()
+    today = _todayYmd()
+    for key, wait in list(_ordWaitGone.items()):
+        oldDay = str(wait.get("tradeDt") or "")[:8]
+        age = now - float(wait.get("at") or 0)
+        if (oldDay and oldDay != today) or age > 4 * 3600:
+            _ordWaitGone.pop(key, None)
+
+
+def _stashGoneSellWait(key, wait):
+    """손절이 막히지 않게 산 대기는 지우고, 늦은 00 매칭용으로만 남긴다."""
+    if not wait or str(wait.get("side") or "") != "SELL":
+        return
+    snap = wait
+    snap["tradeDt"] = str(wait.get("tradeDt") or _todayYmd())
+    _ordWaitGone[key] = snap
+    cd = wait.get("cd")
+    if cd:
+        _ordWaitGone[f"SELL:{cd}"] = snap
+
+
 def _dropExpiredWaits():
     """
     접수만 되고 체결이 안 온 대기. 시장가는 60초면 풀어 손절이 영구 봉인되지 않게 한다.
     지정가(3분 대기)는 타임아웃 처리기가 맡기므로 여기서 지우지 않는다.
     일부 체결(gotQty>0)은 00/계좌가 마칠 때까지 유지.
+    매도는 만료해도 _ordWaitGone 에 남겨 늦은 체결을 버리지 않는다.
     """
+    _pruneGoneWaits()
     now = time.time()
     for key, wait in list(_ordWait.items()):
         if int(wait.get("gotQty") or 0) > 0:
@@ -435,20 +482,21 @@ def _dropExpiredWaits():
         if now - float(wait.get("at") or 0) < 60.0:
             continue
         _ordWait.pop(key, None)
+        _stashGoneSellWait(key, wait)
         termLog(
             f"[maTouch] 주문대기 만료 {wait.get('cd')} {wait.get('side')} "
             f"{wait.get('expectQty')}주"
         )
 
 
-def _findOrdWait(ordNo, cd, side):
-    """00 체결을 대기 주문에 매칭. 주문번호 우선, 없으면 같은 종목·방향."""
+def _findStoreWait(store, ordNo, cd, side):
+    """한 대기 맵에서 주문번호·종목·방향 순으로 찾는다."""
     key = _normOrdNo(ordNo)
-    if key and key in _ordWait:
-        wait = _ordWait[key]
+    if key and key in store:
+        wait = store[key]
         if wait.get("cd") == cd and (not side or wait.get("side") == side):
             return key, wait
-    for wKey, wait in _ordWait.items():
+    for wKey, wait in store.items():
         if wait.get("cd") != cd or wait.get("side") != side:
             continue
         if int(wait.get("gotQty") or 0) < int(wait.get("expectQty") or 0):
@@ -456,8 +504,46 @@ def _findOrdWait(ordNo, cd, side):
     return "", None
 
 
+def _findOrdWait(ordNo, cd, side):
+    """
+    00 체결을 대기 주문에 매칭.
+    산 대기 → 만료 매도 대기. 주문번호가 있으면 새 매도 대기보다 옛 만료를 우선한다.
+    """
+    key = _normOrdNo(ordNo)
+    if key and key in _ordWait:
+        wait = _ordWait[key]
+        if wait.get("cd") == cd and (not side or wait.get("side") == side):
+            return key, wait
+    # 늦은 00 는 주문번호로 만료 매도를 먼저 본다 (이후 손절 대기와 섞이지 않게)
+    if key and key in _ordWaitGone:
+        wait = _ordWaitGone[key]
+        if wait.get("cd") == cd and (not side or wait.get("side") == side):
+            return key, wait
+    wKey, wait = _findStoreWait(_ordWait, "", cd, side)
+    if wait:
+        return wKey, wait
+    if side == "SELL":
+        return _findStoreWait(_ordWaitGone, "", cd, side)
+    return "", None
+
+
+def _forgetWait(wait):
+    """같은 대기 객체를 산/만료 맵에서 모두 뺀다."""
+    if not wait:
+        return
+    for store in (_ordWait, _ordWaitGone):
+        for k, w in list(store.items()):
+            if w is wait:
+                store.pop(k, None)
+
+
 def _dropOrdWait(key):
+    wait = _ordWait.get(key) or _ordWaitGone.get(key)
+    if wait:
+        _forgetWait(wait)
+        return
     _ordWait.pop(key, None)
+    _ordWaitGone.pop(key, None)
 
 
 def _patchLedgerPos(stkCd, rec):
@@ -893,6 +979,7 @@ def _loadState():
             for key, val in on.items():
                 if val:
                     loaded[cd][key] = True
+        _mergePendSellFromFile(loaded)
         _pos = loaded
         termLog(f"[maTouch] 원장 미청산 {len(_pos)}종 로드")
         _loadWaitConfirmFromFile(today)
@@ -1051,6 +1138,123 @@ def _restoreWaitFromToday():
     if added:
         _saveState()
         termLog(f"[maTouch] 당일 20선회복 대기 복구 {added}매차")
+
+
+def _mergePendSellFromFile(loaded):
+    """원장 로드 후 상태파일의 미체결 매도 힌트를 보탠다."""
+    try:
+        if not _STATE_PATH.is_file():
+            return
+        data = json.loads(_STATE_PATH.read_text(encoding="utf-8"))
+        raw = (data or {}).get("pos") or {}
+        if not isinstance(raw, dict):
+            return
+        keys = (
+            "pendSellReason",
+            "pendSellQty",
+            "pendSellQtyBefore",
+            "pendSellOrdNo",
+        )
+        for cd, rec in raw.items():
+            if not isinstance(rec, dict):
+                continue
+            ncd = normStkCd(cd)
+            if ncd not in loaded:
+                continue
+            for key in keys:
+                val = rec.get(key)
+                if val not in (None, ""):
+                    loaded[ncd][key] = val
+    except Exception as err:
+        termLog(f"[maTouch] 매도대기힌트 로드 실패: {err}")
+
+
+def _restoreGoneSellFromToday():
+    """
+    오늘 매도주문은 있는데 매도(체결)가 부족한 종목을 만료대기처럼 복원.
+    재기동 후에도 늦은 00 가 거래탭·원장에 붙게 한다.
+    """
+    today = _todayYmd()
+    try:
+        from utils.algEvtStore import listAlgEvt
+
+        rows = listAlgEvt(_ALG_CD, today, limit=2000) or []
+    except Exception as err:
+        termLog(f"[maTouch] 매도체결 대기복원 실패: {err}")
+        return
+    ords = {}
+    sold = {}
+    for row in rows:
+        cd = normStkCd(row.get("STK_CD") or row.get("stkCd"))
+        if not cd:
+            continue
+        tp = str(row.get("EVT_TP") or row.get("evtTp") or "").upper()
+        try:
+            qty = int(float(row.get("QTY") or 0))
+        except (TypeError, ValueError):
+            qty = 0
+        if qty <= 0:
+            continue
+        if tp == "SELL_ORD":
+            ords.setdefault(cd, []).append(
+                {
+                    "qty": qty,
+                    "reason": str(row.get("REASON") or row.get("reason") or "매도체결"),
+                }
+            )
+        elif tp == "SELL":
+            sold[cd] = sold.get(cd, 0) + qty
+    added = 0
+    with _lock:
+        for cd, items in ords.items():
+            rec = _pos.get(cd)
+            if not rec:
+                continue
+            leftSold = int(sold.get(cd) or 0)
+            for item in items:
+                ordQty = int(item.get("qty") or 0)
+                if leftSold >= ordQty:
+                    leftSold -= ordQty
+                    continue
+                unfilled = ordQty - leftSold
+                leftSold = 0
+                if unfilled <= 0:
+                    continue
+                goneKey = f"SELL:{cd}"
+                if goneKey in _ordWaitGone or _hasOrdWait(cd, "SELL"):
+                    continue
+                posQty = int(rec.get("qty") or 0)
+                buyQty = int(rec.get("buyQty") or 0)
+                sellQty = int(rec.get("sellQty") or 0)
+                qtyBefore = int(rec.get("pendSellQtyBefore") or 0)
+                # 매도 이벤트 없이 잔량만 줄었으면 주문 전 수량은 매수수량
+                if qtyBefore <= 0:
+                    if sellQty <= 0 and buyQty > posQty > 0:
+                        qtyBefore = buyQty
+                    else:
+                        qtyBefore = posQty
+                wait = {
+                    "cd": cd,
+                    "side": "SELL",
+                    "kind": "SELL",
+                    "step": 0,
+                    "expectQty": unfilled,
+                    "gotQty": 0,
+                    "qtyBefore": qtyBefore,
+                    "reason": item.get("reason") or "매도체결",
+                    "ledgerBuy": False,
+                    "tradeDt": today,
+                    "at": time.time(),
+                    "restored": True,
+                }
+                _ordWaitGone[goneKey] = wait
+                added += 1
+                termLog(
+                    f"[maTouch] 매도체결 대기복원 {cd} {unfilled}주 · "
+                    f"{wait.get('reason')}"
+                )
+    if added:
+        termLog(f"[maTouch] 미체결 매도주문 {added}건 대기복원")
 
 
 def _smaReady(cd):
@@ -1683,6 +1887,12 @@ def _placeSell(stkCd, qty, px, reason):
         rec = _pos.get(stkCd) or {}
         rec["lastPx"] = px
         _pos[stkCd] = rec
+        qtyBefore = int(rec.get("qty") or 0)
+        rec["pendSellReason"] = reason
+        rec["pendSellQty"] = int(qty)
+        rec["pendSellQtyBefore"] = qtyBefore
+        rec["pendSellOrdNo"] = _normOrdNo(result.get("ordNo"))
+        _pos[stkCd] = rec
         _registerOrdWait(
             result.get("ordNo"),
             {
@@ -1692,9 +1902,10 @@ def _placeSell(stkCd, qty, px, reason):
                 "step": 0,
                 "expectQty": int(qty),
                 "gotQty": 0,
-                "qtyBefore": int(rec.get("qty") or 0),
+                "qtyBefore": qtyBefore,
                 "reason": reason,
                 "ledgerBuy": False,
+                "tradeDt": _todayYmd(),
             },
         )
         _sellFailUntil.pop(normStkCd(stkCd), None)
@@ -1741,17 +1952,83 @@ def _applyBuyFillLocked(stkCd, fillPx, fillQty, wait):
     return rec, firstSlot, step
 
 
+def _clearPendSell(rec):
+    """대기 매도 힌트 제거. 재기동 복구용 필드."""
+    if not rec:
+        return
+    for key in (
+        "pendSellReason",
+        "pendSellQty",
+        "pendSellQtyBefore",
+        "pendSellOrdNo",
+    ):
+        rec.pop(key, None)
+
+
+def _sellQtyAlreadyCut(rec, wait, fillQty):
+    """
+    계좌동기가 이미 잔량을 줄였으면 True.
+    이때 또 빼면 남은 보유를 유령 청산한다.
+    """
+    qtyBefore = int((wait or {}).get("qtyBefore") or 0)
+    expect = int((wait or {}).get("expectQty") or fillQty or 0)
+    posQty = int((rec or {}).get("qty") or 0)
+    if qtyBefore <= 0 or expect <= 0:
+        return False
+    return posQty <= max(0, qtyBefore - expect)
+
+
+def _buildSellWaitRecover(cd, fillQty, ordNo):
+    """
+    대기 없는 매도 00. 우리 포지션일 때만 복구한다.
+    주문접수가 체결보다 늦거나, 60초 만료 후 체결이 온 경우.
+    """
+    rec = _pos.get(cd)
+    if not rec:
+        return None
+    reason = str(rec.get("pendSellReason") or "")
+    expect = int(rec.get("pendSellQty") or 0) or int(fillQty or 0)
+    qtyBefore = int(rec.get("pendSellQtyBefore") or 0)
+    if qtyBefore <= 0:
+        posQty = int(rec.get("qty") or 0)
+        buyQty = int(rec.get("buyQty") or 0)
+        sellQty = int(rec.get("sellQty") or 0)
+        # 원장 매도 0인데 잔량만 줄었으면 주문 전 수량은 매수수량
+        if sellQty <= 0 and buyQty > posQty > 0:
+            qtyBefore = buyQty
+        else:
+            qtyBefore = posQty
+    if not reason:
+        reason = "매도체결"
+    return {
+        "cd": cd,
+        "side": "SELL",
+        "kind": "SELL",
+        "step": 0,
+        "expectQty": max(int(expect), int(fillQty or 0)),
+        "gotQty": 0,
+        "qtyBefore": qtyBefore,
+        "reason": reason,
+        "ledgerBuy": False,
+        "tradeDt": _todayYmd(),
+        "recovered": True,
+        "ordNo": _normOrdNo(ordNo),
+    }
+
+
 def _applySellFillLocked(stkCd, fillPx, fillQty, wait):
     """락 안에서 매도 체결 반영. 평단은 유지하고 잔량만 줄인다."""
     rec = _pos.get(stkCd) or {}
     posQty = int(rec.get("qty") or 0)
     qty = int(fillQty or 0)
-    # 보유보다 많이 체결된 것처럼 오면 잔량까지만 (중복·과다 집계 방지)
-    if posQty > 0 and qty > posQty:
+    alreadyCut = _sellQtyAlreadyCut(rec, wait, qty)
+    # 체결금액·수량은 00 기준. 잔량만 중복 차감하지 않는다
+    cutQty = 0 if alreadyCut else qty
+    if posQty > 0 and cutQty > posQty:
         termLog(
-            f"[maTouch] 매도체결 수량 보정 {stkCd} {qty}→{posQty}주 (보유초과)"
+            f"[maTouch] 매도체결 수량 보정 {stkCd} {cutQty}→{posQty}주 (보유초과)"
         )
-        qty = posQty
+        cutQty = posQty
     rec["sellAmt"] = float(rec.get("sellAmt") or 0) + float(fillPx) * qty
     rec["sellQty"] = int(rec.get("sellQty") or 0) + qty
     rec["lastPx"] = fillPx
@@ -1767,10 +2044,16 @@ def _applySellFillLocked(stkCd, fillPx, fillQty, wait):
         rec["halfTaken"] = True
     elif "1차익절" in reason:
         rec["tp1Taken"] = True
-    left = posQty - qty
+    left = posQty if alreadyCut else posQty - cutQty
+    if alreadyCut:
+        termLog(
+            f"[maTouch] 매도잔량 이미반영 {stkCd} 보유 {posQty}주 "
+            f"체결 {qty}주 — 수량 유지"
+        )
     closed = left <= 0
     rec["qty"] = 0 if closed else left
     if closed:
+        _clearPendSell(rec)
         _pos.pop(stkCd, None)
     else:
         _pos[stkCd] = rec
@@ -1779,8 +2062,8 @@ def _applySellFillLocked(stkCd, fillPx, fillQty, wait):
 
 def onBrokerFill(sideLabel, stkCd, fillQty, fillPx, ordNo=""):
     """
-    00 실체결. 이평터치 대기 주문만 평단·잔량에 반영한다.
-    키움 체결가가 오므로 주문 당시 시세가와 달라도 실제 매입가로 맞춘다.
+    00 실체결. 이평터치 매수·매도 모두 대기 없이 와도 포지션에 반영한다.
+    키움 체결가가 오므로 주문 당시 시세가와 달라도 실제 체결가로 맞춘다.
     """
     if not _isEnabled():
         return
@@ -1818,6 +2101,12 @@ def onBrokerFill(sideLabel, stkCd, fillQty, fillPx, ordNo=""):
             }
             wKey = _registerOrdWait(ordNo, wait)
             termLog(f"[maTouch] 체결선착 대기복구 {cd} {qty}주")
+        # 매도도 선착·만료 후 00 가 오면 포지션이 있을 때 복구한다
+        if not wait and side == "SELL":
+            wait = _buildSellWaitRecover(cd, qty, ordNo)
+            if wait:
+                wKey = _registerOrdWait(ordNo, wait)
+                termLog(f"[maTouch] 매도체결 대기복구 {cd} {qty}주")
         if not wait:
             return
         wait["gotQty"] = int(wait.get("gotQty") or 0) + qty
@@ -1830,6 +2119,8 @@ def onBrokerFill(sideLabel, stkCd, fillQty, fillPx, ordNo=""):
             closeJob = (rec, closed, reason, px, qty)
         if int(wait.get("gotQty") or 0) >= int(wait.get("expectQty") or 0):
             _dropOrdWait(wKey)
+            if rec:
+                _clearPendSell(rec)
         _saveState()
     if buyJob:
         rec, firstSlot, step, px, qty, waitSnap = buyJob
@@ -1951,6 +2242,10 @@ def syncFromAcntEvlt(body):
         for cd, rec in list(_pos.items()):
             item = holds.get(cd)
             acntQty = int((item or {}).get("qty") or 0)
+            # 00 매수 체결 전(지정가 대기·gotQty=0): 계좌에 잔량이 보여도
+            # qty/평단/원장을 올리지 않는다. (동기 선반영 → 익절 선주문 레이스 방지)
+            if _buyFillPending(cd, "BUY"):
+                continue
             # 계좌 잔량 0 인데 원장만 남아 있으면 관심 색이 보유와 어긋난다.
             # 매수/매도 대기 중이면 계좌 TR 지연일 수 있어 유지.
             if not item or acntQty <= 0:
@@ -2025,6 +2320,8 @@ def syncFromAcntEvlt(body):
         for cd, rec in list(_pos.items()):
             item = holds.get(cd)
             if not item or int(item.get("qty") or 0) <= 0:
+                continue
+            if _buyFillPending(cd, "BUY"):
                 continue
             if getOpenLedgerRow(_STRAT_ID, cd):
                 continue
@@ -2547,10 +2844,12 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
         except Exception:
             acntQtyNow = -1
         # 체결 보유(qty>0)만 매도. 계좌 0주·쿨다운이면 주문 자체를 큐에 넣지 않음.
+        # 매수 00 체결 전엔 익절·손절·15:15 등 매도 금지 (계좌동기 허수 포지션 차단)
         if (
             qtyNow > 0
             and avgPx > 0
             and (not _hasOrdWait(cd, "SELL"))
+            and (not _buyFillPending(cd, "BUY"))
             and (not sellCool)
             and acntQtyNow != 0
         ):
@@ -2807,6 +3106,7 @@ def prepareMaTouchSession(codes):
         return
     _loadState()
     _restoreWaitFromToday()
+    _restoreGoneSellFromToday()
     cds = [normStkCd(c) for c in (codes or []) if normStkCd(c)]
     if not cds:
         return
@@ -3052,6 +3352,7 @@ def startMaTouchLive():
             termLog(f"[maTouch] 1차익절 통계 시드 실패: {err}")
     _loadState()
     _restoreWaitFromToday()
+    _restoreGoneSellFromToday()
     if not _workerStarted:
         _workerStarted = True
         threading.Thread(target=_ordWorker, name="maTouchOrd", daemon=True).start()
