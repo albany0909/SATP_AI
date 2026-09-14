@@ -79,6 +79,8 @@ _DAY_CNCL_FG = QColor("#6a6a6a")
 _DAY_SIDE_CNCL_ROLE = int(Qt.ItemDataRole.UserRole) + 2
 _DAY_SIDE_STK_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 _DAY_SIDE_KIND_ROLE = int(Qt.ItemDataRole.UserRole)
+_DAY_SIDE_EVT_ROLE = int(Qt.ItemDataRole.UserRole) + 4
+_DAY_SIDE_QTY_ROLE = int(Qt.ItemDataRole.UserRole) + 3
 
 
 def _fmtPx(raw):
@@ -498,7 +500,7 @@ class RsiDelegate(QStyledItemDelegate):
 
 
 class SideBgDelegate(QStyledItemDelegate):
-    """매수/매도 칸만 연한빨강·연한파랑 배경. 전량 미체결 취소는 연한회색."""
+    """매수/매도 칸만 연한빨강·연한파랑 배경. 주문취소·원주문은 연한회색."""
 
     def paint(self, painter, option, index):
         text = str(index.data() or "")
@@ -1300,11 +1302,17 @@ class TradeDeskWin(QMainWindow):
         self.tradeModeCmb.addItem("모의투자", "paper")
         self.tradeModeCmb.addItem("실전투자", "real")
         self.tradeModeCmb.setToolTip(
-            "모의/실전 API·주문 전환. 실전은 확인 후 로그인·WS를 다시 연결한다."
+            "모의/실전 API·주문 전환. 바꾸면 로그인·WS를 다시 연결한다."
         )
         self.tradeModeCmb.currentIndexChanged.connect(self._onTradeModeChanged)
         modeRow.addWidget(self.tradeModeCmb, 1)
         settLay.addLayout(modeRow)
+        self.tradeModeStatusLbl = QLabel("")
+        self.tradeModeStatusLbl.setWordWrap(True)
+        self.tradeModeStatusLbl.setStyleSheet(
+            "font-size: 12px; font-weight: 600; color: #1565c0; padding: 2px 0;"
+        )
+        settLay.addWidget(self.tradeModeStatusLbl)
         exchRow = QHBoxLayout()
         exchRow.addWidget(QLabel("매매방식"))
         self.tradeExchCmb = QComboBox()
@@ -1319,8 +1327,9 @@ class TradeDeskWin(QMainWindow):
         exchRow.addWidget(self.tradeExchCmb, 1)
         settLay.addLayout(exchRow)
         settHint = QLabel(
-            "투자모드·매매방식을 바꾸면 즉시 저장됩니다.\n"
-            "실전 전환 시 확인창이 뜹니다."
+            "오른쪽 「설정」에서 모의/실전을 바꿀 수 있습니다.\n"
+            "전환 시 확인창 → 설정 저장 → 로그인·WS 재연결.\n"
+            "실전은 paperOnly도 함께 해제되어 자동매매 주문이 실계좌로 나갑니다."
         )
         settHint.setStyleSheet("color: #666; font-size: 12px;")
         settHint.setWordWrap(True)
@@ -1647,6 +1656,7 @@ class TradeDeskWin(QMainWindow):
         if key == "sett":
             self._loadTradeModeCmb()
             self._loadTradeExchCmb()
+            self._refreshTradeModeStatus()
         if key == "chart":
             self._openDeskChart()
         else:
@@ -1985,10 +1995,16 @@ class TradeDeskWin(QMainWindow):
 
     def _loadTodayDayTrades(self):
         """오늘 주문·체결·실패만 시간순으로 당일 거래 그리드에 넣는다.
-        전량 미체결 취소(BUY_CNCL)된 매수는 행은 남기되 회색으로 표시하고 평단 집계에서 뺀다.
+        주문취소 행과 짝이 되는 원주문(매수주문·매도주문)은 회색으로 남긴다.
+        전량 미체결 취소된 매수 체결은 회색·평단 집계에서 뺀다.
         """
         try:
-            from ui.tradeLogBus import DAY_TRADE_EVT_TPS, rowToDayTrade
+            from ui.tradeLogBus import (
+                DAY_CNCL_EVT_TPS,
+                DAY_ORD_EVT_TPS,
+                DAY_TRADE_EVT_TPS,
+                rowToDayTrade,
+            )
             from utils.algEvtStore import listAlgEvt
             from utils.deskLogStore import deskLogYmd
             from utils.stkCdUtil import normStkCd
@@ -2033,46 +2049,49 @@ class TradeDeskWin(QMainWindow):
             self.dayTbl.setRowCount(0)
             if hasattr(self, "_dayAlgHdr"):
                 self._dayAlgHdr.clearRowMeta()
-            # (algCd, stkCd) → 아직 취소 안 된 매수 item 스택 (LIFO)
+            # (algCd, stkCd, sideKind) → 아직 취소 안 된 원주문
+            ordStack = {}
+            # (algCd, stkCd) → 아직 취소 안 된 매수 체결 (LIFO)
             buyStack = {}
             items = []  # [(item, srcRow)]
             for row in rows:
                 tp = str(row.get("EVT_TP") or "").strip().upper()
-                if tp in ("BUY_CNCL", "BUY_ORD_CNCL"):
-                    alg = str(row.get("ALG_CD") or "").strip().upper()
-                    cd = normStkCd(row.get("STK_CD"))
-                    key = (alg, cd)
-                    stack = buyStack.get(key) or []
-                    if not stack:
-                        continue
-                    buyItem = stack.pop()
-                    try:
-                        buyQty = int(float(buyItem.get("qty") or 0))
-                    except (TypeError, ValueError):
-                        buyQty = 0
-                    try:
-                        cnclQty = int(float(row.get("QTY") or 0))
-                    except (TypeError, ValueError):
-                        cnclQty = 0
-                    # 전량 미체결 취소만 회색 — 부분체결 후 잔량 취소는 매수 유지
-                    if buyQty > 0 and cnclQty >= buyQty:
-                        buyItem["cancelled"] = True
-                    # 취소 행도 주문정보로 표시
-                    cnclItem = rowToDayTrade(row)
-                    if cnclItem:
-                        items.append((cnclItem, row))
-                    continue
                 item = rowToDayTrade(row)
                 if not item:
                     continue
+                alg = str(item.get("algCd") or "").strip().upper()
+                cd = normStkCd(item.get("stkCd"))
+                sideKind = str(item.get("sideKind") or "")
+                if tp in DAY_CNCL_EVT_TPS:
+                    oKey = (alg, cd, sideKind)
+                    oStack = ordStack.get(oKey) or []
+                    if oStack:
+                        # 취소된 원주문(매수주문/매도주문)도 회색
+                        oStack.pop()["cancelled"] = True
+                    if tp == "BUY_CNCL":
+                        bKey = (alg, cd)
+                        bStack = buyStack.get(bKey) or []
+                        if bStack:
+                            buyItem = bStack.pop()
+                            try:
+                                buyQty = int(float(buyItem.get("qty") or 0))
+                            except (TypeError, ValueError):
+                                buyQty = 0
+                            try:
+                                cnclQty = int(float(row.get("QTY") or 0))
+                            except (TypeError, ValueError):
+                                cnclQty = 0
+                            # 전량 미체결 취소만 체결 행도 회색 — 부분체결 잔량은 매수 유지
+                            if buyQty > 0 and cnclQty >= buyQty:
+                                buyItem["cancelled"] = True
+                    items.append((item, row))
+                    continue
                 items.append((item, row))
-                # 평단 집계·취소 매칭은 실제 매수체결(BUY)만
-                if item.get("evtTp") == "BUY":
-                    key = (
-                        str(item.get("algCd") or "").strip().upper(),
-                        normStkCd(item.get("stkCd")),
-                    )
-                    buyStack.setdefault(key, []).append(item)
+                if tp in DAY_ORD_EVT_TPS:
+                    ordStack.setdefault((alg, cd, sideKind), []).append(item)
+                # 평단 집계·전량취소 매칭은 실제 매수체결(BUY)만
+                if tp == "BUY":
+                    buyStack.setdefault((alg, cd), []).append(item)
             for item, srcRow in items:
                 if item.get("cancelled"):
                     self._putDayTradeRow(item)
@@ -2101,7 +2120,7 @@ class TradeDeskWin(QMainWindow):
 
     def appendDayTrade(self, row):
         """실시간 주문·체결·실패 한 줄을 당일 그리드에 붙인다.
-        BUY_CNCL(전량 미체결 취소)이면 직전 매수 행을 회색으로 바꾼다.
+        주문취소면 취소 행과 원주문을 회색으로 바꾼다.
         """
         if QThread.currentThread() != self.thread():
             QTimer.singleShot(0, self, lambda: self.appendDayTrade(row))
@@ -2113,13 +2132,12 @@ class TradeDeskWin(QMainWindow):
         if not getattr(self, "_dayLedger", None):
             self._loadDayLedger()
         tp = str((row or {}).get("EVT_TP") or (row or {}).get("evtTp") or "").strip().upper()
-        from ui.tradeLogBus import DAY_TRADE_EVT_TPS, rowToDayTrade
+        from ui.tradeLogBus import DAY_CNCL_EVT_TPS, DAY_TRADE_EVT_TPS, rowToDayTrade
 
         if tp not in DAY_TRADE_EVT_TPS:
             return
-        if tp in ("BUY_CNCL", "BUY_ORD_CNCL"):
-            self._markDayBuyCancelled(row)
-            # 취소 행도 표시
+        if tp in DAY_CNCL_EVT_TPS:
+            self._markDayCancelled(row)
             item = rowToDayTrade(row)
             if item:
                 self._putDayTradeRow(item)
@@ -2147,45 +2165,85 @@ class TradeDeskWin(QMainWindow):
         self._putDayTradeRow(item)
         self.dayTbl.scrollToBottom()
 
-    def _markDayBuyCancelled(self, row):
+    def _daySideEvtTp(self, sideCell):
+        """칸에 저장된 이벤트. 없으면 글자로 주문/체결을 가린다."""
+        if sideCell is None:
+            return ""
+        evt = str(sideCell.data(_DAY_SIDE_EVT_ROLE) or "").strip().upper()
+        if evt:
+            return evt
+        text = str(sideCell.text() or "")
+        if "주문취소" in text:
+            return "BUY_ORD_CNCL" if "매수" in text else "SELL_ORD_CNCL"
+        if "취소" in text:
+            return "BUY_CNCL" if "매수" in text else "SELL_CNCL"
+        if "주문" in text:
+            return "BUY_ORD" if "매수" in text else "SELL_ORD"
+        if text == "매수":
+            return "BUY"
+        if text == "매도":
+            return "SELL"
+        return ""
+
+    def _paintDayRowCancelled(self, rowIdx):
+        """한 행을 취소 거래로 보이게 회색 처리한다."""
+        sideCell = self.dayTbl.item(rowIdx, 2)
+        if sideCell is not None:
+            sideCell.setData(_DAY_SIDE_CNCL_ROLE, 1)
+        for c in range(self.dayTbl.columnCount()):
+            cell = self.dayTbl.item(rowIdx, c)
+            if cell is not None:
+                cell.setForeground(QBrush(_DAY_CNCL_FG))
+
+    def _markDayCancelled(self, row):
         """
-        전량 미체결 취소 — 같은 종목의 가장 최근 매수 행을 연한 회색으로.
-        부분체결 후 잔량 취소(취소수량 < 매수수량)는 색을 유지한다.
+        주문취소 — 같은 종목의 원주문(매수주문·매도주문)을 회색으로.
+        BUY_CNCL 전량 미체결이면 매수 체결 행도 회색·평단에서 뺀다.
+        부분체결 후 잔량 취소는 체결 색을 유지한다.
         """
         from utils.stkCdUtil import normStkCd
 
         cd = normStkCd((row or {}).get("STK_CD") or (row or {}).get("stkCd"))
         if not cd:
             return
+        tp = str((row or {}).get("EVT_TP") or (row or {}).get("evtTp") or "").strip().upper()
+        wantOrd = "BUY_ORD" if tp.startswith("BUY") else "SELL_ORD"
         try:
             cnclQty = int(float((row or {}).get("QTY") or (row or {}).get("qty") or 0))
         except (TypeError, ValueError):
             cnclQty = 0
-        # 아래에서 위로 가장 최근 미취소 매수 행
+        markedOrd = False
         for r in range(self.dayTbl.rowCount() - 1, -1, -1):
             sideCell = self.dayTbl.item(r, 2)
             if sideCell is None:
                 continue
             if bool(sideCell.data(_DAY_SIDE_CNCL_ROLE)):
                 continue
-            kind = str(sideCell.data(_DAY_SIDE_KIND_ROLE) or "")
-            if kind != "BUY":
-                continue
             rowCd = normStkCd(sideCell.data(_DAY_SIDE_STK_ROLE))
             if rowCd != cd:
                 continue
-            # 매수수량 — 부분취소 판별용 (칸에는 안 보임)
-            try:
-                buyQty = int(float(sideCell.data(int(Qt.ItemDataRole.UserRole) + 3) or 0))
-            except (TypeError, ValueError):
-                buyQty = 0
-            if buyQty > 0 and cnclQty > 0 and cnclQty < buyQty:
-                # 부분체결 잔량 취소 — 매수 색 유지
+            evt = self._daySideEvtTp(sideCell)
+            if not markedOrd and evt == wantOrd:
+                self._paintDayRowCancelled(r)
+                markedOrd = True
+                if tp != "BUY_CNCL":
+                    self.dayTbl.viewport().update()
+                    return
+                continue
+            # 전량 미체결 취소일 때만 매수 체결 행도 회색
+            if tp == "BUY_CNCL" and evt == "BUY":
+                try:
+                    buyQty = int(float(sideCell.data(_DAY_SIDE_QTY_ROLE) or 0))
+                except (TypeError, ValueError):
+                    buyQty = 0
+                if buyQty > 0 and cnclQty > 0 and cnclQty < buyQty:
+                    self.dayTbl.viewport().update()
+                    return
+                self._paintDayRowCancelled(r)
+                self._reverseDayBuy(cd, buyQty if buyQty > 0 else cnclQty)
+                self.dayTbl.viewport().update()
                 return
-            sideCell.setData(_DAY_SIDE_CNCL_ROLE, 1)
-            self._reverseDayBuy(cd, buyQty if buyQty > 0 else cnclQty)
-            self.dayTbl.viewport().update()
-            return
+        self.dayTbl.viewport().update()
 
     def _reverseDayBuy(self, stkCd, qtyRaw):
         """미체결 취소로 무효가 된 매수를 당일 평단 집계에서 뺀다."""
@@ -2232,16 +2290,19 @@ class TradeDeskWin(QMainWindow):
                 # 매수/매도 칸 — 색 구분·취소 매칭용
                 cell.setData(_DAY_SIDE_KIND_ROLE, item.get("sideKind") or "")
                 cell.setData(_DAY_SIDE_STK_ROLE, item.get("stkCd") or "")
+                cell.setData(_DAY_SIDE_EVT_ROLE, item.get("evtTp") or "")
                 cell.setData(
                     _DAY_SIDE_CNCL_ROLE, 1 if item.get("cancelled") else 0
                 )
                 try:
                     cell.setData(
-                        int(Qt.ItemDataRole.UserRole) + 3,
+                        _DAY_SIDE_QTY_ROLE,
                         int(float(item.get("qty") or 0)),
                     )
                 except (TypeError, ValueError):
-                    cell.setData(int(Qt.ItemDataRole.UserRole) + 3, 0)
+                    cell.setData(_DAY_SIDE_QTY_ROLE, 0)
+            if item.get("cancelled"):
+                cell.setForeground(QBrush(_DAY_CNCL_FG))
             self.dayTbl.setItem(r, c, cell)
         # 맨 왼쪽 행번호 — 해당 알고리즘 바탕색
         algCd = str(item.get("algCd") or "").strip()
@@ -2360,9 +2421,60 @@ class TradeDeskWin(QMainWindow):
         self.tradeModeCmb.blockSignals(True)
         self.tradeModeCmb.setCurrentIndex(idx)
         self.tradeModeCmb.blockSignals(False)
+        self._refreshTradeModeStatus()
+
+
+    def _effectivePaperOnly(self):
+        """설정상 자동매매 paperOnly (True면 실전 모드여도 주문 차단)."""
+        try:
+            from config.settingsStore import getMaTouchLive
+
+            return bool((getMaTouchLive() or {}).get("paperOnly", True))
+        except Exception:
+            return True
+
+    def _refreshTradeModeStatus(self):
+        """설정탭에 현재 모드·주문가능 여부를 표시."""
+        lbl = getattr(self, "tradeModeStatusLbl", None)
+        if lbl is None:
+            return
+        try:
+            from config.settingsStore import getDeskTradeMode
+
+            mode = getDeskTradeMode()
+        except Exception:
+            mode = "paper"
+        paper_only = self._effectivePaperOnly()
+        if mode == "real" and not paper_only:
+            lbl.setText("현재: 실전투자 · 자동매매 주문 가능")
+            lbl.setStyleSheet(
+                "font-size: 12px; font-weight: 600; color: #c62828; padding: 2px 0;"
+            )
+        elif mode == "real" and paper_only:
+            lbl.setText(
+                "현재: 실전 로그인 설정인데 paperOnly=ON → 자동매매 주문 차단.\n"
+                "아래에서 실전투자로 다시 선택해 해제하세요."
+            )
+            lbl.setStyleSheet(
+                "font-size: 12px; font-weight: 600; color: #ef6c00; padding: 2px 0;"
+            )
+        else:
+            lbl.setText("현재: 모의투자 · 모의 계좌만 주문")
+            lbl.setStyleSheet(
+                "font-size: 12px; font-weight: 600; color: #1565c0; padding: 2px 0;"
+            )
+
+    def _syncPaperOnlyForMode(self, mode):
+        """deskTradeMode 와 paperOnly 를 같이 맞춘다."""
+        from utils.tradeSession import applyPaperOnlyOn, applyRealPaperOnlyOff
+
+        if mode == "real":
+            applyRealPaperOnlyOff()
+        else:
+            applyPaperOnlyOn()
 
     def _onTradeModeChanged(self, _idx=None):
-        """모의↔실전 전환: 설정 저장 → 로그인 → WS 재연결 → 계좌 갱신."""
+        """모의↔실전 전환: 설정 저장 → paperOnly 동기 → 로그인 → WS 재연결."""
         mode = self.tradeModeCmb.currentData()
         if mode not in ("paper", "real"):
             return
@@ -2372,7 +2484,13 @@ class TradeDeskWin(QMainWindow):
             cur = getDeskTradeMode()
         except Exception:
             cur = "paper"
-        if mode == cur:
+        paper_only = self._effectivePaperOnly()
+        # 모드 문자열은 같아도 paperOnly 만 어긋난 경우(실전인데 주문차단) 재적용
+        need_switch = (mode != cur) or (mode == "real" and paper_only) or (
+            mode == "paper" and (not paper_only)
+        )
+        if not need_switch:
+            self._refreshTradeModeStatus()
             return
         if mode == "real":
             ans = QMessageBox.warning(
@@ -2402,11 +2520,10 @@ class TradeDeskWin(QMainWindow):
         def _work():
             from telegram.commands.loginCommand import handleLogin
             from utils.termLog import termLog
-            from utils.tradeSession import applyRealPaperOnlyOff, setDeskTradeMode
+            from utils.tradeSession import setDeskTradeMode
 
             setDeskTradeMode(mode)
-            if mode == "real":
-                applyRealPaperOnlyOff()
+            self._syncPaperOnlyForMode(mode)
             msg = handleLogin(mode, force=True)
             termLog(msg)
             try:
@@ -2443,6 +2560,7 @@ class TradeDeskWin(QMainWindow):
             invalidateLiveParams()
         except Exception:
             pass
+        self._refreshTradeModeStatus()
 
     def _reloadDeskLogsForMode(self):
         """모의↔실전 전환 시 로그·거래·알고손익 화면을 해당 모드만 다시 채운다."""

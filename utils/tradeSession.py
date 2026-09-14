@@ -115,30 +115,49 @@ def allowAutoOrders(paperOnly=False):
     return getOrdSession(paperOnly=paperOnly) is not None
 
 
+def _setStratPaperOnly(flag: bool):
+    """maTouchLive + MSE01 paperOnly 를 settings 에 맞춘다. spec 파일은 건드리지 않는다."""
+    from config.settingsStore import loadSettings, saveSettings
+
+    settings = loadSettings() or {}
+    mt = settings.get("maTouchLive") or {}
+    if not isinstance(mt, dict):
+        mt = {}
+    mt["paperOnly"] = bool(flag)
+    settings["maTouchLive"] = mt
+    live = settings.get("stratLive") or {}
+    if not isinstance(live, dict):
+        live = {}
+    mse = live.get("MSE01") or {}
+    if not isinstance(mse, dict):
+        mse = {}
+    mse["paperOnly"] = bool(flag)
+    live["MSE01"] = mse
+    # MTS01 슬롯에도 맞춰 둔다 (있으면)
+    mts = live.get("MTS01") or {}
+    if isinstance(mts, dict):
+        mts["paperOnly"] = bool(flag)
+        live["MTS01"] = mts
+    settings["stratLive"] = live
+    saveSettings(settings)
+
+
 def applyRealPaperOnlyOff():
     """
     실전 전환 시 전략 paperOnly 를 풀어 주문이 나가게 한다.
-    settings.maTouchLive + stratLive.MSE01 만 건드린다 (spec 파일은 유지).
+    settings.maTouchLive + stratLive 만 건드린다 (spec 파일은 유지).
     """
     try:
-        from config.settingsStore import loadSettings, saveSettings
-
-        settings = loadSettings() or {}
-        mt = settings.get("maTouchLive") or {}
-        if not isinstance(mt, dict):
-            mt = {}
-        mt["paperOnly"] = False
-        settings["maTouchLive"] = mt
-        live = settings.get("stratLive") or {}
-        if not isinstance(live, dict):
-            live = {}
-        mse = live.get("MSE01") or {}
-        if not isinstance(mse, dict):
-            mse = {}
-        mse["paperOnly"] = False
-        live["MSE01"] = mse
-        settings["stratLive"] = live
-        saveSettings(settings)
+        _setStratPaperOnly(False)
         termLog("[tradeSession] 실전 전환 — paperOnly=false (MTS01/MSE01 settings)")
     except Exception as err:
         termLog(f"[tradeSession] paperOnly 해제 실패: {err}")
+
+
+def applyPaperOnlyOn():
+    """모의 전환 시 전략 paperOnly=true (실전 모드 혼선 방지)."""
+    try:
+        _setStratPaperOnly(True)
+        termLog("[tradeSession] 모의 전환 — paperOnly=true (MTS01/MSE01 settings)")
+    except Exception as err:
+        termLog(f"[tradeSession] paperOnly 설정 실패: {err}")
