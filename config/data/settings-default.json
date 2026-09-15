@@ -14,7 +14,10 @@
   },
   "deskTradeExch": "KRX",
   "deskTradeMode": "paper",
-  "deskAlgTabs": ["MTS01", "MSE01"],
+  "deskAlgTabs": [
+    "MTS01",
+    "MSE01"
+  ],
   "stratLive": {
     "MTS01": {
       "buyAmt5": 1000000,
@@ -36,14 +39,15 @@
   "telegramPush": {
     "master": true,
     "boot": true,
-    "batch": true,
-    "wnews": true,
+    "batch": false,
+    "wnews": false,
     "ordExec": false,
-    "closePnl": true,
-    "cnsr": true,
-    "rsv": true,
-    "stls": true,
-    "tokenRenew": true,
-    "btVal": true
+    "closePnl": false,
+    "cnsr": false,
+    "rsv": false,
+    "stls": false,
+    "tokenRenew": false,
+    "btVal": false,
+    "dayReview": false
   }
 }

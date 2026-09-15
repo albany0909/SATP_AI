@@ -23,16 +23,16 @@ DEFAULT_BATCH_SCHED = {
 DEFAULT_TELEGRAM_PUSH = {
     "master": True,
     "boot": True,
-    "batch": True,
-    "wnews": True,
+    "batch": False,
+    "wnews": False,
     "ordExec": False,
-    "closePnl": True,
-    "cnsr": True,
-    "rsv": True,
-    "stls": True,
-    "tokenRenew": True,
-    "btVal": True,
-    "dayReview": True,
+    "closePnl": False,
+    "cnsr": False,
+    "rsv": False,
+    "stls": False,
+    "tokenRenew": False,
+    "btVal": False,
+    "dayReview": False,
 }
 
 # 푸시 채널 목록 (화면 표시 순서). master는 맨 위.
@@ -40,7 +40,7 @@ PUSH_CHANNEL_DEFS = [
     {
         "id": "master",
         "label": "전체 푸시",
-        "desc": "켜면/끄면 아래 세부 채널도 같이 on/off 됩니다. 텔레그램 명령 응답은 그대로 전송됩니다.",
+        "desc": "꺼지면 모든 알림성 푸시 차단. 켜도 아래 세부 채널 설정은 그대로 유지됩니다. 텔레그램 명령 응답은 그대로 전송됩니다.",
     },
     {
         "id": "boot",
@@ -176,26 +176,39 @@ def isTelegramPushEnabled(pushKind):
 def setTelegramPushEnabled(channelId, enabled):
     """
     푸시 채널 on/off.
-    master 를 바꾸면 아래 세부 채널도 같은 on/off 로 맞춘다.
+    master 는 게이트만 바꾼다(세부 채널 값은 덮지 않음).
+    저장은 settings.json 에 즉시 반영된다.
     """
     channelId = str(channelId or "").strip()
     if channelId not in DEFAULT_TELEGRAM_PUSH:
         return {"ok": False, "errMsg": f"알 수 없는 푸시 id: {channelId}"}
     settings = loadSettings()
-    push = dict(settings.get("telegramPush") or {})
-    if not isinstance(push, dict):
-        push = {}
+    # 파일에 저장된 값만 기준으로 덮어써서, 로드 시 merge 된 디폴트가
+    # 의도치 않게 다시 쓰이지 않게 한다.
+    raw = _readStoredTelegramPush()
+    push = dict(raw)
     on = bool(enabled)
     push[channelId] = on
-    # 전체 푸시 on/off → 세부 항목도 동일하게 따라감
-    if channelId == "master":
-        for cid in DEFAULT_TELEGRAM_PUSH:
-            if cid == "master":
-                continue
-            push[cid] = on
+    # 알려진 키는 모두 명시 저장(누락 키 → 다음 로드 때 디폴트로 되살아나는 것 방지)
+    for cid in DEFAULT_TELEGRAM_PUSH:
+        if cid not in push:
+            push[cid] = bool(DEFAULT_TELEGRAM_PUSH[cid])
     settings["telegramPush"] = push
     saveSettings(settings)
     return {"ok": True, "channelId": channelId, "enabled": on}
+
+
+def _readStoredTelegramPush():
+    """settings.json 의 telegramPush 만 읽는다(디폴트 merge 없이)."""
+    try:
+        from config.settingsStore import _SETTINGS_PATH, _readJson
+        data = _readJson(_SETTINGS_PATH) or {}
+        stored = data.get("telegramPush") or {}
+        if isinstance(stored, dict):
+            return {str(k): bool(v) for k, v in stored.items()}
+    except Exception:
+        pass
+    return {}
 
 
 def listTelegramPushChannels():
