@@ -1772,6 +1772,15 @@ def _promoteBuyFromAcntHold(stkCd, step, wait, hold, note):
     avgPx = float((hold or {}).get("avgPx") or 0)
     if not cd or qty <= 0 or avgPx <= 0:
         return False
+    # 이미 보유 반영됐으면 BUY 중복 이벤트 방지 (재기동 동기 두 번 등)
+    with _lock:
+        cur = _pos.get(cd) or {}
+        if int(cur.get("qty") or 0) > 0 and float(cur.get("avgPx") or 0) > 0:
+            for k, w in list(_ordWait.items()):
+                if w.get("cd") == cd and w.get("side") == "BUY":
+                    _dropOrdWait(k)
+            termLog(f"[maTouch] 매수복구 스킵(이미보유) {cd} {cur.get('qty')}주")
+            return False
     step = int(step or (wait or {}).get("step") or 20)
     wait = dict(wait or {})
     qtyBefore = int(wait.get("qtyBefore") or 0)
@@ -1995,6 +2004,32 @@ def _limitTimeoutThenMarket(stkCd, step, waitKey):
         _voidUnfilledLedger(stkCd, reason="LIMIT_UNFILL_10M")
 
 
+
+def _isFlatExitReason(reason):
+    """잔량 전량 청산 계열 (분할 익절 아님)."""
+    r = str(reason or "")
+    keys = (
+        "4차익절",
+        "잔량트레일",
+        "15:15",
+        "당일미수익",
+        "익절 RSI",
+        "손절",
+        "익절후손절",
+        "전량",
+    )
+    return any(k in r for k in keys)
+
+
+def _flatSellQty(memQty, acntQty):
+    """전량 매도 수량: 계좌 잔량이 있으면 계좌 기준, 없으면 메모리."""
+    memQty = int(memQty or 0)
+    acntQty = int(acntQty if acntQty is not None else -1)
+    if acntQty > 0:
+        return acntQty
+    return max(0, memQty)
+
+
 def _placeSell(stkCd, qty, px, reason):
     sess = _ordSession()
     if sess is None:
@@ -2025,6 +2060,9 @@ def _placeSell(stkCd, qty, px, reason):
         except Exception:
             pass
         return False
+    # 전량 청산: 주문 전에 계좌 잔량으로 맞춤 (쪼개진 4차 방지)
+    if _isFlatExitReason(reason) and acntQty > 0:
+        qty = int(acntQty)
     # 매도 중 지정가 잔량이 체결되면 청산 후 재진입이 되므로 먼저 취소
     _cnclOpenBuyLimits(stkCd)
     hostUrl, token, tokenType = sess
@@ -2102,6 +2140,9 @@ def _placeSell(stkCd, qty, px, reason):
         rec["pendSellQty"] = int(qty)
         rec["pendSellQtyBefore"] = qtyBefore
         rec["pendSellOrdNo"] = _normOrdNo(result.get("ordNo"))
+        if _isFlatExitReason(reason):
+            # 체결 완료(잔량0) 전까지 분할익절로 되돌아가지 않음
+            rec["flatExitPending"] = True
         _pos[stkCd] = rec
         _registerOrdWait(
             result.get("ordNo"),
@@ -2171,6 +2212,7 @@ def _clearPendSell(rec):
         "pendSellQty",
         "pendSellQtyBefore",
         "pendSellOrdNo",
+        "flatExitPending",
     ):
         rec.pop(key, None)
 
@@ -2254,6 +2296,11 @@ def _applySellFillLocked(stkCd, fillPx, fillQty, wait):
         rec["halfTaken"] = True
     elif "1차익절" in reason:
         rec["tp1Taken"] = True
+    elif "4차익절" in reason:
+        rec["tp1Taken"] = True
+        rec["tp2Taken"] = True
+        rec["tp3Taken"] = True
+        rec["halfTaken"] = True
     left = posQty if alreadyCut else posQty - cutQty
     if alreadyCut:
         termLog(
@@ -2263,9 +2310,13 @@ def _applySellFillLocked(stkCd, fillPx, fillQty, wait):
     closed = left <= 0
     rec["qty"] = 0 if closed else left
     if closed:
+        rec.pop("flatExitPending", None)
         _clearPendSell(rec)
         _pos.pop(stkCd, None)
     else:
+        # 전량청산 계열 부분체결이면 잔량 재청산 유지
+        if _isFlatExitReason(reason):
+            rec["flatExitPending"] = True
         _pos[stkCd] = rec
     return rec, closed, reason
 
@@ -3142,9 +3193,24 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
             and (not sellCool)
             and acntQtyNow != 0
         ):
+            flatOnly = bool(rec.get("flatExitPending"))
+            if flatOnly:
+                flatQty = _flatSellQty(qtyNow, acntQtyNow)
+                if flatQty >= 1:
+                    why = str(rec.get("pendSellReason") or "잔량 전량청산")
+                    kind = "FLAT"
+                    if "4차" in why:
+                        kind = "TP4"
+                    elif "트레일" in why:
+                        kind = "TRAIL"
+                    elif "손절" in why:
+                        kind = "HARD"
+                    elif "RSI" in why:
+                        kind = "TAKE"
+                    actions.append((kind, 0, flatQty, px, why))
             scaleStop = tp2Taken or (breakevenAfterTp1 and tp1Taken)
             stopPct = afterHalfStopPct if scaleStop else hardPct
-            if px <= avgPx * (1.0 - stopPct / 100.0):
+            if (not flatOnly) and px <= avgPx * (1.0 - stopPct / 100.0):
                 why = (
                     (
                         f"익절후손절 -{stopPct:g}%"
@@ -3154,9 +3220,12 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
                     if scaleStop
                     else f"손절 -{stopPct:g}% 하드"
                 )
-                actions.append(("HARD", 0, qtyNow, px, why))
+                flatQty = _flatSellQty(qtyNow, acntQtyNow)
+                if flatQty >= 1:
+                    actions.append(("HARD", 0, flatQty, px, why))
             elif (
-                nowTm >= str(_params.get("nextClosedHalfTm", "151500")).zfill(6)
+                (not flatOnly)
+                and nowTm >= str(_params.get("nextClosedHalfTm", "151500")).zfill(6)
                 and qtyNow >= 1
                 and inNextClosedHalfBand(
                     px,
@@ -3166,16 +3235,21 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
                 )
             ):
                 # 매일 15:15부터 0~3% 전량. 손실·3% 초과는 들고 간다.
-                actions.append(("FLAT", 0, qtyNow, px, "15:15 0~3% 전량"))
-            elif rsiNow is not None and rsiMin > 0 and rsiNow >= rsiMin:
+                flatQty = _flatSellQty(qtyNow, acntQtyNow)
+                if flatQty >= 1:
+                    actions.append(("FLAT", 0, flatQty, px, "15:15 0~3% 전량"))
+            elif (not flatOnly) and rsiNow is not None and rsiMin > 0 and rsiNow >= rsiMin:
                 # 수익 중 일봉 RSI 과매수 → 부분익절보다 먼저 잔량 전량
-                actions.append(("TAKE", 0, qtyNow, px, f"익절 RSI{rsiMin:g}"))
-            elif (not tp1Taken) and tp1Pct > 0 and qtyNow >= 2 and pnlPctNow >= tp1Pct:
+                flatQty = _flatSellQty(qtyNow, acntQtyNow)
+                if flatQty >= 1:
+                    actions.append(("TAKE", 0, flatQty, px, f"익절 RSI{rsiMin:g}"))
+            elif (not flatOnly) and (not tp1Taken) and tp1Pct > 0 and qtyNow >= 2 and pnlPctNow >= tp1Pct:
                 sellQty = scaleOutQty(qtyNow, tp1Ratio)
                 if sellQty >= 1:
                     actions.append(("TP1", 0, sellQty, px, f"1차익절 +{tp1Pct:g}%"))
             elif (
-                tp1Taken
+                (not flatOnly)
+                and tp1Taken
                 and (not tp2Taken)
                 and tp2Pct > 0
                 and qtyNow >= 2
@@ -3185,7 +3259,8 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
                 if sellQty >= 1:
                     actions.append(("TP2", 0, sellQty, px, f"2차익절 +{tp2Pct:g}%"))
             elif (
-                tp2Taken
+                (not flatOnly)
+                and tp2Taken
                 and (not tp3Taken)
                 and tp3Pct > 0
                 and qtyNow >= 2
@@ -3195,7 +3270,7 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
                 sellQty = scaleOutQty(qtyNow, tp3Ratio)
                 if sellQty >= 1:
                     actions.append(("TP3", 0, sellQty, px, f"3차익절 +{tp3Pct:g}%"))
-            elif tp2Taken and qtyNow >= 1 and (tp3Taken or qtyNow < 2):
+            elif (not flatOnly) and tp2Taken and qtyNow >= 1 and (tp3Taken or qtyNow < 2):
                 # 잔량(3차 후 또는 1주라 3차 불가): 트레일 vs 4차 중 먼저
                 trailMin = float(_params.get("afterHalfTrailMinPct") or 0)
                 trailDd = float(_params.get("afterHalfTrailTpPct") or 0)
@@ -3206,19 +3281,25 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
                     and maxPnl + 1e-9 >= trailMin
                     and pnlPctNow <= maxPnl - trailDd + 1e-9
                 ):
-                    actions.append(
-                        (
-                            "TRAIL",
-                            0,
-                            qtyNow,
-                            px,
-                            f"잔량트레일 고점+{maxPnl:g}% -{trailDd:g}%p",
+                    flatQty = _flatSellQty(qtyNow, acntQtyNow)
+                    if flatQty >= 1:
+                        actions.append(
+                            (
+                                "TRAIL",
+                                0,
+                                flatQty,
+                                px,
+                                f"잔량트레일 고점+{maxPnl:g}% -{trailDd:g}%p",
+                            )
                         )
-                    )
                 elif tp4Pct > 0 and pnlPctNow >= tp4Pct:
-                    # 4차: 3차 후 잔량 +tp4Pct 이상 전량. 1주라 3차를 못 친 경우도 전량.
-                    actions.append(("TP4", 0, qtyNow, px, f"4차익절 +{tp4Pct:g}%"))
-            elif nowTm >= exitTm:
+                    # 4차: 3차 후 잔량 +tp4Pct 이상 전량. 계좌잔량 우선.
+                    flatQty = _flatSellQty(qtyNow, acntQtyNow)
+                    if flatQty >= 1:
+                        actions.append(
+                            ("TP4", 0, flatQty, px, f"4차익절 +{tp4Pct:g}%")
+                        )
+            elif (not flatOnly) and nowTm >= exitTm:
                 # 당일 매수가 미수익이면 들고 가지 않는다 (시초 갭 방지)
                 eodFlat = bool(_params.get("eodFlatIfNoProfit", True))
                 if eodFlat and enteredToday and px <= avgPx:
