@@ -950,8 +950,66 @@ class MaTouchScaleStrategy:
                 return events
 
         # 1차 +tp1Pct 보유 30%, 2차 +tp2Pct 보유 30%. 같은 봉에서 둘 다 가능.
+        # 1주는 비율 불가 → 해당 % 도달 시 전량.
         tp2Now = False
-        if avgPx > 0 and qtyNow >= 2:
+        if avgPx > 0 and qtyNow == 1:
+            pnlPct = (close - avgPx) / avgPx * 100.0
+            sold1 = False
+            reason = ""
+            if (not self.pos.get("tp1Taken")) and self.tp1Pct > 0 and pnlPct >= self.tp1Pct:
+                self.pos["tp1Taken"] = True
+                sold1 = True
+                reason = f"tp1_{self.tp1Pct:g}pct"
+            elif (
+                self.pos.get("tp1Taken")
+                and (not self.pos.get("tp2Taken"))
+                and self.tp2Pct > 0
+                and pnlPct >= self.tp2Pct
+            ):
+                self.pos["tp2Taken"] = True
+                self.pos["halfTaken"] = True
+                self.pos["halfDt"] = tradeDt
+                tp2Now = True
+                sold1 = True
+                reason = f"tp2_{self.tp2Pct:g}pct"
+            elif (
+                (self.pos.get("tp2Taken") or self.pos.get("halfTaken"))
+                and (not self.pos.get("tp3Taken"))
+                and self.tp3Pct > 0
+                and pnlPct >= self.tp3Pct
+            ):
+                self.pos["tp3Taken"] = True
+                sold1 = True
+                reason = f"tp3_{self.tp3Pct:g}pct"
+            elif self.pos.get("tp1Taken"):
+                maxPnl = float(self.pos.get("maxPnlPct") or 0)
+                trailMin = float(self.afterHalfTrailMinPct or 0)
+                trailDd = float(self.afterHalfTrailTpPct or 0)
+                if (
+                    trailMin > 0
+                    and trailDd > 0
+                    and maxPnl + 1e-9 >= trailMin
+                    and pnlPct <= maxPnl - trailDd + 1e-9
+                ):
+                    sold1 = True
+                    reason = f"trail_peak{maxPnl:g}_dd{trailDd:g}"
+                elif self.tp4Pct > 0 and pnlPct >= self.tp4Pct:
+                    sold1 = True
+                    reason = f"tp4_{self.tp4Pct:g}pct"
+            if sold1:
+                events.append(
+                    {
+                        "type": "SELL",
+                        "price": close,
+                        "reason": reason,
+                        "cntrTm": cntrTm,
+                        "qty": qtyNow,
+                        **self._mfeSnap(),
+                    }
+                )
+                self._resetPos(banBuyDt=tradeDt)
+                return events
+        elif avgPx > 0 and qtyNow >= 2:
             pnlPct = (close - avgPx) / avgPx * 100.0
             if (not self.pos.get("tp1Taken")) and self.tp1Pct > 0 and pnlPct >= self.tp1Pct:
                 sellQty = scaleOutQty(qtyNow, self.tp1QtyRatio)
@@ -1033,7 +1091,12 @@ class MaTouchScaleStrategy:
 
         # 잔량(3차 후 또는 1주라 3차 불가): 트레일 vs 4차 중 먼저
         if self.pos is not None and (
-            self.pos.get("tp2Taken") or self.pos.get("halfTaken")
+            self.pos.get("tp2Taken")
+            or self.pos.get("halfTaken")
+            or (
+                self.pos.get("tp1Taken")
+                and int(self.pos.get("qty") or 0) < 2
+            )
         ):
             qtyNow = int(self.pos["qty"] or 0)
             avgPx = float(self.pos["avgPx"] or 0)

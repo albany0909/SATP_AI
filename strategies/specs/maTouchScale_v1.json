@@ -3,7 +3,7 @@
   "algCd": "MTS01",
   "name": "이평선터치 매매",
   "status": "test",
-  "version": 49,
+  "version": 50,
   "enabled": true,
   "timeframe": "1",
   "docPath": "strategies/docs/maTouchScale_v1.md",
@@ -74,7 +74,7 @@
   },
   "rules": {
     "entry": "from above touch SMA20 once; do not buy on touch; same-day only: wait for a 3-min bar that closes bullish above SMA20 (close>open and close>SMA20); place a limit buy at the SMA20 nearby tick; if unfilled after 10 minutes cancel remainder (no market follow-up); wait expires same day; retouch resets; 14:00 cutoff only if next calendar day is closed; after full exit ban rebuy that stock same day",
-    "halfTp": "pnl>=tp1Pct sell tp1QtyRatio of holdings; then pnl>=tp2Pct sell tp2QtyRatio of remaining; after 2nd, remaining +tp3Pct sells tp3QtyRatio; then remaining +tp4Pct flattens; every day from 15:15, if 0%<=pnl<=3% flatten all remaining (keep losses and pnl>3%)",
+    "halfTp": "pnl>=tp1Pct sell tp1QtyRatio of holdings; then pnl>=tp2Pct sell tp2QtyRatio of remaining; after 2nd, remaining +tp3Pct sells tp3QtyRatio; then remaining +tp4Pct flattens; every day from 15:15, if 0%<=pnl<=3% flatten all remaining (keep losses and pnl>3%) | if remaining qty is 1, any reached TP step flattens 100% (no ratio); after tp1 with qty=1 allow trail/tp4 without tp2Taken",
     "afterHalf": "after 1st or 2nd TP, remaining flattens at avg -afterHalfStopPct (0=breakeven); after 2nd, remaining +tp3Pct sells half then +tp4Pct flattens; after 3rd (residual): if peak>=afterHalfTrailMinPct and pnl<=peak-afterHalfTrailTpPct flatten residual (trail); else +tp4Pct flatten; trail and tp4 whichever first",
     "stop": "before any TP: hard -2%; after 1st or 2nd TP: avg 0% (breakeven) flatten remaining; same-day entry flatten after 15:18 if px<=avg; prior-day SMA20 after 15:18",
     "takeProfit": "intraday: 1st +1.2% sell 30%; 2nd +2% sell 30%; 3rd +4% sell 50% of remaining; 4th +7% flatten remaining; also profit (px>avg) and RSI14>=rsiTpMin flatten all remaining"
@@ -83,7 +83,7 @@
     "entryPrice": "sma20NearTickLimit",
     "exitPrice": "closeOrTick",
     "feeRate": 0,
-    "btNote": "v49: flat exits (TP4/trail/stop) use account qty once; flatExitPending until flat. v48: limit-cncl-fail reconciles buy from account (missed 00 fill). v47: no TP/SL until 00 buy fill; acnt sync ignored while BUY ord wait pending. v46: limit 10m then cancel only. v45: residual trail 5/-3%p. v44: 1st +1.2%. v43: limit 3m then market. Live avgPx is broker kt00004."
+    "btNote": "v50: qty=1 flattens at TP step (no scale ratio); residual after tp1. v49: flat exits (TP4/trail/stop) use account qty once; flatExitPending until flat. v48: limit-cncl-fail reconciles buy from account (missed 00 fill). v47: no TP/SL until 00 buy fill; acnt sync ignored while BUY ord wait pending. v46: limit 10m then cancel only. v45: residual trail 5/-3%p. v44: 1st +1.2%. v43: limit 3m then market. Live avgPx is broker kt00004."
   },
-  "notes": "v49: TP4/전량청산 계좌잔량 1회 매도·flatExitPending; 매수복구 중복 BUY 방지. v48: on LIMIT_CNCL_FAIL / past limitUntil, promote missed buy from kt00004; restart recovery if BUY_ORD without BUY. ops: paperOnly=false (real). v47: block exits/acnt-qty while BUY wait gotQty=0 (Ananti race). v46: limit wait 10m then cancel leftover (no market). v45 trail keep. status=test."
+  "notes": "v50: 잔량 1주면 익절% 도달 시 전량. 1차 후 1주도 트레일/4차 허용. v49: TP4/전량청산 계좌잔량 1회 매도·flatExitPending; 매수복구 중복 BUY 방지. v48: on LIMIT_CNCL_FAIL / past limitUntil, promote missed buy from kt00004; restart recovery if BUY_ORD without BUY. ops: paperOnly=false (real). v47: block exits/acnt-qty while BUY wait gotQty=0 (Ananti race). v46: limit wait 10m then cancel leftover (no market). v45 trail keep. status=test."
 }

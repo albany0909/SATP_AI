@@ -3243,6 +3243,55 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
                 flatQty = _flatSellQty(qtyNow, acntQtyNow)
                 if flatQty >= 1:
                     actions.append(("TAKE", 0, flatQty, px, f"익절 RSI{rsiMin:g}"))
+            elif (not flatOnly) and qtyNow == 1:
+                # 1주는 비율 분할 불가 → 해당 익절% 도달 시 전량
+                flatQty = _flatSellQty(qtyNow, acntQtyNow)
+                if flatQty >= 1:
+                    if (not tp1Taken) and tp1Pct > 0 and pnlPctNow >= tp1Pct:
+                        actions.append(
+                            ("TP1", 0, flatQty, px, f"1차익절 +{tp1Pct:g}%")
+                        )
+                    elif (
+                        tp1Taken
+                        and (not tp2Taken)
+                        and tp2Pct > 0
+                        and pnlPctNow >= tp2Pct
+                    ):
+                        actions.append(
+                            ("TP2", 0, flatQty, px, f"2차익절 +{tp2Pct:g}%")
+                        )
+                    elif (
+                        tp2Taken
+                        and (not tp3Taken)
+                        and tp3Pct > 0
+                        and pnlPctNow >= tp3Pct
+                    ):
+                        actions.append(
+                            ("TP3", 0, flatQty, px, f"3차익절 +{tp3Pct:g}%")
+                        )
+                    elif tp1Taken:
+                        trailMin = float(_params.get("afterHalfTrailMinPct") or 0)
+                        trailDd = float(_params.get("afterHalfTrailTpPct") or 0)
+                        maxPnl = float(rec.get("maxPnlPct") or 0)
+                        if (
+                            trailMin > 0
+                            and trailDd > 0
+                            and maxPnl + 1e-9 >= trailMin
+                            and pnlPctNow <= maxPnl - trailDd + 1e-9
+                        ):
+                            actions.append(
+                                (
+                                    "TRAIL",
+                                    0,
+                                    flatQty,
+                                    px,
+                                    f"잔량트레일 고점+{maxPnl:g}% -{trailDd:g}%p",
+                                )
+                            )
+                        elif tp4Pct > 0 and pnlPctNow >= tp4Pct:
+                            actions.append(
+                                ("TP4", 0, flatQty, px, f"4차익절 +{tp4Pct:g}%")
+                            )
             elif (not flatOnly) and (not tp1Taken) and tp1Pct > 0 and qtyNow >= 2 and pnlPctNow >= tp1Pct:
                 sellQty = scaleOutQty(qtyNow, tp1Ratio)
                 if sellQty >= 1:
@@ -3270,7 +3319,7 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
                 sellQty = scaleOutQty(qtyNow, tp3Ratio)
                 if sellQty >= 1:
                     actions.append(("TP3", 0, sellQty, px, f"3차익절 +{tp3Pct:g}%"))
-            elif (not flatOnly) and tp2Taken and qtyNow >= 1 and (tp3Taken or qtyNow < 2):
+            elif (not flatOnly) and qtyNow >= 1 and (tp3Taken or qtyNow < 2) and (tp2Taken or tp1Taken):
                 # 잔량(3차 후 또는 1주라 3차 불가): 트레일 vs 4차 중 먼저
                 trailMin = float(_params.get("afterHalfTrailMinPct") or 0)
                 trailDd = float(_params.get("afterHalfTrailTpPct") or 0)
