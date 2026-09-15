@@ -3,7 +3,7 @@
   "algCd": "MTS01",
   "name": "이평선터치 매매",
   "status": "test",
-  "version": 51,
+  "version": 52,
   "enabled": true,
   "timeframe": "1",
   "docPath": "strategies/docs/maTouchScale_v1.md",
@@ -83,7 +83,7 @@
     "entryPrice": "sma20NearTickLimit",
     "exitPrice": "closeOrTick",
     "feeRate": 0,
-    "btNote": "v51: reclaim orphan account holds into pos on sync (no duplicate BUY). v50: qty=1 flattens at TP step (no scale ratio); residual after tp1. v49: flat exits (TP4/trail/stop) use account qty once; flatExitPending until flat. v48: limit-cncl-fail reconciles buy from account (missed 00 fill). v47: no TP/SL until 00 buy fill; acnt sync ignored while BUY ord wait pending. v46: limit 10m then cancel only. v45: residual trail 5/-3%p. v44: 1st +1.2%. v43: limit 3m then market. Live avgPx is broker kt00004."
+    "btNote": "v52: orphan reclaim re-subscribes 0B quotes. v51: reclaim orphan account holds into pos on sync (no duplicate BUY). v50: qty=1 flattens at TP step (no scale ratio); residual after tp1. v49: flat exits (TP4/trail/stop) use account qty once; flatExitPending until flat. v48: limit-cncl-fail reconciles buy from account (missed 00 fill). v47: no TP/SL until 00 buy fill; acnt sync ignored while BUY ord wait pending. v46: limit 10m then cancel only. v45: residual trail 5/-3%p. v44: 1st +1.2%. v43: limit 3m then market. Live avgPx is broker kt00004."
   },
-  "notes": "v51: 계좌동기 시 pos 없는 실보유(당일 BUY/ban/원장) 고아복구 — 익절 재추적. v50: 잔량 1주면 익절% 도달 시 전량. 1차 후 1주도 트레일/4차 허용. v49: TP4/전량청산 계좌잔량 1회 매도·flatExitPending; 매수복구 중복 BUY 방지. v48: on LIMIT_CNCL_FAIL / past limitUntil, promote missed buy from kt00004; restart recovery if BUY_ORD without BUY. ops: paperOnly=false (real). v47: block exits/acnt-qty while BUY wait gotQty=0 (Ananti race). v46: limit wait 10m then cancel leftover (no market). v45 trail keep. status=test."
+  "notes": "v52: 고아복구 시 0B 시세 재구독. v51: 계좌동기 시 pos 없는 실보유(당일 BUY/ban/원장) 고아복구 — 익절 재추적. v50: 잔량 1주면 익절% 도달 시 전량. 1차 후 1주도 트레일/4차 허용. v49: TP4/전량청산 계좌잔량 1회 매도·flatExitPending; 매수복구 중복 BUY 방지. v48: on LIMIT_CNCL_FAIL / past limitUntil, promote missed buy from kt00004; restart recovery if BUY_ORD without BUY. ops: paperOnly=false (real). v47: block exits/acnt-qty while BUY wait gotQty=0 (Ananti race). v46: limit wait 10m then cancel leftover (no market). v45 trail keep. status=test."
 }

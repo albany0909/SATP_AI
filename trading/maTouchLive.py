@@ -2589,6 +2589,13 @@ def _restoreOrphanPosFromAcnt(stkCd, hold, note="계좌잔량 고아복구"):
         f"[이평터치] 계좌잔량 재추적 {cd} {rec.get('stkNm') or ''} "
         f"{qty}주 (동기화 누락 복구)"
     )
+    # 전량청산 때 0B 해지됐을 수 있어 시세 재구독
+    try:
+        from trading.watchRtMonitor import addWatchRtCodes
+
+        addWatchRtCodes([cd], reason="고아복구시세")
+    except Exception as err:
+        termLog(f"[maTouch] 고아복구 시세구독 실패 {cd}: {err}")
     return True
 
 
