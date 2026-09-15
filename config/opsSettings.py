@@ -142,8 +142,9 @@ def setBatchSchedEnabled(jobId, enabled):
     if not isinstance(batch, dict):
         batch = {}
     batch[jobId] = bool(enabled)
-    settings["batchSched"] = batch
-    saveSettings(settings)
+    from config.settingsStore import patchSettings
+
+    patchSettings({"batchSched": batch})
     return {"ok": True, "jobId": jobId, "enabled": bool(enabled)}
 
 
@@ -193,8 +194,9 @@ def setTelegramPushEnabled(channelId, enabled):
     for cid in DEFAULT_TELEGRAM_PUSH:
         if cid not in push:
             push[cid] = bool(DEFAULT_TELEGRAM_PUSH[cid])
-    settings["telegramPush"] = push
-    saveSettings(settings)
+    from config.settingsStore import patchSettings
+
+    patchSettings({"telegramPush": push})
     return {"ok": True, "channelId": channelId, "enabled": on}
 
 

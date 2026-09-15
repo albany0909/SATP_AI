@@ -23,14 +23,14 @@ _FALLBACK = {
     "slrPct": -10,
     "maTouchLive": {
         "enabled": True,
-        "paperOnly": True,
+        "paperOnly": False,
         "buyAmt5": 1000000,
         "buyAmt10": 1000000,
         "buyAmt15": 1000000,
     },
     "deskTradeExch": "KRX",
     # 매매창·자동매매 세션. paper | real
-    "deskTradeMode": "paper",
+    "deskTradeMode": "real",
     # 매매창 전략 탭·하단 운영알고리즘 표시 순서
     "deskAlgTabs": ["MTS01", "MSE01"],
     "stratLive": {
@@ -192,6 +192,28 @@ def loadSettings():
 def saveSettings(data):
     """현재 설정을 settings.json에 저장한다."""
     _writeJson(_SETTINGS_PATH, data)
+
+
+def patchSettings(updates: dict):
+    """
+    settings.json 에 부분 병합 저장.
+    loadSettings() 디폴트 merge 결과를 다시 쓰지 않아,
+    다른 키(실전/모의·금액 등)가 저장 과정에서 바뀌지 않는다.
+    """
+    if not isinstance(updates, dict) or not updates:
+        return _readJson(_SETTINGS_PATH) or {}
+    cur = _readJson(_SETTINGS_PATH)
+    if not isinstance(cur, dict):
+        cur = {}
+    for key, val in updates.items():
+        if isinstance(val, dict) and isinstance(cur.get(key), dict):
+            merged = dict(cur.get(key) or {})
+            merged.update(val)
+            cur[key] = merged
+        else:
+            cur[key] = val
+    _writeJson(_SETTINGS_PATH, cur)
+    return cur
 
 
 def resetSettingsToDefault():
@@ -408,9 +430,7 @@ def setDeskTradeMode(mode):
         val = "real"
     else:
         val = "paper"
-    settings = loadSettings()
-    settings["deskTradeMode"] = val
-    saveSettings(settings)
+    patchSettings({"deskTradeMode": val})
     return val
 
 

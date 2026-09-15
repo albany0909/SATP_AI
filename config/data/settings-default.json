@@ -7,13 +7,13 @@
   "slrPct": -10,
   "maTouchLive": {
     "enabled": true,
-    "paperOnly": true,
+    "paperOnly": false,
     "buyAmt5": 1000000,
     "buyAmt10": 1000000,
     "buyAmt15": 1000000
   },
   "deskTradeExch": "KRX",
-  "deskTradeMode": "paper",
+  "deskTradeMode": "real",
   "deskAlgTabs": [
     "MTS01",
     "MSE01"

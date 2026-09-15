@@ -116,30 +116,22 @@ def allowAutoOrders(paperOnly=False):
 
 
 def _setStratPaperOnly(flag: bool):
-    """maTouchLive + MSE01 paperOnly 를 settings 에 맞춘다. spec 파일은 건드리지 않는다."""
-    from config.settingsStore import loadSettings, saveSettings
+    """maTouchLive + MSE01/MTS01 paperOnly 를 settings 에 맞춘다. spec 파일은 건드리지 않는다."""
+    from config.settingsStore import patchSettings, _readJson, _SETTINGS_PATH
 
-    settings = loadSettings() or {}
-    mt = settings.get("maTouchLive") or {}
-    if not isinstance(mt, dict):
-        mt = {}
-    mt["paperOnly"] = bool(flag)
-    settings["maTouchLive"] = mt
-    live = settings.get("stratLive") or {}
-    if not isinstance(live, dict):
-        live = {}
-    mse = live.get("MSE01") or {}
-    if not isinstance(mse, dict):
-        mse = {}
-    mse["paperOnly"] = bool(flag)
+    flag = bool(flag)
+    raw = _readJson(_SETTINGS_PATH) or {}
+    mt = dict(raw.get("maTouchLive") or {})
+    mt["paperOnly"] = flag
+    live = dict(raw.get("stratLive") or {})
+    mse = dict(live.get("MSE01") or {})
+    mse["paperOnly"] = flag
     live["MSE01"] = mse
-    # MTS01 슬롯에도 맞춰 둔다 (있으면)
-    mts = live.get("MTS01") or {}
-    if isinstance(mts, dict):
-        mts["paperOnly"] = bool(flag)
-        live["MTS01"] = mts
-    settings["stratLive"] = live
-    saveSettings(settings)
+    mts = dict(live.get("MTS01") or {})
+    mts["paperOnly"] = flag
+    live["MTS01"] = mts
+    patchSettings({"maTouchLive": mt, "stratLive": live})
+
 
 
 def applyRealPaperOnlyOff():

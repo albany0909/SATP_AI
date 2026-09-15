@@ -49,6 +49,16 @@ def _bootLogin():
         bootMode = getDeskTradeMode()
     except Exception:
         bootMode = "paper"
+    # 저장된 모드와 paperOnly 를 기동 시 일치 (부분 저장/재시작 후 모의 고정 방지)
+    try:
+        from utils.tradeSession import applyPaperOnlyOn, applyRealPaperOnlyOff
+
+        if bootMode == "real":
+            applyRealPaperOnlyOff()
+        else:
+            applyPaperOnlyOn()
+    except Exception as err:
+        termLog(f"[기동] paperOnly 동기 실패: {err}")
     termLog(f"[기동] deskTradeMode={bootMode} 로그인")
     loginMsg = handleLogin(bootMode)
     termLog(loginMsg)
