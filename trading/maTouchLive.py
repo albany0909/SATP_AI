@@ -2479,6 +2479,174 @@ def _closeGhostToMatchAcnt(stkCd, rec, reason="계좌잔량0"):
     )
 
 
+
+def _inferTpFlagsFromTodayEvts(stkCd):
+    """당일 SELL/SELL_ORD reason 으로 tp1/2/3 플래그 추정."""
+    flags = {
+        "tp1Taken": False,
+        "tp2Taken": False,
+        "tp3Taken": False,
+        "halfTaken": False,
+    }
+    cd = normStkCd(stkCd)
+    if not cd:
+        return flags
+    try:
+        from utils.algEvtStore import listAlgEvt
+
+        rows = listAlgEvt(_ALG_CD, _todayYmd(), limit=4000) or []
+    except Exception as err:
+        termLog(f"[maTouch] 익절플래그 추정 실패 {cd}: {err}")
+        return flags
+    for ev in rows:
+        if normStkCd(ev.get("STK_CD")) != cd:
+            continue
+        tp = str(ev.get("EVT_TP") or "")
+        if tp not in ("SELL", "SELL_ORD"):
+            continue
+        reason = str(ev.get("REASON") or "")
+        if "1차" in reason:
+            flags["tp1Taken"] = True
+        if "2차" in reason or "절반" in reason:
+            flags["tp1Taken"] = True
+            flags["tp2Taken"] = True
+            flags["halfTaken"] = True
+        if "3차" in reason:
+            flags["tp1Taken"] = True
+            flags["tp2Taken"] = True
+            flags["tp3Taken"] = True
+            flags["halfTaken"] = True
+        if "4차" in reason or "트레일" in reason or "전량" in reason:
+            flags["tp1Taken"] = True
+            flags["tp2Taken"] = True
+            flags["tp3Taken"] = True
+            flags["halfTaken"] = True
+    return flags
+
+
+def _clearBuyBanCd(stkCd):
+    """당일 재매수금지 해제 (계좌 잔량 복구 시)."""
+    global _buyBanYmd
+    cd = normStkCd(stkCd)
+    if not cd:
+        return
+    with _lock:
+        if isinstance(_buyBanYmd, dict) and cd in _buyBanYmd:
+            _buyBanYmd.pop(cd, None)
+            _saveState()
+
+
+def _restoreOrphanPosFromAcnt(stkCd, hold, note="계좌잔량 고아복구"):
+    """
+    계좌에는 있는데 _pos 에 없는 잔량을 다시 추적한다.
+    BUY 이벤트를 중복 남기지 않고 포지션만 복구.
+    """
+    cd = normStkCd(stkCd)
+    qty = int((hold or {}).get("qty") or 0)
+    avgPx = float((hold or {}).get("avgPx") or 0)
+    if not cd or qty <= 0 or avgPx <= 0:
+        return False
+    flags = _inferTpFlagsFromTodayEvts(cd)
+    with _lock:
+        cur = _pos.get(cd) or {}
+        if int(cur.get("qty") or 0) > 0:
+            return False
+        if isinstance(_buyBanYmd, dict):
+            _buyBanYmd.pop(cd, None)
+        rec = _blankPos()
+        rec["qty"] = qty
+        rec["avgPx"] = avgPx
+        rec["buyQty"] = max(qty, int(cur.get("buyQty") or 0) or qty)
+        rec["buyAmt"] = float(avgPx) * float(rec["buyQty"])
+        rec["sellQty"] = int(cur.get("sellQty") or 0)
+        rec["sellAmt"] = float(cur.get("sellAmt") or 0)
+        rec["filled"] = list(cur.get("filled") or [20])
+        if not rec["filled"]:
+            rec["filled"] = [20]
+        rec["entryDt"] = str(cur.get("entryDt") or _todayYmd())
+        rec["tradeDt"] = _todayYmd()
+        rec["lastPx"] = avgPx
+        rec["stkNm"] = cur.get("stkNm") or _lookupStkNm(cd)
+        rec["algCd"] = _ALG_CD
+        rec["tp1Taken"] = bool(flags.get("tp1Taken"))
+        rec["tp2Taken"] = bool(flags.get("tp2Taken"))
+        rec["tp3Taken"] = bool(flags.get("tp3Taken"))
+        rec["halfTaken"] = bool(flags.get("halfTaken"))
+        from utils.maTouchMfe import initMaxPnl
+
+        initMaxPnl(rec, avgPx, _nowHms())
+        _pos[cd] = rec
+        _saveState()
+    try:
+        _ensureOpenLedger(cd, rec, avgPx, qty, 20)
+    except Exception as err:
+        termLog(f"[maTouch] 고아복구 원장 실패 {cd}: {err}")
+    termLog(
+        f"[maTouch] 계좌고아복구 {cd} {qty}주 @{avgPx:,.0f} "
+        f"tp1={flags.get('tp1Taken')} tp2={flags.get('tp2Taken')} · {note}"
+    )
+    _notify(
+        f"[이평터치] 계좌잔량 재추적 {cd} {rec.get('stkNm') or ''} "
+        f"{qty}주 (동기화 누락 복구)"
+    )
+    return True
+
+
+def _reclaimOrphanAcntHolds(holds):
+    """
+    계좌 보유 ∩ (당일 BUY 이력 | 당일 buyBan | 미청산 원장) 인데 _pos 없음 → 복구.
+    금호·포스코퓨처엠처럼 실보유인데 익절 로직이 안 도는 케이스 방지.
+    """
+    if not holds:
+        return
+    try:
+        from utils.algEvtStore import listAlgEvt
+
+        rows = listAlgEvt(_ALG_CD, _todayYmd(), limit=4000) or []
+    except Exception as err:
+        termLog(f"[maTouch] 고아복구 이벤트조회 실패: {err}")
+        rows = []
+    bought = set()
+    for ev in rows:
+        if str(ev.get("EVT_TP") or "") == "BUY":
+            ecd = normStkCd(ev.get("STK_CD"))
+            if ecd:
+                bought.add(ecd)
+    openCds = set()
+    try:
+        from utils.stratOrdLedgerStore import listOpenLedgerRows
+
+        for row in listOpenLedgerRows(stratId=_STRAT_ID) or []:
+            ecd = normStkCd(row.get("STK_CD"))
+            if ecd:
+                openCds.add(ecd)
+    except Exception:
+        pass
+    banned = set()
+    with _lock:
+        if isinstance(_buyBanYmd, dict):
+            today = _todayYmd()
+            for k, v in list(_buyBanYmd.items()):
+                if str(v) == today:
+                    banned.add(normStkCd(k))
+    for cd, hold in list((holds or {}).items()):
+        cd = normStkCd(cd)
+        if not cd:
+            continue
+        if cd in _pos and int((_pos.get(cd) or {}).get("qty") or 0) > 0:
+            continue
+        if _buyFillPending(cd, "BUY"):
+            continue
+        if _hasOrdWait(cd, "SELL"):
+            continue
+        qty = int((hold or {}).get("qty") or 0)
+        if qty <= 0:
+            continue
+        if not (cd in bought or cd in openCds or cd in banned):
+            continue
+        _restoreOrphanPosFromAcnt(cd, hold, note="sync orphan reclaim")
+
+
 def syncFromAcntEvlt(body):
     """
     kt00004 계좌평단·잔량으로 미청산 원장을 덮어쓴다.
@@ -2680,6 +2848,11 @@ def syncFromAcntEvlt(body):
             )
     except Exception as err:
         termLog(f"[maTouch] 누락체결 복구스캔 실패: {err}")
+
+    try:
+        _reclaimOrphanAcntHolds(holds)
+    except Exception as err:
+        termLog(f"[maTouch] 계좌고아복구 실패: {err}")
 
     for cd, rec in missing:
         _closeGhostToMatchAcnt(cd, rec)
