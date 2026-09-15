@@ -3,7 +3,7 @@
   "algCd": "MTS01",
   "name": "이평선터치 매매",
   "status": "test",
-  "version": 47,
+  "version": 48,
   "enabled": true,
   "timeframe": "1",
   "docPath": "strategies/docs/maTouchScale_v1.md",
@@ -70,7 +70,7 @@
     "afterHalfTrailTpPct": 3,
     "afterHalfRsiMin": 0,
     "banRebuySameDay": true,
-    "paperOnly": true
+    "paperOnly": false
   },
   "rules": {
     "entry": "from above touch SMA20 once; do not buy on touch; same-day only: wait for a 3-min bar that closes bullish above SMA20 (close>open and close>SMA20); place a limit buy at the SMA20 nearby tick; if unfilled after 10 minutes cancel remainder (no market follow-up); wait expires same day; retouch resets; 14:00 cutoff only if next calendar day is closed; after full exit ban rebuy that stock same day",
@@ -83,7 +83,7 @@
     "entryPrice": "sma20NearTickLimit",
     "exitPrice": "closeOrTick",
     "feeRate": 0,
-    "btNote": "v47: no TP/SL until 00 buy fill; acnt sync ignored while BUY ord wait pending. v46: limit 10m then cancel only. v45: residual trail 5/-3%p. v44: 1st +1.2%. v43: limit 3m then market. Live avgPx is broker kt00004."
+    "btNote": "v48: limit-cncl-fail reconciles buy from account (missed 00 fill). v47: no TP/SL until 00 buy fill; acnt sync ignored while BUY ord wait pending. v46: limit 10m then cancel only. v45: residual trail 5/-3%p. v44: 1st +1.2%. v43: limit 3m then market. Live avgPx is broker kt00004."
   },
-  "notes": "v47: block exits/acnt-qty while BUY wait gotQty=0 (Ananti race). v46: limit wait 10m then cancel leftover (no market). v45 trail keep. status=test."
+  "notes": "v48: on LIMIT_CNCL_FAIL / past limitUntil, promote missed buy from kt00004; restart recovery if BUY_ORD without BUY. ops: paperOnly=false (real). v47: block exits/acnt-qty while BUY wait gotQty=0 (Ananti race). v46: limit wait 10m then cancel leftover (no market). v45 trail keep. status=test."
 }

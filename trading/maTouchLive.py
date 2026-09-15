@@ -1705,6 +1705,214 @@ def _enqueueLimitTimeouts():
             _ordQ.append(item)
 
 
+
+def _cnclErrNoCancelableQty(errMsg):
+    """이미 체결·취소되어 취소할 잔량이 없는 증권사 응답."""
+    msg = str(errMsg or "")
+    if "취소가능수량이 없습니다" in msg:
+        return True
+    if "506550" in msg:
+        return True
+    return False
+
+
+def _fetchAcntHoldMap():
+    """kt00004 한 번 조회 → {stkCd: {qty, avgPx}}. 실패 시 {}."""
+    try:
+        from utils.tradeSession import getOrdSession, isModeLoggedIn
+
+        if not isModeLoggedIn():
+            return {}
+        sess = getOrdSession(paperOnly=False)
+        if sess is None:
+            return {}
+        hostUrl, token, tokenType = sess
+        from api.getAcntEvlt import fetchAcntEvlt
+
+        got = fetchAcntEvlt(
+            hostUrl, token, qryTp="1", dmstStexTp="KRX", tokenType=tokenType
+        )
+        if not got.get("ok"):
+            termLog(f"[maTouch] 체결재확인 계좌조회 실패: {got.get('errMsg')}")
+            return {}
+        return _holdMapFromAcnt(got.get("body") or got)
+    except Exception as err:
+        termLog(f"[maTouch] 체결재확인 계좌조회 예외: {err}")
+        return {}
+
+
+def _clearWaitConfirmCd(stkCd, step=None):
+    """터치 대기 슬롯 제거 (체결 복구·미체결 정리)."""
+    cd = normStkCd(stkCd)
+    if not cd:
+        return
+    with _lock:
+        wc = _waitConfirm.get(cd)
+        if not wc:
+            return
+        if step is None:
+            _waitConfirm.pop(cd, None)
+        else:
+            wc.pop(str(int(step)), None)
+            wc.pop(int(step), None)
+            if not wc:
+                _waitConfirm.pop(cd, None)
+            else:
+                _waitConfirm[cd] = wc
+        _saveState()
+
+
+def _promoteBuyFromAcntHold(stkCd, step, wait, hold, note):
+    """
+    00 체결 누락분 — 계좌 잔량·평단으로 공식 매수 반영.
+    BUY 이벤트·원장·포지션을 남기고 주문대기를 제거한다.
+    """
+    cd = normStkCd(stkCd)
+    qty = int((hold or {}).get("qty") or 0)
+    avgPx = float((hold or {}).get("avgPx") or 0)
+    if not cd or qty <= 0 or avgPx <= 0:
+        return False
+    step = int(step or (wait or {}).get("step") or 20)
+    wait = dict(wait or {})
+    qtyBefore = int(wait.get("qtyBefore") or 0)
+    fillQty = max(0, qty - qtyBefore)
+    if fillQty <= 0:
+        fillQty = qty
+    fillPx = avgPx
+    closeJob = None
+    buyJob = None
+    with _lock:
+        # 잔여 BUY 대기 전부 제거 (gotQty=0 고착 해제)
+        for k, w in list(_ordWait.items()):
+            if w.get("cd") == cd and w.get("side") == "BUY":
+                _dropOrdWait(k)
+        synWait = {
+            "cd": cd,
+            "side": "BUY",
+            "kind": "BUY",
+            "step": step,
+            "expectQty": fillQty,
+            "gotQty": 0,
+            "qtyBefore": qtyBefore,
+            "ledgerBuy": False,
+            "reason": str(wait.get("reason") or f"SMA{step}"),
+            "ordNote": str(note or "계좌재확인체결")[:80],
+        }
+        rec, firstSlot, step2 = _applyBuyFillLocked(cd, fillPx, fillQty, synWait)
+        # 계좌 잔량이 곧 진실 — 평단·수량 덮어쓰기
+        rec["avgPx"] = avgPx
+        rec["qty"] = qty
+        if int(rec.get("buyQty") or 0) < qty:
+            rec["buyQty"] = qty
+        filled = list(rec.get("filled") or [])
+        if step not in filled and str(step) not in [str(x) for x in filled]:
+            filled.append(step)
+            rec["filled"] = filled
+        if not rec.get("stkNm"):
+            rec["stkNm"] = _lookupStkNm(cd)
+        _pos[cd] = rec
+        _saveState()
+        buyJob = (dict(rec), firstSlot, step, fillPx, fillQty, synWait)
+    if buyJob:
+        rec, firstSlot, step, fillPx, fillQty, waitSnap = buyJob
+        _ensureOpenLedger(cd, rec, avgPx, qty, step)
+        reason = str((waitSnap or {}).get("reason") or f"SMA{step}")
+        _writeAlgEvt(
+            "BUY",
+            cd,
+            reason=reason,
+            px=fillPx,
+            qty=fillQty,
+            note=str((waitSnap or {}).get("ordNote") or "계좌재확인체결")[:200],
+        )
+        try:
+            from utils.algTouchSumStore import markTouchBuy
+
+            markTouchBuy(
+                _ALG_CD,
+                _todayYmd(),
+                cd,
+                step,
+                _nowHms(),
+                fillPx,
+                fillQty,
+                stepSeq=len(list(rec.get("filled") or [])),
+                stkNm=rec.get("stkNm") or "",
+            )
+        except Exception as err:
+            termLog(f"[maTouch] 터치요약 매수표시 실패: {err}")
+        _clearWaitConfirmCd(cd, step)
+        _notify(
+            f"[이평터치체결] {cd} 매수복구 {fillQty}주 {fillPx:,.0f}원\n"
+            f"평단 {rec.get('avgPx', 0):,.0f} · 보유 {rec.get('qty', 0)}주 "
+            f"(00누락·계좌재확인)"
+        )
+        termLog(
+            f"[maTouch] 00누락 계좌복구 {cd} {fillQty}주 @{fillPx:,.0f} "
+            f"계좌잔량 {qty}"
+        )
+        return True
+    return False
+
+
+def _reconcileLimitBuyAfterCnclFail(stkCd, step, waitKey, wait, maPx, leftover, errMsg):
+    """
+    지정가 10분 취소 실패 시 체결 여부 재확인.
+    취소가능수량 없음 = 이미 체결·소멸 가능 → 계좌로 판정.
+    """
+    cd = normStkCd(stkCd)
+    wait = dict(wait or {})
+    step = int(step or wait.get("step") or 20)
+    holds = _fetchAcntHoldMap()
+    hold = holds.get(cd)
+    qtyBefore = int(wait.get("qtyBefore") or 0)
+    acntQty = int((hold or {}).get("qty") or 0)
+    filledLikely = acntQty > qtyBefore
+
+    if filledLikely and hold:
+        ok = _promoteBuyFromAcntHold(
+            cd,
+            step,
+            wait,
+            hold,
+            note=f"LIMIT_CNCL_FAIL 계좌복구:{str(errMsg or '')[:80]}",
+        )
+        if ok:
+            return
+        # 복구 실패해도 대기는 제거해 buyFillPending 고착을 푼다
+
+    # 미체결로 보이거나 복구 실패 — 대기 제거 + 정리
+    with _lock:
+        if waitKey in _ordWait:
+            _dropOrdWait(waitKey)
+        else:
+            for k, w in list(_ordWait.items()):
+                if w.get("cd") == cd and w.get("side") == "BUY":
+                    _dropOrdWait(k)
+    _writeAlgEvt(
+        "BUY_FAIL",
+        cd,
+        reason="LIMIT_CNCL_FAIL",
+        px=maPx,
+        qty=leftover,
+        note=str(errMsg or "")[:200],
+    )
+    if not filledLikely:
+        _writeAlgEvt(
+            "BUY_ORD_CNCL",
+            cd,
+            reason="LIMIT_UNFILL_10M",
+            px=float(_lastPx.get(cd) or maPx or 0) or maPx,
+            qty=leftover,
+            note=f"SMA{step} 취소실패후 재확인·미체결",
+        )
+        _unfillStepIfEmpty(cd, step)
+        _voidUnfilledLedger(cd, reason="LIMIT_UNFILL_10M")
+        _clearWaitConfirmCd(cd, step)
+    _notify(f"[이평터치] 지정가취소실패 재확인 {cd}: {errMsg}")
+
+
+
 def _limitTimeoutThenMarket(stkCd, step, waitKey):
     """지정가 10분 미체결 → 잔량 취소만. 시장가로 바꾸지 않는다."""
     with _lock:
@@ -1741,16 +1949,18 @@ def _limitTimeoutThenMarket(stkCd, step, waitKey):
             tokenType=tokenType,
         )
         if not cncl.get("ok"):
-            _notify(
-                f"[이평터치] 지정가취소실패 {stkCd}: {cncl.get('errMsg')}"
-            )
-            _writeAlgEvt(
-                "BUY_FAIL",
+            errMsg = str(cncl.get("errMsg") or "")
+            # 10분 만료 후 취소 실패: 이미 체결·소멸 가능 → 계좌로 재확인.
+            # 단순 BUY_FAIL return 은 _ordWait(gotQty=0) 고착 → 계좌동기 스킵 →
+            # 실보유인데 익절 불가 (금호전기 2026-09-15).
+            _reconcileLimitBuyAfterCnclFail(
                 stkCd,
-                reason="LIMIT_CNCL_FAIL",
-                px=maPx,
-                qty=leftover,
-                note=str(cncl.get("errMsg") or "")[:200],
+                step,
+                waitKey,
+                wait,
+                maPx,
+                leftover,
+                errMsg,
             )
             return
     with _lock:
@@ -2237,6 +2447,7 @@ def syncFromAcntEvlt(body):
     holds = _holdMapFromAcnt(body)
     changed = []
     missing = []
+    promoteBuys = []
     with _lock:
         _dropExpiredWaits()
         for cd, rec in list(_pos.items()):
@@ -2244,7 +2455,29 @@ def syncFromAcntEvlt(body):
             acntQty = int((item or {}).get("qty") or 0)
             # 00 매수 체결 전(지정가 대기·gotQty=0): 계좌에 잔량이 보여도
             # qty/평단/원장을 올리지 않는다. (동기 선반영 → 익절 선주문 레이스 방지)
+            # 지정가 시한 경과 + 계좌수량 증가면 00 누락 승격 후보.
             if _buyFillPending(cd, "BUY"):
+                buyWait = None
+                for w in _ordWait.values():
+                    if w.get("cd") == cd and w.get("side") == "BUY":
+                        buyWait = w
+                        break
+                acntQty = int((item or {}).get("qty") or 0)
+                qtyBefore = int((buyWait or {}).get("qtyBefore") or 0)
+                until = float((buyWait or {}).get("limitUntil") or 0)
+                pastLimit = until > 0 and time.time() >= until
+                if buyWait and item and pastLimit and acntQty > qtyBefore:
+                    promoteBuys.append(
+                        (
+                            cd,
+                            int(buyWait.get("step") or 20),
+                            dict(buyWait),
+                            {
+                                "qty": acntQty,
+                                "avgPx": float(item.get("avgPx") or 0),
+                            },
+                        )
+                    )
                 continue
             # 계좌 잔량 0 인데 원장만 남아 있으면 관심 색이 보유와 어긋난다.
             # 매수/매도 대기 중이면 계좌 TR 지연일 수 있어 유지.
@@ -2298,6 +2531,18 @@ def syncFromAcntEvlt(body):
                 changed.append((cd, avgPx, qty, "pos"))
         if changed or missing:
             _saveState()
+    for cd, step, waitSnap, hold in promoteBuys:
+        try:
+            _promoteBuyFromAcntHold(
+                cd,
+                step,
+                waitSnap,
+                hold,
+                note="sync 시한경과 계좌승격",
+            )
+        except Exception as err:
+            termLog(f"[maTouch] 시한경과 매수승격 실패 {cd}: {err}")
+
     for cd, avgPx, qty, _kind in changed:
         rec = _pos.get(cd)
         if rec:
@@ -2341,6 +2586,50 @@ def syncFromAcntEvlt(body):
             )
     except Exception as err:
         termLog(f"[maTouch] 원장 보강 실패: {err}")
+    # 재기동 등: 주문대기 없이 터치대기만 남고 계좌에 잔량이 있으면
+    # 당일 BUY_ORD 가 있고 BUY 가 없을 때만 누락체결로 복구.
+    try:
+        from utils.algEvtStore import listAlgEvt
+
+        evts = listAlgEvt(_ALG_CD, _todayYmd(), limit=3000) or []
+        bought = set()
+        ordered = set()
+        for ev in evts:
+            ecd = normStkCd(ev.get("STK_CD"))
+            tp = str(ev.get("EVT_TP") or "")
+            if not ecd:
+                continue
+            if tp == "BUY":
+                bought.add(ecd)
+            if tp == "BUY_ORD":
+                ordered.add(ecd)
+        adoptCds = ordered - bought
+        for cd in list(adoptCds):
+            if cd in _pos:
+                continue
+            if _buyFillPending(cd, "BUY"):
+                continue
+            item = holds.get(cd)
+            if not item or int(item.get("qty") or 0) <= 0:
+                continue
+            step = 20
+            with _lock:
+                wc = (_waitConfirm.get(cd) or {})
+                if wc:
+                    try:
+                        step = int(next(iter(wc.keys())))
+                    except Exception:
+                        step = 20
+            _promoteBuyFromAcntHold(
+                cd,
+                step,
+                {"step": step, "qtyBefore": 0, "reason": f"SMA{step}"},
+                item,
+                note="재기동/이벤트 누락체결 복구",
+            )
+    except Exception as err:
+        termLog(f"[maTouch] 누락체결 복구스캔 실패: {err}")
+
     for cd, rec in missing:
         _closeGhostToMatchAcnt(cd, rec)
     # 메모리에 없어도 원장만 미청산인 종목도 계좌 기준으로 닫는다
