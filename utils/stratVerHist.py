@@ -69,17 +69,17 @@ def parseDocVerHist(mdText):
     return rows
 
 
-def listAlgVerHist(algCd=None):
+def listAlgVerHist(algCd=None, preferDb=True):
     """
     알고리즘 변경 이력.
-    algCd 가 있으면 해당 코드만, 없으면 스펙에 있는 전 알고리즘.
+    기본은 DB(AI_ALG_VER_HIST) 우선, 비어 있으면 문서 표로 폴백.
     """
     from strategies.specLoader import listStratSpecs, loadStratSpec, normAlgCd
 
     want = normAlgCd(algCd) if algCd else ""
     specs = listStratSpecs() or []
     algs = []
-    items = []
+    meta = {}
     for s in specs:
         cd = s.get("algCd") or ""
         if not cd:
@@ -91,42 +91,107 @@ def listAlgVerHist(algCd=None):
         except (TypeError, ValueError):
             curVer = None
         name = spec.get("name") or s.get("name") or cd
-        algs.append(
-            {
-                "algCd": cd,
-                "name": name,
-                "stratId": sid,
-                "curVer": curVer,
-                "status": spec.get("status") or s.get("status") or "",
-            }
-        )
-        if want and cd != want:
-            continue
-        path = _mdPath(spec) or _mdPath(s)
-        hist = []
-        if path is not None:
-            try:
-                hist = parseDocVerHist(path.read_text(encoding="utf-8"))
-            except Exception:
-                hist = []
-        # 최신이 위로. 같은 날이면 문서 역순(뒤에 나온 버전이 위)
-        for row in reversed(hist):
-            ver = row.get("ver")
-            items.append(
-                {
-                    "algCd": cd,
-                    "name": name,
-                    "curVer": curVer,
-                    "ymd": row.get("ymd") or "",
-                    "ver": ver,
-                    "note": row.get("note") or "",
-                    "isCur": bool(curVer and ver == curVer),
-                }
-            )
+        row = {
+            "algCd": cd,
+            "name": name,
+            "stratId": sid,
+            "curVer": curVer,
+            "status": spec.get("status") or s.get("status") or "",
+        }
+        algs.append(row)
+        meta[cd] = row
+
+    items = []
+    src = "doc"
+    if preferDb:
+        try:
+            from utils.algVerHistStore import listAlgVerHistRows
+
+            dbRows = listAlgVerHistRows(want or None)
+            if dbRows:
+                src = "db"
+                for row in dbRows:
+                    cd = row.get("algCd") or ""
+                    if want and cd != want:
+                        continue
+                    m = meta.get(cd) or {}
+                    ver = row.get("ver")
+                    curVer = m.get("curVer")
+                    items.append(
+                        {
+                            "algCd": cd,
+                            "name": m.get("name") or cd,
+                            "curVer": curVer,
+                            "ymd": row.get("ymd") or "",
+                            "ver": ver,
+                            "note": row.get("note") or "",
+                            "gitHash": row.get("gitHash") or "",
+                            "src": row.get("src") or "",
+                            "isCur": bool(curVer and ver == curVer),
+                        }
+                    )
+        except Exception:
+            items = []
+            src = "doc"
+
+    if not items:
+        src = "doc"
+        for s in specs:
+            cd = s.get("algCd") or ""
+            if not cd:
+                continue
+            if want and cd != want:
+                continue
+            sid = s.get("stratId") or ""
+            spec = loadStratSpec(sid) or {}
+            m = meta.get(cd) or {}
+            curVer = m.get("curVer")
+            path = _mdPath(spec) or _mdPath(s)
+            hist = []
+            if path is not None:
+                try:
+                    hist = parseDocVerHist(path.read_text(encoding="utf-8"))
+                except Exception:
+                    hist = []
+            for row in reversed(hist):
+                ver = row.get("ver")
+                items.append(
+                    {
+                        "algCd": cd,
+                        "name": m.get("name") or cd,
+                        "curVer": curVer,
+                        "ymd": row.get("ymd") or "",
+                        "ver": ver,
+                        "note": row.get("note") or "",
+                        "gitHash": "",
+                        "src": "doc",
+                        "isCur": bool(curVer and ver == curVer),
+                    }
+                )
+
     return {
         "ok": True,
         "algCd": want,
         "algs": algs,
         "cnt": len(items),
         "items": items,
+        "histSrc": src,
     }
+
+
+def recordAlgVerBump(algCd, algVer, note, ymd=None, stratId=None, gitHash=None):
+    """버전 bump 시 DB 이력 1건 기록 (문서와 병행)."""
+    from datetime import datetime
+
+    from utils.algVerHistStore import upsertAlgVerHist
+
+    day = ymd or datetime.now().strftime("%Y-%m-%d")
+    return upsertAlgVerHist(
+        algCd,
+        algVer,
+        day,
+        note,
+        stratId=stratId,
+        gitHash=gitHash,
+        src="bump",
+    )
