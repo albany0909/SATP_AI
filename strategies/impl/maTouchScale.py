@@ -368,7 +368,7 @@ class MaTouchScaleStrategy:
         self.stopMa = int(p.get("stopMa", 20))
         self.takeMa = int(p.get("takeMa", 10))
         # 1·2차 부분익절. halfTpPct 는 구버전 호환(미사용)
-        self.tp1Pct = float(p.get("tp1Pct", 1.5) or 0)
+        self.tp1Pct = float(p.get("tp1Pct", 1.4) or 0)
         self.tp1QtyRatio = float(p.get("tp1QtyRatio", 0.3) or 0)
         self.tp2Pct = float(p.get("tp2Pct", 2) or 0)
         self.tp2QtyRatio = float(p.get("tp2QtyRatio", 0.3) or 0)

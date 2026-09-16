@@ -229,7 +229,7 @@ def buildMaTouchDeskText(algCd, stratId):
     steps = p.get("maSteps") or [20]
     stopMa = int(p.get("stopMa") or 20)
     hardPct = float(p.get("hardStopPct") or 2)
-    tp1Pct = float(p.get("tp1Pct") or 1.2)
+    tp1Pct = float(p.get("tp1Pct") or 1.4)
     tp1Ratio = float(p.get("tp1QtyRatio") or 0.3)
     tp2Pct = float(p.get("tp2Pct") or 2)
     tp2Ratio = float(p.get("tp2QtyRatio") or 0.3)
@@ -422,7 +422,7 @@ def buildMaTouchRuleRows(algCd, stratId):
     steps = p.get("maSteps") or [20]
     stopMa = int(p.get("stopMa") or 20)
     hardPct = float(p.get("hardStopPct") or 2)
-    tp1Pct = float(p.get("tp1Pct") or 1.2)
+    tp1Pct = float(p.get("tp1Pct") or 1.4)
     tp1Ratio = float(p.get("tp1QtyRatio") or 0.3)
     tp2Pct = float(p.get("tp2Pct") or 2)
     tp2Ratio = float(p.get("tp2QtyRatio") or 0.3)

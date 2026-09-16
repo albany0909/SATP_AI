@@ -167,7 +167,7 @@ def _loadParams():
         # v46: 3분봉 양봉 돌파 → SMA20 인근 지정가, 10분 미체결 취소만 (시장가 없음)
         p["confirmMode"] = "bar3BreakLimit"
         p["limitWaitSec"] = 600
-        p.setdefault("tp1Pct", 1.5)
+        p.setdefault("tp1Pct", 1.4)
         p.setdefault("tp1QtyRatio", 0.3)
         p.setdefault("tp2Pct", 2)
         p.setdefault("tp2QtyRatio", 0.3)
@@ -187,7 +187,7 @@ def _loadParams():
     p.setdefault("limitWaitSec", 600)
     p.setdefault("halfTpPct", 3)
     p.setdefault("halfTpFromStat", False)
-    p.setdefault("tp1Pct", 1.5)
+    p.setdefault("tp1Pct", 1.4)
     p.setdefault("tp1QtyRatio", 0.3)
     p.setdefault("tp2Pct", 2)
     p.setdefault("tp2QtyRatio", 0.3)
@@ -3314,7 +3314,7 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
         takeMa = sma.get(int(_params.get("takeMa", 10)))
         stopMa = sma.get(int(_params.get("stopMa", 20)))
         hardPct = float(_params.get("hardStopPct", 2))
-        tp1Pct = float(_params.get("tp1Pct", 1.5) or 0)
+        tp1Pct = float(_params.get("tp1Pct", 1.4) or 0)
         tp1Ratio = float(_params.get("tp1QtyRatio", 0.3) or 0)
         tp2Pct = float(_params.get("tp2Pct", 2) or 0)
         tp2Ratio = float(_params.get("tp2QtyRatio", 0.3) or 0)
@@ -3970,7 +3970,7 @@ def startMaTouchLive():
         f"{'ON' if _params.get('_enabled') else 'OFF'} · {modeLabel()}"
         f"{'(paperOnly)' if _params.get('_paperOnly') else ''}"
         f" · 체결기준 원장 · 계좌동기 {_ACNT_SYNC_SEC:g}초"
-        f" · 1차 +{float(_params.get('tp1Pct') or 1.5):g}% 30%"
+        f" · 1차 +{float(_params.get('tp1Pct') or 1.4):g}% 30%"
         f" · 2차 +{float(_params.get('tp2Pct') or 2):g}% 30%"
         f" · RSI≥{float(_params.get('rsiTpMin') or 70):g} 전량"
         f" · 3차 +{float(_params.get('tp3Pct') or 4):g}% 50%"
