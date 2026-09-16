@@ -269,6 +269,7 @@ def buildMaTouchDeskText(algCd, stratId):
         f"  매차 최소금액으로 {univMinQty}주 이상 (고가주 제외)",
         "  매일 전량 교체 · 원장 미청산은 유지",
         "  장중 신규 편입 없음",
+        "  기존관심: 이틀 연속 음봉+종가≤SMA20 만 제외 (하루 이탈 유예)",
     ]
     if univNote:
         lines.append(f"  {univNote}")
@@ -453,6 +454,7 @@ def buildMaTouchRuleRows(algCd, stratId):
             "중복 제거 · 코스피/코스닥만",
             f"매차 최소금액으로 {univMinQty}주 이상",
             "매일 전량 교체 · 원장 미청산 유지 · 장중 신규 편입 없음",
+            "기존관심: 이틀 연속 음봉+종가≤SMA20 만 제외",
             univNote,
         ]
     )

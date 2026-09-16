@@ -7,15 +7,17 @@
 
 같은 16:00 배치에서 이평지지(MSE01) 관심은 **ka10016 52주 신고가**
 (코스피 001 + 코스닥 101, 고저기준 dt=250)로 **편입**한다.
-이미 있는 종목은 **종가 > SMA20** 이면 유지하고, **종가 ≤ SMA20** 이면 뺀다.
-원장 미청산은 예외로 남긴다.
+이미 있는 종목은 **현재가 > SMA20** 이면 유지하고,
+**이틀 연속 음봉(종가<시가)이면서 종가 ≤ SMA20** 이면 뺀다.
+하루만 SMA20 아래이거나 양봉이면 관심에 남긴다. 원장 미청산은 예외로 남긴다.
 
 설계 이유
 - 장중 15분 순위 편입을 없애고 하루를 전날 16시에 확정된 목록으로 시작한다.
   (장중에 대상이 늘어나면 진입 시점·검증 기준이 매번 달라져 복기가 어렵다)
 - **16시 배치 직전** 기존 관심(USE_TRADE=Y)을 SMA20 기준으로 정리한다.
-  현재가 > 전일까지 확정 SMA20 이면 다음 장까지 유지, 이탈(≤) 종목은
-  관심·관리에서 제외한 뒤 신규 순위를 적재한다.
+  현재가 > 전일까지 확정 SMA20 이면 다음 장까지 유지.
+  이탈은 **이틀 연속 음봉 + 종가≤SMA20** 일 때만 관심·관리에서 제외한다
+  (하루 이탈·양봉 이탈은 유예).
 - 신규 편입(순위∪대금)도 **현재가 > SMA20** 일 때만 등록한다.
 - 원장 미청산 종목은 SMA20·교체와 무관하게 유지한다.
 
@@ -1062,17 +1064,69 @@ def _dropAlgBoth(cd, note=""):
             termLog(f"[maTouchUniv] 관리종목 해제 실패 {alg} {cd}: {err}")
 
 
+
+def _isBearBar(bar):
+    """음봉: 종가 < 시가. 시가 없거나 동일가면 False."""
+    if not bar:
+        return False
+    o = bar.get("openPrc")
+    c = bar.get("closePrc")
+    if o is None or c is None:
+        return False
+    try:
+        return float(c) < float(o)
+    except (TypeError, ValueError):
+        return False
+
+
+def _belowSma20TwoBearDays(stkCd, ymd):
+    """
+    기준일 포함 최근 2거래일 연속:
+    음봉(종가<시가) 이고 종가 ≤ 그 날 전일확정 SMA20.
+    반환: (shouldDrop, sma20_today, close_today)
+    일봉 부족·당일봉 미확정이면 False (제외하지 않음).
+    """
+    ref = str(ymd)[:8]
+    bars = _dayBarsAsOf(stkCd, ymd, limit=_SMA_SLOW + 5)
+    if not bars or len(bars) < 2:
+        return False, None, None
+    d1 = bars[-1]
+    d0 = bars[-2]
+    if str(d1.get("dt") or "")[:8] != ref:
+        return False, None, None
+    last_sma = None
+    last_close = None
+    for bar in (d0, d1):
+        if not _isBearBar(bar):
+            return False, None, None
+        sma = _sma20Prior(stkCd, bar.get("dt"))
+        close_px = bar.get("closePrc")
+        if sma is None or close_px is None:
+            return False, None, None
+        try:
+            if float(close_px) > float(sma):
+                return False, None, None
+        except (TypeError, ValueError):
+            return False, None, None
+        last_sma = sma
+        last_close = close_px
+    return True, last_sma, last_close
+
+
 def _purgeWatchBelowSma20(ymd, openCds, rankPxMap=None):
     """
-    적재 배치 직전 — 기존 USE_TRADE 관심 중 SMA20 이탈 종목 제거.
-    20선 위 종목은 retain 후보로 반환(다음 장까지 유지).
+    적재 배치 직전 — 기존 USE_TRADE 관심 정리.
+    · 현재가 > SMA20 → 유지
+    · 이틀 연속 음봉 + 종가≤SMA20 → 제외
+    · 그 외(하루 이탈·양봉 등) → 유예 유지
     """
     rankPxMap = rankPxMap or {}
     openCds = openCds or set()
     dropped = []
     retain = []
-    noteDrop = f"sma20이탈 {ymd}"
+    noteDrop = f"sma20_2음봉이탈 {ymd}"
     noteKeep = f"sma20유지 {ymd}"
+    noteHold = f"sma20유예(2음봉대기) {ymd}"
 
     try:
         curWatch = listTradeWatch(limit=200) or []
@@ -1087,22 +1141,42 @@ def _purgeWatchBelowSma20(ymd, openCds, rankPxMap=None):
         above, sma20, curPx = _isAboveSma20(cd, ymd, rankPxMap.get(cd))
         stkNm = (row.get("STK_NM") or cd).strip()
         if not above:
-            got = deactivateWatchStk(cd, note=noteDrop)
-            if got.get("ok"):
-                # SMA20 정리는 이평터치 관심(USE_TRADE)만. 이평지지는 AI_ALG_STK(MSE01)에서 따로 종가 기준으로 정리
-                try:
-                    delAlgManaged(_ALG_CD, cd)
-                except Exception as err:
-                    termLog(f"[maTouchUniv] 관리종목 해제 실패 {_ALG_CD} {cd}: {err}")
-                dropped.append(
-                    {
-                        "stkCd": cd,
-                        "stkNm": stkNm,
-                        "closePrc": curPx,
-                        "sma20": sma20,
-                        "note": noteDrop,
-                    }
-                )
+            should_drop, drop_sma, drop_close = _belowSma20TwoBearDays(cd, ymd)
+            if should_drop:
+                got = deactivateWatchStk(cd, note=noteDrop)
+                if got.get("ok"):
+                    # SMA20 정리는 이평터치 관심(USE_TRADE)만. 이평지지는 AI_ALG_STK(MSE01)에서 따로 종가 기준으로 정리
+                    try:
+                        delAlgManaged(_ALG_CD, cd)
+                    except Exception as err:
+                        termLog(f"[maTouchUniv] 관리종목 해제 실패 {_ALG_CD} {cd}: {err}")
+                    dropped.append(
+                        {
+                            "stkCd": cd,
+                            "stkNm": stkNm,
+                            "closePrc": drop_close if drop_close is not None else curPx,
+                            "sma20": drop_sma if drop_sma is not None else sma20,
+                            "note": noteDrop,
+                        }
+                    )
+                continue
+            # 하루만 이탈 등 — 관심 유지(유예)
+            retain.append(
+                {
+                    "stkCd": cd,
+                    "stkNm": stkNm,
+                    "rankNo": row.get("RANK_NO"),
+                    "indGrp": row.get("IND_GRP"),
+                    "marketName": row.get("MARKET_NAME"),
+                    "curPrc": curPx,
+                    "closePrc": curPx,
+                    "openPrc": row.get("OPEN_PRC"),
+                    "sma20": sma20,
+                    "aboveSma": False,
+                    "srcTag": "sma20keep",
+                    "note": noteHold,
+                }
+            )
             continue
         retain.append(
             {
@@ -1122,10 +1196,14 @@ def _purgeWatchBelowSma20(ymd, openCds, rankPxMap=None):
         )
 
     if dropped:
-        _writeEvts(dropped, "WATCH_OUT", "sma20_below", ymd)
-        termLog(f"[maTouchUniv] SMA20 이탈 제외 {len(dropped)}종")
-    if retain:
-        termLog(f"[maTouchUniv] SMA20 위 유지 {len(retain)}종")
+        _writeEvts(dropped, "WATCH_OUT", "sma20_2bear", ymd)
+        termLog(f"[maTouchUniv] SMA20 이틀음봉 이탈 제외 {len(dropped)}종")
+    hold_n = len([r for r in retain if not r.get("aboveSma")])
+    keep_n = len([r for r in retain if r.get("aboveSma")])
+    if keep_n:
+        termLog(f"[maTouchUniv] SMA20 위 유지 {keep_n}종")
+    if hold_n:
+        termLog(f"[maTouchUniv] SMA20 유예유지(2음봉대기) {hold_n}종")
     return {
         "retain": retain,
         "dropped": dropped,
@@ -1591,7 +1669,7 @@ def loadMaTouchUniv(tradeDt=None, useTr=True):
         f"매차 {stepAmt // 10000:,}만원으로 {_MIN_QTY_PER_STEP}주 이상\n"
         f"제외: 시장제외 {mktCnt}{f'({mktNms})' if mktNms else ''} · "
         f"수량부족 {qtyCnt} · SMA20이탈 {smaSkipCnt}"
-        + (f" · 기존관심이탈 {smaDropCnt}" if smaDropCnt else "")
+        + (f" · 기존관심2음봉이탈 {smaDropCnt}" if smaDropCnt else "")
         + "\n"
         f"참고: {_SMA_SLOW}선 위 {aboveCnt}종"
         + (f" · 일봉부족 {barCnt}종" if barCnt else "")
