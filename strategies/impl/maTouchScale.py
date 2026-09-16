@@ -407,6 +407,10 @@ class MaTouchScaleStrategy:
         # 잔량 트레일: 고점>=Min 이후 고점-Dd%p (0=끔). tp4와 병행·먼저
         self.afterHalfTrailMinPct = float(p.get("afterHalfTrailMinPct", 0) or 0)
         self.afterHalfTrailTpPct = float(p.get("afterHalfTrailTpPct", 0) or 0)
+        self.weakMfeExitEnabled = bool(p.get("weakMfeExitEnabled", True))
+        self.weakHoldMin = float(p.get("weakHoldMin", 90) or 90)
+        self.weakPeakMaxPct = float(p.get("weakPeakMaxPct", 1.0) or 1.0)
+        self.weakExitMaxPnlPct = float(p.get("weakExitMaxPnlPct", -0.5) or -0.5)
 
         self.state = ST_IDLE
         # {qty, avgPx, filled, halfTaken, halfDt, halfAddDone, firstPx, firstDt}
@@ -498,6 +502,7 @@ class MaTouchScaleStrategy:
                 "brokeAboveTakeMa": False,
                 "firstPx": px,
                 "firstDt": None,
+                "entryTm": None,
             }
             self.state = ST_IN_POS
         prevQty = int(self.pos["qty"])
@@ -579,6 +584,8 @@ class MaTouchScaleStrategy:
             return None
         if self.pos.get("firstDt") is None:
             self.pos["firstDt"] = tradeDt
+        if not self.pos.get("entryTm"):
+            self.pos["entryTm"] = str(cntrTm or "").zfill(6)[-6:]
         self.pendingConfirm.pop(int(step), None)
         return {
             "type": "BUY" if len(self.pos["filled"]) == 1 else "ADD",
@@ -893,6 +900,54 @@ class MaTouchScaleStrategy:
                         "type": "SELL",
                         "price": hardPx,
                         "reason": rsn,
+                        "cntrTm": cntrTm,
+                        "qty": qtyNow,
+                        **self._mfeSnap(),
+                    }
+                )
+                self._resetPos(banBuyDt=tradeDt)
+                return events
+
+        # 약세조기청산: N분·현행 1차(tp1Pct) 미도달·고점·평가
+        if (
+            self.weakMfeExitEnabled
+            and avgPx > 0
+            and qtyNow > 0
+            and (not self.pos.get("tp1Taken"))
+            and (not self.pos.get("halfTaken"))
+        ):
+            try:
+                mx = float(self.pos.get("maxPnlPct") or 0)
+            except (TypeError, ValueError):
+                mx = 0.0
+            tp1_hit = self.tp1Pct > 0 and mx + 1e-9 >= float(self.tp1Pct)
+            et = str(self.pos.get("entryTm") or "").zfill(6)[-6:]
+            try:
+                hold = (
+                    int(cntrTm[0:2]) * 60
+                    + int(cntrTm[2:4])
+                    + int(cntrTm[4:6]) / 60.0
+                    - (int(et[0:2]) * 60 + int(et[2:4]) + int(et[4:6]) / 60.0)
+                ) if et and et != "000000" else None
+            except (TypeError, ValueError):
+                hold = None
+            pnlPct = (close / avgPx - 1.0) * 100.0 if avgPx > 0 else 0.0
+            if (
+                (not tp1_hit)
+                and hold is not None
+                and hold + 1e-9 >= self.weakHoldMin
+                and mx + 1e-9 < self.weakPeakMaxPct
+                and pnlPct <= self.weakExitMaxPnlPct + 1e-9
+            ):
+                events.append(
+                    {
+                        "type": "SELL",
+                        "price": close,
+                        "reason": (
+                            f"weak_mfe_{self.weakHoldMin:g}m_"
+                            f"peak<{self.weakPeakMaxPct:g}_"
+                            f"no_tp1_{self.tp1Pct:g}"
+                        ),
                         "cntrTm": cntrTm,
                         "qty": qtyNow,
                         **self._mfeSnap(),

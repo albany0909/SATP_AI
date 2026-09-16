@@ -331,6 +331,7 @@ def buildMaTouchDeskText(algCd, stratId):
             f"  {exitTxt} 이후 당일 매수 · 현재가≤평단 → 전량 (미수익 오버나잇 금지)",
             f"  {exitTxt} 이후 전일 이전 진입 · 현재가 < SMA{stopMa} → 전량",
             f"  하드스탑 계좌평단 -{hardPct:g}% (1·2차 전) · 1·2차 후 잔량 평단 {afterHalfStopLab}",
+            f"  약세조기  ≥{int(p.get('weakHoldMin') or 90)}분·고점<{float(p.get('weakPeakMaxPct') or 1):g}%·평가≤{float(p.get('weakExitMaxPnlPct') or -0.5):g}%·1차(현 tp1Pct)미달 → 전량",
             "",
             "[실행]",
             f"  {paper} · 장중 0B 실시간 (watchRtMonitor)",
@@ -500,6 +501,7 @@ def buildMaTouchRuleRows(algCd, stratId):
             f"{exitTxt} 이후 당일 매수·현재가≤평단 → 전량 (미수익 오버나잇 금지)",
             f"{exitTxt} 이후 전일 이전 진입 · 현재가 < SMA{stopMa} → 전량",
             f"하드스탑 계좌평단 -{hardPct:g}% (1·2차 전) · 1·2차 후 잔량 평단 {afterHalfStopLab}",
+            f"약세조기 ≥{int(p.get('weakHoldMin') or 90)}분·고점<{float(p.get('weakPeakMaxPct') or 1):g}%·평가≤{float(p.get('weakExitMaxPnlPct') or -0.5):g}%·1차(현 tp1Pct)미달 → 전량",
         ]
     )
     execTxt = _joinRule(

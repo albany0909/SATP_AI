@@ -193,6 +193,11 @@ def _loadParams():
     p.setdefault("tp2QtyRatio", 0.3)
     p.setdefault("hardStopPct", 2)
     p.setdefault("afterHalfStopPct", 0)
+    # 약세조기청산: N분·1차미도달(현 tp1Pct)·고점·평가
+    p.setdefault("weakMfeExitEnabled", True)
+    p.setdefault("weakHoldMin", 90)
+    p.setdefault("weakPeakMaxPct", 1.0)
+    p.setdefault("weakExitMaxPnlPct", -0.5)
     p.setdefault("breakevenAfterTp1", True)
     p.setdefault("buyBanUntilTm", "000000")
     p.setdefault("reclaimMinPct", 0)
@@ -383,6 +388,7 @@ def _blankPos(entryDt=""):
         "buyQty": 0,
         "sellQty": 0,
         "entryDt": entryDt or _todayYmd(),
+        "entryTm": "",
         "maxPnlPct": 0.0,
         "maxPx": 0.0,
     }
@@ -399,6 +405,51 @@ def _normTpFlags(rec):
     rec.setdefault("tp2Taken", False)
     rec.setdefault("tp3Taken", False)
     return rec
+
+
+
+def _hmToMin(hm):
+    s = str(hm or "").zfill(6)[-6:]
+    try:
+        return int(s[0:2]) * 60 + int(s[2:4]) + int(s[4:6]) / 60.0
+    except (TypeError, ValueError):
+        return None
+
+
+def _holdMinSinceEntry(rec, nowTm):
+    """매수 체결 시각(entryTm)부터 현재까지 분. 없으면 None."""
+    if not rec:
+        return None
+    et = str(rec.get("entryTm") or "").zfill(6)[-6:] if rec.get("entryTm") else ""
+    if not et or et == "000000":
+        return None
+    a = _hmToMin(et)
+    b = _hmToMin(nowTm)
+    if a is None or b is None:
+        return None
+    return b - a
+
+
+def _tp1ReachedNow(rec, tp1Pct):
+    """
+    해당 시점 1차익절 여부.
+    체결(tp1Taken) 또는 고점이 현재 tp1Pct 이상이면 도달로 본다.
+    """
+    if not rec:
+        return False
+    if rec.get("tp1Taken") or rec.get("halfTaken"):
+        return True
+    try:
+        thr = float(tp1Pct or 0)
+    except (TypeError, ValueError):
+        thr = 0.0
+    if thr <= 0:
+        return False
+    try:
+        mx = float(rec.get("maxPnlPct") or 0)
+    except (TypeError, ValueError):
+        mx = 0.0
+    return mx + 1e-9 >= thr
 
 
 def _hasOrdWait(cd, side=None):
@@ -2190,6 +2241,7 @@ def _applyBuyFillLocked(stkCd, fillPx, fillQty, wait):
     # 신규 포지션 시작 시 10이평 돌파 이력·고점수익률 초기화
     if prevQty <= 0:
         rec["brokeAboveTakeMa"] = False
+        rec["entryTm"] = _nowHms()
         from utils.maTouchMfe import initMaxPnl
 
         initMaxPnl(rec, fillPx, _nowHms())
@@ -2572,6 +2624,8 @@ def _restoreOrphanPosFromAcnt(stkCd, hold, note="계좌잔량 고아복구"):
         rec["tp2Taken"] = bool(flags.get("tp2Taken"))
         rec["tp3Taken"] = bool(flags.get("tp3Taken"))
         rec["halfTaken"] = bool(flags.get("halfTaken"))
+        if not rec.get("entryTm"):
+            rec["entryTm"] = _nowHms()
         from utils.maTouchMfe import initMaxPnl
 
         initMaxPnl(rec, avgPx, _nowHms())
@@ -3403,6 +3457,39 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
                 flatQty = _flatSellQty(qtyNow, acntQtyNow)
                 if flatQty >= 1:
                     actions.append(("HARD", 0, flatQty, px, why))
+            elif (
+                (not flatOnly)
+                and bool(_params.get("weakMfeExitEnabled", True))
+                and (not tp1Taken)
+                and (not _tp1ReachedNow(rec, tp1Pct))
+            ):
+                # 약세조기청산: N분·현행 1차미도달·고점·평가 (하드손절보다 먼저 안 나가게 elif)
+                holdMin = _holdMinSinceEntry(rec, nowTm)
+                weakHold = float(_params.get("weakHoldMin", 90) or 90)
+                weakPeak = float(_params.get("weakPeakMaxPct", 1.0) or 1.0)
+                weakRed = float(_params.get("weakExitMaxPnlPct", -0.5) or -0.5)
+                maxPnl = float(rec.get("maxPnlPct") or 0)
+                if (
+                    holdMin is not None
+                    and holdMin + 1e-9 >= weakHold
+                    and maxPnl + 1e-9 < weakPeak
+                    and pnlPctNow <= weakRed + 1e-9
+                ):
+                    flatQty = _flatSellQty(qtyNow, acntQtyNow)
+                    if flatQty >= 1:
+                        actions.append(
+                            (
+                                "FLAT",
+                                0,
+                                flatQty,
+                                px,
+                                (
+                                    f"약세조기청산 {weakHold:g}분 "
+                                    f"고점<{weakPeak:g}% "
+                                    f"1차(+{tp1Pct:g}%)미달"
+                                ),
+                            )
+                        )
             elif (
                 (not flatOnly)
                 and nowTm >= str(_params.get("nextClosedHalfTm", "151500")).zfill(6)
