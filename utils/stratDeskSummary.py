@@ -232,7 +232,7 @@ def buildMaTouchDeskText(algCd, stratId):
     tp1Pct = float(p.get("tp1Pct") or 1.4)
     tp1Ratio = float(p.get("tp1QtyRatio") or 0.5)
     tp2Pct = float(p["tp2Pct"]) if p.get("tp2Pct") is not None else 2.0
-    tp2Ratio = float(p.get("tp2QtyRatio") or 0.3)
+    tp2Ratio = float(p.get("tp2QtyRatio") or 0.5)
     tp3Pct = float(p["tp3Pct"]) if p.get("tp3Pct") is not None else 4.0
     tp3Ratio = float(p.get("tp3QtyRatio") or 0.5)
     tp4Pct = float(p["tp4Pct"]) if p.get("tp4Pct") is not None else 7.0
@@ -427,7 +427,7 @@ def buildMaTouchRuleRows(algCd, stratId):
     tp1Pct = float(p.get("tp1Pct") or 1.4)
     tp1Ratio = float(p.get("tp1QtyRatio") or 0.5)
     tp2Pct = float(p["tp2Pct"]) if p.get("tp2Pct") is not None else 2.0
-    tp2Ratio = float(p.get("tp2QtyRatio") or 0.3)
+    tp2Ratio = float(p.get("tp2QtyRatio") or 0.5)
     tp3Pct = float(p["tp3Pct"]) if p.get("tp3Pct") is not None else 4.0
     tp3Ratio = float(p.get("tp3QtyRatio") or 0.5)
     tp4Pct = float(p["tp4Pct"]) if p.get("tp4Pct") is not None else 7.0

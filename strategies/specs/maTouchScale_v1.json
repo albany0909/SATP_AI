@@ -3,7 +3,7 @@
   "algCd": "MTS01",
   "name": "이평선터치 매매",
   "status": "test",
-  "version": 56,
+  "version": 57,
   "enabled": true,
   "timeframe": "1",
   "docPath": "strategies/docs/maTouchScale_v1.md",
@@ -45,8 +45,8 @@
     "limitWaitSec": 600,
     "tp1Pct": 1.4,
     "tp1QtyRatio": 0.5,
-    "tp2Pct": 0,
-    "tp2QtyRatio": 0.3,
+    "tp2Pct": 4,
+    "tp2QtyRatio": 0.5,
     "halfTpPct": 3,
     "halfTpFromStat": false,
     "nextClosedHalfTm": "151500",
@@ -79,16 +79,16 @@
   },
   "rules": {
     "entry": "from above touch SMA20 once; do not buy on touch; same-day only: wait for a 3-min bar that closes bullish above SMA20 (close>open and close>SMA20); place a limit buy at the SMA20 nearby tick; if unfilled after 10 minutes cancel remainder (no market follow-up); wait expires same day; retouch resets; 14:00 cutoff only if next calendar day is closed; after full exit ban rebuy that stock same day",
-    "halfTp": "pnl>=tp1Pct sell tp1QtyRatio of holdings (1.4%/50%); tp2/tp3/tp4 disabled; remaining uses trail after peak>=afterHalfTrailMinPct then pnl<=peak-afterHalfTrailTpPct (4%/-3%p); every day from 15:15, if 0%<=pnl<=4% flatten all remaining (keep losses and pnl>4%); if remaining qty is 1, any reached TP step flattens 100%",
-    "afterHalf": "after 1st TP, remaining flattens at avg -afterHalfStopPct (0=breakeven); after 1st: if peak>=afterHalfTrailMinPct and pnl<=peak-afterHalfTrailTpPct flatten residual (trail)",
+    "halfTp": "pnl>=tp1Pct sell tp1QtyRatio (1.4%/50%); then pnl>=tp2Pct sell tp2QtyRatio of remaining (4%/50%); tp3/tp4 disabled; residual trail peak>=4 then -3%p; from 15:15 if 0%<=pnl<=4% flatten; if qty==1, any reached TP1/TP2 step flattens 100%",
+    "afterHalf": "after 1st/2nd TP, remaining flattens at avg -afterHalfStopPct (0=breakeven); after peak>=afterHalfTrailMinPct and pnl<=peak-afterHalfTrailTpPct flatten residual (trail)",
     "stop": "before any TP: hard -2%; after 1st or 2nd TP: avg 0% (breakeven) flatten remaining; same-day entry flatten after 15:18 if px<=avg; prior-day SMA20 after 15:18 | weak MFE flat: hold>=weakHoldMin, never reached current tp1Pct (tp1Taken or maxPnl>=tp1Pct), maxPnl<weakPeakMaxPct, pnl<=weakExitMaxPnlPct",
-    "takeProfit": "intraday: 1st +1.4% sell 50%; no 2nd/3rd/4th ladder; residual trail peak+4% then -3%p; from 15:15 flatten if 0%<=pnl<=4%; also profit and RSI14>=rsiTpMin flatten"
+    "takeProfit": "intraday: 1st +1.4% sell 50%; 2nd +4% sell 50% of remaining; no 3rd/4th; residual trail 4/-3; 15:15 flat 0~4%; qty=1 flattens at TP1/TP2"
   },
   "fill": {
     "entryPrice": "sma20NearTickLimit",
     "exitPrice": "closeOrTick",
     "feeRate": 0,
-    "btNote": "v56: tp1 1.4%/50%, trail 4/-3, no tp2-4, 15:15 flat 0~4%"
+    "btNote": "v57: tp1 1.4%/50%, tp2 4%/50%, trail 4/-3, 15:15 0~4%, qty1 full at TP"
   },
-  "notes": "v56: tp1 1.4%/50%, trail 4/-3 after peak, tp2-4 off, 15:15 flat 0~4%. v55: weakMfeExit. v54: tp1 1.2→1.4. v55: weakMfeExit 90m + peak<1% + pnl<=-0.5% + 현행 tp1Pct 미도달 시 전량. v54: tp1Pct 1.2→1.4. v53: 관심 제외=이틀 연속 음봉+종가≤SMA20 (하루 이탈 유예). v52: 고아복구 시 0B 시세 재구독. v51: 계좌동기 시 pos 없는 실보유(당일 BUY/ban/원장) 고아복구 — 익절 재"
+  "notes": "v57: 2차 +4%/50% 재도입 · 1·2차 시 1주면 전량. v56: tp1 1.4%/50%, trail 4/-3 after peak, tp2-4 off, 15:15 flat 0~4%. v55: weakMfeExit. v54: tp1 1.2→1.4. v55: weakMfeExit 90m + peak<1% + pnl<=-0.5% + 현행 tp1Pct 미도달 시 전량. v54: tp1Pct 1.2→1.4. v53: 관심 제외=이틀 연속 음봉+종가≤SMA20 (하루 이탈 유예). v52: 고"
 }

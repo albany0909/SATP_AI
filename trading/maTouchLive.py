@@ -170,7 +170,7 @@ def _loadParams():
         p.setdefault("tp1Pct", 1.4)
         p.setdefault("tp1QtyRatio", 0.5)
         p.setdefault("tp2Pct", 2)
-        p.setdefault("tp2QtyRatio", 0.3)
+        p.setdefault("tp2QtyRatio", 0.5)
         p.setdefault("tp3Pct", 4)
     except Exception:
         p["_enabled"] = True
@@ -190,7 +190,7 @@ def _loadParams():
     p.setdefault("tp1Pct", 1.4)
     p.setdefault("tp1QtyRatio", 0.5)
     p.setdefault("tp2Pct", 2)
-    p.setdefault("tp2QtyRatio", 0.3)
+    p.setdefault("tp2QtyRatio", 0.5)
     p.setdefault("hardStopPct", 2)
     p.setdefault("afterHalfStopPct", 0)
     # 약세조기청산: N분·1차미도달(현 tp1Pct)·고점·평가

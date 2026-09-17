@@ -371,7 +371,7 @@ class MaTouchScaleStrategy:
         self.tp1Pct = float(p.get("tp1Pct", 1.4) or 0)
         self.tp1QtyRatio = float(p.get("tp1QtyRatio", 0.5) or 0)
         self.tp2Pct = float(p.get("tp2Pct", 2) or 0)
-        self.tp2QtyRatio = float(p.get("tp2QtyRatio", 0.3) or 0)
+        self.tp2QtyRatio = float(p.get("tp2QtyRatio", 0.5) or 0)
         self.halfTpPct = float(p.get("halfTpPct", 3))
         self.hardStopPct = float(p.get("hardStopPct", 2))
         # 1차 또는 2차 이후 잔량: 평단 대비 이 % 이하이면 전량 (기본 0 = 본전)
