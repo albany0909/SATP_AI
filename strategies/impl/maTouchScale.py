@@ -26,7 +26,7 @@ from strategies.indicators import calcRsiSeries, calcSmaSeries
 from utils.krxTick import roundToKrxTick
 
 
-def inNextClosedHalfBand(px, avgPx, minPct=0.0, maxPct=3.0):
+def inNextClosedHalfBand(px, avgPx, minPct=0.0, maxPct=4.0):
     """평단 대비 수익률이 [minPct, maxPct] 이면 True. 매일 15:15 약수익 전량(손실 제외)."""
     try:
         avg = float(avgPx or 0)
@@ -369,7 +369,7 @@ class MaTouchScaleStrategy:
         self.takeMa = int(p.get("takeMa", 10))
         # 1·2차 부분익절. halfTpPct 는 구버전 호환(미사용)
         self.tp1Pct = float(p.get("tp1Pct", 1.4) or 0)
-        self.tp1QtyRatio = float(p.get("tp1QtyRatio", 0.3) or 0)
+        self.tp1QtyRatio = float(p.get("tp1QtyRatio", 0.5) or 0)
         self.tp2Pct = float(p.get("tp2Pct", 2) or 0)
         self.tp2QtyRatio = float(p.get("tp2QtyRatio", 0.3) or 0)
         self.halfTpPct = float(p.get("halfTpPct", 3))
@@ -394,7 +394,7 @@ class MaTouchScaleStrategy:
         # 매일 15:15부터 0%이상 3%이하 전량. 손실·3% 초과는 보유.
         self.nextClosedHalfTm = str(p.get("nextClosedHalfTm", "151500")).zfill(6)[-6:]
         self.nextClosedHalfMinPct = float(p.get("nextClosedHalfMinPct", 0))
-        self.nextClosedHalfMaxPct = float(p.get("nextClosedHalfMaxPct", 3))
+        self.nextClosedHalfMaxPct = float(p.get("nextClosedHalfMaxPct", 4))
         # 당일 매수가 15:18에 미수익이면 전량. 시초 갭을 넘기지 않는다
         self.eodFlatIfNoProfit = bool(p.get("eodFlatIfNoProfit", True))
         # 수익 중 일봉 RSI 가 이 값 이상이면 전량. 0 이면 끔
@@ -973,7 +973,7 @@ class MaTouchScaleStrategy:
                 {
                     "type": "SELL",
                     "price": close,
-                    "reason": "flat_1515_0_3",
+                    "reason": (f"flat_1515_{self.nextClosedHalfMinPct:g}_{self.nextClosedHalfMaxPct:g}"),
                     "cntrTm": cntrTm,
                     "qty": qtyNow,
                     **self._mfeSnap(),

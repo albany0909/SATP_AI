@@ -9,7 +9,7 @@
 - 1차: 평단 **+1.5%** 보유 **30%** / 2차: **+2%** 보유 **30%** / 3차: **+4%** 보유 **50%** / 4차: **+7%** 잔량 전량
 - 1·2차 전 하드 **-2%** / **1차 또는 2차 후** 잔량 **0%(본전)** 이하면 전량 / 수익 중 **RSI14≥70** 전량
 - 당일 매수: 15:18 미수익(현재가≤평단)이면 전량. 익일 보유는 15:18 SMA20 손절
-- 매일 15:15부터 평단 0% 이상 3% 이하면 전량 (손실 제외, 3% 초과는 보유)
+- 매일 15:15부터 평단 0% 이상 4% 이하면 전량 (손실 제외, 4% 초과는 보유)
 - 전량 청산 후 당일 재매수 금지
 - 평단·잔량은 **00 실체결** 및 **kt00004 계좌평가**로만 잡는다 (주문 접수만으로 보유/원장/BUY·SELL 이벤트를 만들지 않는다)
 - 매수·매도 원장·익절 플래그는 체결 성공 기준. 계좌평가는 주기 동기화
@@ -168,7 +168,7 @@ def _loadParams():
         p["confirmMode"] = "bar3BreakLimit"
         p["limitWaitSec"] = 600
         p.setdefault("tp1Pct", 1.4)
-        p.setdefault("tp1QtyRatio", 0.3)
+        p.setdefault("tp1QtyRatio", 0.5)
         p.setdefault("tp2Pct", 2)
         p.setdefault("tp2QtyRatio", 0.3)
         p.setdefault("tp3Pct", 4)
@@ -188,7 +188,7 @@ def _loadParams():
     p.setdefault("halfTpPct", 3)
     p.setdefault("halfTpFromStat", False)
     p.setdefault("tp1Pct", 1.4)
-    p.setdefault("tp1QtyRatio", 0.3)
+    p.setdefault("tp1QtyRatio", 0.5)
     p.setdefault("tp2Pct", 2)
     p.setdefault("tp2QtyRatio", 0.3)
     p.setdefault("hardStopPct", 2)
@@ -208,7 +208,7 @@ def _loadParams():
     p.setdefault("banRebuySameDay", True)
     p.setdefault("nextClosedHalfTm", "151500")
     p.setdefault("nextClosedHalfMinPct", 0)
-    p.setdefault("nextClosedHalfMaxPct", 3)
+    p.setdefault("nextClosedHalfMaxPct", 4)
     p.setdefault("eodFlatIfNoProfit", True)
     p.setdefault("rsiTpPeriod", 14)
     p.setdefault("rsiTpMin", 70)
@@ -3501,10 +3501,12 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
                     float(_params.get("nextClosedHalfMaxPct", 3)),
                 )
             ):
-                # 매일 15:15부터 0~3% 전량. 손실·3% 초과는 들고 간다.
+                # 매일 15:15부터 min~max% 전량. 손실·상한 초과는 들고 간다.
                 flatQty = _flatSellQty(qtyNow, acntQtyNow)
                 if flatQty >= 1:
-                    actions.append(("FLAT", 0, flatQty, px, "15:15 0~3% 전량"))
+                    _mn = float(_params.get("nextClosedHalfMinPct", 0))
+                    _mx = float(_params.get("nextClosedHalfMaxPct", 4))
+                    actions.append(("FLAT", 0, flatQty, px, f"15:15 {_mn:g}~{_mx:g}% 전량"))
             elif (not flatOnly) and rsiNow is not None and rsiMin > 0 and rsiNow >= rsiMin:
                 # 수익 중 일봉 RSI 과매수 → 부분익절보다 먼저 잔량 전량
                 flatQty = _flatSellQty(qtyNow, acntQtyNow)
