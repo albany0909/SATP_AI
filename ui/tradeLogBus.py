@@ -19,6 +19,8 @@ _EVT_LABEL = {
     "BUY_SKIP": "매수스킵",
     "BUY_CNCL": "매수취소",
     "BUY_ORD_CNCL": "매수주문취소",
+    "SELL_CNCL": "매도취소",
+    "SELL_ORD_CNCL": "매도주문취소",
     "BUY_FAIL": "매수실패",
     "SELL_FAIL": "매도실패",
     "RANK_IN": "관심추가",
@@ -35,7 +37,18 @@ DAY_TRADE_EVT_TPS = (
     "SELL_FAIL",
     "BUY_CNCL",
     "BUY_ORD_CNCL",
+    "SELL_CNCL",
+    "SELL_ORD_CNCL",
 )
+
+# 거래탭에서 원주문·취소 행을 회색으로 묶는 이벤트
+DAY_CNCL_EVT_TPS = (
+    "BUY_CNCL",
+    "BUY_ORD_CNCL",
+    "SELL_CNCL",
+    "SELL_ORD_CNCL",
+)
+DAY_ORD_EVT_TPS = ("BUY_ORD", "SELL_ORD")
 
 _REASON_LABEL = {
     "AFTER_1400": "14시이후",
@@ -244,7 +257,13 @@ def rowToDayTrade(row, pnlPct=None, pnlAmt=None, evalPct=None):
     # 표시용 구분 (매수/매도/실패 등)
     side = _EVT_LABEL.get(evtTp) or evtTp
     # 평단·손익 집계용 쪽 (매수 계열 / 매도 계열)
-    if evtTp in ("BUY", "BUY_ORD", "BUY_FAIL", "BUY_CNCL", "BUY_ORD_CNCL"):
+    if evtTp in (
+        "BUY",
+        "BUY_ORD",
+        "BUY_FAIL",
+        "BUY_CNCL",
+        "BUY_ORD_CNCL",
+    ):
         sideKind = "BUY"
     else:
         sideKind = "SELL"
@@ -284,6 +303,8 @@ def rowToDayTrade(row, pnlPct=None, pnlAmt=None, evalPct=None):
         "reason": reason,
         "qty": _pick(row, "qty", "QTY", default=None),
         "pxRaw": _pick(row, "px", "PX", default=None),
+        # 취소 행은 처음부터 회색. 원주문은 매칭 후 cancelled 를 올린다
+        "cancelled": evtTp in DAY_CNCL_EVT_TPS,
     }
 
 
