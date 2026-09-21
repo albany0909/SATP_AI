@@ -4,6 +4,7 @@
 """
 
 import html
+import os
 import threading
 from datetime import datetime
 
@@ -75,6 +76,9 @@ _DAY_BUY_FG = QColor("#8b1538")
 _DAY_SELL_FG = QColor("#155a8b")
 _DAY_CNCL_BG = QColor("#e8e8e8")
 _DAY_CNCL_FG = QColor("#6a6a6a")
+# 보유 종목명: 미체결 주문 중 연노랑
+_HOLD_ORD_BG = QColor("#FFF59D")
+_HOLD_ORD_BG_CLEAR = QColor("#FFFFFF")
 # 매수/매도 칸 UserRole — 미체결 취소 여부 (1=전량 미체결 취소)
 _DAY_SIDE_CNCL_ROLE = int(Qt.ItemDataRole.UserRole) + 2
 _DAY_SIDE_STK_ROLE = int(Qt.ItemDataRole.UserRole) + 1
@@ -123,6 +127,29 @@ def _absPxNum(raw):
 
 def _hasQuote(raw):
     return raw is not None and str(raw).strip() != ""
+
+
+def _holdLivePx(tick, apiCur):
+    """
+    보유 평가용 현재가.
+    0B(실시간·복원) 우선, dayClose(일봉 시드)면 계좌 kt00004 cur_prc 를 쓴다.
+    재시작 후 낡은 일봉으로 수익률이 뒤집히는 것을 막는다.
+    """
+    info = tick or {}
+    prcRaw, _flu = _dispQuote(info)
+    live = _absPxNum(prcRaw)
+    try:
+        api = abs(int(apiCur or 0))
+    except (TypeError, ValueError):
+        api = 0
+    if api <= 0:
+        api = 0
+    src = str(info.get("src") or "")
+    if src == "dayClose" and api > 0:
+        return api
+    if live:
+        return live
+    return api
 
 
 def _dispQuote(tick):
@@ -865,7 +892,13 @@ class TradeDeskWin(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("SATP_AI 매매")
+        self.setWindowTitle("천둥이")
+        try:
+            from utils.appIcon import applyWindowIcon
+
+            applyWindowIcon(self, kind="trade")
+        except Exception:
+            pass
         self.resize(1400, 860)
         self._sideKey = ""
         self._holdRows = []
@@ -906,14 +939,21 @@ class TradeDeskWin(QMainWindow):
         self._buildUi()
         self._bindTradeLog()
         self._bindDeskErr()
+        try:
+            from utils.deskFileLog import markDeskFileLogRestart
+
+            markDeskFileLogRestart()
+        except Exception:
+            pass
         self.refreshSessionLabel()
         self.refreshTradeWatch()
         self._loadTodayTradeLog()
         self._loadTodayDayTrades()
         # DB 목록 + 0B 현재가. 장외에도 종목 목록은 보이게 둔다.
+        # STP ALG 조회 부담을 줄이기 위해 20초 (목록 캐시와 맞춤)
         self._watchTimer = QTimer(self)
         self._watchTimer.timeout.connect(self.refreshTradeWatch)
-        self._watchTimer.start(3000)
+        self._watchTimer.start(20000)
         # 거래일 08:00 에 전날 로그/거래를 비우고 당일 분으로 바꾼다.
         self._deskDayTimer = QTimer(self)
         self._deskDayTimer.timeout.connect(self._rollDeskIfNewDay)
@@ -1866,7 +1906,7 @@ class TradeDeskWin(QMainWindow):
         """표시 일자의 복기 이벤트 + 00 체결을 거래로그에 보여 준다 (deskTradeMode)."""
         try:
             from ui.tradeLogBus import evtKindOf, formatAlgEvtLine
-            from utils.algEvtStore import listAlgEvt
+            from utils.deskDataApi import listAlgEvt
             from utils.deskLogStore import deskLogYmd, listDeskLog
             from utils.tradeSession import getDeskTradeMode
 
@@ -1898,7 +1938,8 @@ class TradeDeskWin(QMainWindow):
             merged.sort(key=lambda x: (x[0], x[2], x[1]))
             for _tm, _id, _src, kind, line in merged:
                 if line:
-                    self.appendTradeLine(kind, line, skipDayRoll=True)
+                    # DB→화면 복원만 — 파일에는 이미 당일분 있으므로 다시 안 씀
+                    self.appendTradeLine(kind, line, skipDayRoll=True, toFile=False)
         except Exception as err:
             from utils.termLog import termLog
 
@@ -2005,7 +2046,7 @@ class TradeDeskWin(QMainWindow):
                 DAY_TRADE_EVT_TPS,
                 rowToDayTrade,
             )
-            from utils.algEvtStore import listAlgEvt
+            from utils.deskDataApi import listAlgEvt
             from utils.deskLogStore import deskLogYmd
             from utils.stkCdUtil import normStkCd
             from utils.tradeSession import getDeskTradeMode
@@ -2367,10 +2408,35 @@ class TradeDeskWin(QMainWindow):
             self.sessionLbl.setText(f"[모의투자·설정불일치]{acctSuffix}")
             self.sessionLbl.setStyleSheet("font-weight: 600; font-size: 14px;")
         else:
-            self.sessionLbl.setText("[미로그인]")
+            bootErr = str(os.environ.get("SATP_BOOT_LOGIN_ERR") or "").strip()
+            if bootErr:
+                short = bootErr.splitlines()[0][:40]
+                self.sessionLbl.setText(f"[미로그인] {short}")
+                self.sessionLbl.setToolTip(bootErr)
+            else:
+                self.sessionLbl.setText("[미로그인]")
             self.sessionLbl.setStyleSheet("font-weight: 600; font-size: 14px;")
+        self._refreshDeskRoleLbl()
         self._loadTradeModeCmb()
         self._refreshTokenAliveLbl()
+
+    def _refreshDeskRoleLbl(self):
+        """창 제목: 천둥이 MAIN|Client · 버전 (실전투자 옆 버전 라벨 없음)."""
+        try:
+            from config.settingsStore import getDeskRole
+
+            role = getDeskRole()
+        except Exception:
+            role = "main"
+        roleTxt = "Client" if role == "client" else "MAIN"
+        try:
+            from utils.appVersion import formatAppVersion
+
+            ver = formatAppVersion()
+        except Exception:
+            ver = ""
+        verTxt = f" · {ver}" if ver else ""
+        self.setWindowTitle(f"천둥이 {roleTxt}{verTxt}")
 
     def _refreshTokenAliveLbl(self):
         """상단 토큰유효/무효/확인중. 만료시각은 표시하지 않는다."""
@@ -2858,12 +2924,11 @@ class TradeDeskWin(QMainWindow):
 
     def _listWatchRowsForAlg(self, algCd):
         """
-        해당 알고리즘 관리종목(AI_ALG_STK) ∪ 원장 미청산.
-        탭 전환·건수 갱신이 DB를 반복하지 않게 짧게 캐시한다.
+        해당 알고리즘 관리종목 ∪ 원장 미청산.
+        client/서버모드: deskDataApi(STP), main 로컬: algStkStore.
         """
         import time
 
-        from utils.algStkStore import listAlgStk
         from utils.stkCdUtil import normStkCd
 
         alg = str(algCd or "").strip()
@@ -2875,6 +2940,8 @@ class TradeDeskWin(QMainWindow):
             return list(ent.get("rows") or [])
         byCd = {}
         try:
+            from utils.deskDataApi import listAlgStk
+
             for row in listAlgStk(alg) or []:
                 cd = normStkCd(row.get("stkCd") or row.get("STK_CD"))
                 if not cd:
@@ -2971,11 +3038,13 @@ class TradeDeskWin(QMainWindow):
         if bar is not None:
             bar.setValue(min(oldPos, bar.maximum()))
 
-    def appendTradeLine(self, kind, text, skipDayRoll=False):
-        """거래로그 한 줄을 맨 위에 넣는다."""
+    def appendTradeLine(self, kind, text, skipDayRoll=False, toFile=True):
+        """거래로그 한 줄을 맨 위에 넣는다. toFile=False 는 당일 파일 재적재 시."""
         if QThread.currentThread() != self.thread():
             QTimer.singleShot(
-                0, self, lambda: self.appendTradeLine(kind, text, skipDayRoll)
+                0,
+                self,
+                lambda: self.appendTradeLine(kind, text, skipDayRoll, toFile),
             )
             return
         if not skipDayRoll:
@@ -2990,6 +3059,13 @@ class TradeDeskWin(QMainWindow):
         self.fillList.insertItem(0, item)
         while self.fillList.count() > 400:
             self.fillList.takeItem(self.fillList.count() - 1)
+        if toFile:
+            try:
+                from utils.deskFileLog import appendDeskFileLog
+
+                appendDeskFileLog(line, tag=str(kind or "TRADE").upper())
+            except Exception:
+                pass
 
     def appendFillLine(self, text):
         """하위 호환 — 종류 없이 한 줄."""
@@ -3011,6 +3087,12 @@ class TradeDeskWin(QMainWindow):
         lst.insertItem(0, item)
         while lst.count() > 400:
             lst.takeItem(lst.count() - 1)
+        try:
+            from utils.deskFileLog import appendDeskFileLog
+
+            appendDeskFileLog(line, tag="ERR")
+        except Exception:
+            pass
 
     def scheduleAcntRefresh(self):
         """체결 직후 2초 뒤 1회. 연속 체결은 타이머를 다시 잡는다."""
@@ -3139,7 +3221,16 @@ class TradeDeskWin(QMainWindow):
             loggedIn = runtimeState.isLoggedIn()
         if not loggedIn:
             self._deskAcctNo = ""
-            self._setAcntRows([("상태", "미로그인 — 계좌를 조회할 수 없습니다.")])
+            bootErr = str(os.environ.get("SATP_BOOT_LOGIN_ERR") or "").strip()
+            if bootErr:
+                self._setAcntRows(
+                    [
+                        ("상태", "키움 미로그인"),
+                        ("원인", bootErr[:180]),
+                    ]
+                )
+            else:
+                self._setAcntRows([("상태", "미로그인 — 계좌를 조회할 수 없습니다.")])
             try:
                 from utils.tokenAuth import setTokenAlive
                 from utils.tradeSession import getDeskTradeMode
@@ -3232,9 +3323,8 @@ class TradeDeskWin(QMainWindow):
         """
         관리종목(전 운영 alg ∪ 매매대상), 관심종목, 미청산 원장(전 운영 전략).
         """
-        from utils.algStkStore import listAlgStk
         from utils.stkCdUtil import normStkCd
-        from utils.watchStkStore import listActiveWatch, listTradeWatch
+        from utils.deskDataApi import listActiveWatch, listAlgStk, listTradeWatch
 
         try:
             from trading.deskLiveAlgs import listDeskLiveAlgCds
@@ -3338,7 +3428,7 @@ class TradeDeskWin(QMainWindow):
         mp = {}
         try:
             from trading.deskLiveAlgs import getDeskAlgTabs
-            from utils.algEvtStore import listBuyAlgMap
+            from utils.deskDataApi import listBuyAlgMap
             from utils.tradeSession import getDeskTradeMode
 
             mp = listBuyAlgMap(
@@ -3452,13 +3542,13 @@ class TradeDeskWin(QMainWindow):
                 cd = normStkCd(item.get("stk_cd")) or ""
                 if not cd:
                     continue
-                # 매매창에서 사서 아직 안 판 종목은 관심 해제와 무관하게 유지.
+                # 계좌 잔량>0 은 모두 보유표에 표시 (키움 접속·잔고 확인용).
+                # 관리·관심·원장 여부는 algCds(행 색/라벨)에만 반영.
                 deskOpen = cd in openSet
-                # 관리+관심은 신규매수·수량 변경을 반영.
                 managedWatch = cd in algSet and cd in watchSet
                 if not deskOpen and not managedWatch:
+                    # 전략 외 보유 — 표에는 두고 로그만 (숨기지 않음)
                     skipCds.add(cd)
-                    continue
                 avgNum = parsePadNum(item.get("avg_prc")) or 0
                 curNum = parsePadNum(item.get("cur_prc")) or 0
                 purNum = parsePadNum(item.get("pur_amt"))
@@ -3536,7 +3626,7 @@ class TradeDeskWin(QMainWindow):
             self._holdSkipCds = skipCds
             if skipCds:
                 termLog(
-                    "[매매창] 보유 미반영(관리·관심 아님·미청산 없음) "
+                    "[매매창] 전략외 보유(관리·관심·미청산 아님·표에는 표시) "
                     + ",".join(sorted(skipCds))
                 )
         self._holdRows = holds
@@ -3566,7 +3656,8 @@ class TradeDeskWin(QMainWindow):
                 pur = avg * qty
             totPur += pur
             cd = str(row.get("stkCd") or "")
-            live = _absPxNum(_dispQuote(pxMap.get(cd) or {})[0])
+            apiCur = row.get("apiCurNum") or row.get("curNum")
+            live = _holdLivePx(pxMap.get(cd) or {}, apiCur)
             if live and qty > 0:
                 totEvlt += live * qty
             else:
@@ -3578,7 +3669,7 @@ class TradeDeskWin(QMainWindow):
                 avg,
                 row.get("apiPnlNum", row.get("pnlNum")),
                 row.get("apiPlRtNum", row.get("plRtNum")),
-                apiCurPx=row.get("apiCurNum") or row.get("curNum"),
+                apiCurPx=apiCur,
             )
             if pnlWon is not None:
                 totPnl += int(pnlWon)
@@ -3623,24 +3714,36 @@ class TradeDeskWin(QMainWindow):
                 self._holdAlgHdr.clearRowMeta()
             tbl.setRowCount(len(rows))
             missFlu = []
+            forceFlu = []
             pxHint = {}
             for row in rows:
                 cd = normStkCd(row.get("stkCd"))
                 tick = pxMap.get(cd) or {}
-                livePx = _absPxNum(_dispQuote(tick)[0]) or int(row.get("curNum") or 0)
+                apiCur = int(row.get("apiCurNum") or row.get("curNum") or 0)
+                livePx = _holdLivePx(tick, apiCur) or apiCur
                 if cd and livePx:
                     pxHint[cd] = livePx
-                if cd and not (
+                # 보유 등락은 키움 공식(ka10001). dayClose·빈칸은 force.
+                if not cd:
+                    continue
+                src = str(tick.get("src") or "")
+                hasFlu = (
                     _hasQuote(tick.get("fluRt"))
                     or _hasQuote(tick.get("krxFlu"))
                     or _hasQuote(tick.get("nxtFlu"))
-                ):
-                    missFlu.append(cd)
-            if missFlu:
+                )
+                if src == "dayClose" or not hasFlu:
+                    forceFlu.append(cd)
+            if forceFlu:
                 try:
                     from trading.watchRtMonitor import fillMissingFluQuotes
 
-                    fillMissingFluQuotes(missFlu, pxByCd=pxHint)
+                    # 보유표는 항상 키움 공식 우선 (STP/DB 억지 +8% 방지)
+                    fillMissingFluQuotes(
+                        list(dict.fromkeys(forceFlu)),
+                        pxByCd=pxHint,
+                        force=True,
+                    )
                     pxMap = getWatchLastPxMap() or pxMap
                 except Exception:
                     pass
@@ -3648,8 +3751,15 @@ class TradeDeskWin(QMainWindow):
                 cd = normStkCd(row.get("stkCd"))
                 tick = pxMap.get(cd) or {}
                 prcRaw, fluRaw = _dispQuote(tick)
-                cur = _fmtPx(prcRaw) or str(row.get("curPrc") or "")
-                live = _absPxNum(prcRaw) or int(row.get("curNum") or 0)
+                apiCur = int(row.get("apiCurNum") or row.get("curNum") or 0)
+                live = _holdLivePx(tick, apiCur)
+                # dayClose 시드면 화면 현재가도 계좌가로 맞춤
+                if str(tick.get("src") or "") == "dayClose" and live:
+                    cur = _fmtPx(live)
+                else:
+                    cur = _fmtPx(prcRaw) or str(row.get("curPrc") or "")
+                if not live:
+                    live = apiCur
                 avg = int(row.get("avgNum") or 0)
                 qty = int(row.get("qtyNum") or 0)
                 pur = int(row.get("purNum") or 0)
@@ -3660,13 +3770,23 @@ class TradeDeskWin(QMainWindow):
                     avg,
                     row.get("apiPnlNum", row.get("pnlNum")),
                     row.get("apiPlRtNum", row.get("plRtNum")),
-                    apiCurPx=row.get("apiCurNum") or row.get("curNum"),
+                    apiCurPx=apiCur,
                 )
                 if pnlWon is None:
                     pnlWon = 0
                 pnlAmtTxt = f"{int(pnlWon):+,}"
                 pnlRtTxt = f"{float(pnlRt):+.2f}%" if pnlRt is not None else "-"
                 fluTxt = _fmtFlu(fluRaw)
+                # dayClose 캐시 등락이 남아 있으면 키움 공식값으로 한 번 더 맞춤
+                if str(tick.get("src") or "") == "dayClose" and cd:
+                    try:
+                        from utils.liveOhlcSnap import fetchOfficialFlu
+
+                        offFlu = fetchOfficialFlu(cd)
+                        if offFlu is not None:
+                            fluTxt = _fmtFlu(f"{float(offFlu):+.2f}")
+                    except Exception:
+                        pass
                 purTxt = f"{pur:,}" if pur > 0 else f"{int(row.get('purNum') or 0):,}"
                 if live and qty > 0:
                     evltTxt = f"{live * qty:,}"
@@ -3696,6 +3816,15 @@ class TradeDeskWin(QMainWindow):
                     pnlColor = _PNL_MINUS
                 else:
                     pnlColor = _PNL_ZERO
+                # 미체결 주문(이평터치 대기) 있으면 종목명 연노랑
+                ordPending = False
+                if cd:
+                    try:
+                        from trading.maTouchLive import hasOpenOrdWait
+
+                        ordPending = bool(hasOpenOrdWait(cd))
+                    except Exception:
+                        ordPending = False
                 for col, val in enumerate(vals):
                     item = QTableWidgetItem(val)
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -3711,6 +3840,10 @@ class TradeDeskWin(QMainWindow):
                         )
                     if col in (2, 3):
                         item.setForeground(QBrush(pnlColor))
+                    if col == 0:
+                        item.setBackground(
+                            QBrush(_HOLD_ORD_BG if ordPending else _HOLD_ORD_BG_CLEAR)
+                        )
                     tbl.setItem(i, col, item)
                 # 행번호 바탕색 = 알고리즘 구분, 툴팁 = 알고리즘명
                 algs = list(row.get("algCds") or [])

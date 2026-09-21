@@ -457,6 +457,24 @@ def _tp1ReachedNow(rec, tp1Pct):
     return mx + 1e-9 >= thr
 
 
+
+def hasOpenOrdWait(stkCd, side=None):
+    """매매창용: 해당 종목 미체결 주문 대기 여부 (BUY/SELL)."""
+    return _hasOrdWait(normStkCd(stkCd), side)
+
+
+def openOrdWaitCds():
+    """매매창용: 미체결 주문이 있는 종목코드 set."""
+    with _lock:
+        _dropExpiredWaits()
+        out = set()
+        for wait in _ordWait.values():
+            cd = normStkCd(wait.get("cd"))
+            if cd:
+                out.add(cd)
+        return out
+
+
 def _hasOrdWait(cd, side=None):
     """해당 종목 미체결 주문이 있으면 True. 중복 손절·재매수 방지."""
     for wait in _ordWait.values():
