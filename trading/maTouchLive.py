@@ -3857,6 +3857,8 @@ def _ordWorker():
                 _placeSell(cd, qty, fillPx, "손절 SMA20 이탈")
             elif kind == "FLAT":
                 _placeSell(cd, qty, fillPx, extra or "당일미수익 15:18")
+            elif kind == "TRAIL":
+                _placeSell(cd, qty, fillPx, extra or "잔량트레일")
             elif kind == "TAKE":
                 # RSI 등 잔량 전량 익절. 15:18 SMA10/SMA20 이탈 익절은 사용하지 않음
                 _placeSell(cd, qty, fillPx, extra or "익절")
