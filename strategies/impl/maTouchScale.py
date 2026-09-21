@@ -378,7 +378,9 @@ class MaTouchScaleStrategy:
         self.afterHalfStopPct = float(p.get("afterHalfStopPct", 0) or 0)
         self.breakevenAfterTp1 = bool(p.get("breakevenAfterTp1", True))
         self.tp1UseLimit = bool(p.get("tp1UseLimit", True))
-        self.tp1LimitSec = float(p.get("tp1LimitSec") or 600)
+        self.tp1LimitSec = float(p.get("tp1LimitSec") or 0)
+        self.tp1PreArmPct = float(p.get("tp1PreArmPct", 1.0) or 1.0)
+        self.tp1CancelPct = float(p.get("tp1CancelPct", -1.0) or -1.0)
         # 이 시각 미만은 회복 매수 없음. 000000 이면 시초 금지 없음
         self.buyBanUntilTm = str(p.get("buyBanUntilTm", "000000")).zfill(6)[-6:]
         self.reclaimMinPct = float(p.get("reclaimMinPct", 0))

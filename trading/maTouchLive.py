@@ -200,7 +200,10 @@ def _loadParams():
     p.setdefault("weakExitMaxPnlPct", -0.5)
     p.setdefault("breakevenAfterTp1", True)
     p.setdefault("tp1UseLimit", True)
-    p.setdefault("tp1LimitSec", 600)
+    p.setdefault("tp1PreArmPct", 1.0)
+    p.setdefault("tp1CancelPct", -1.0)
+    # v61: 시간취소 없음(가격 -1%에서 취소). 구키 호환용.
+    p.setdefault("tp1LimitSec", 0)
     p.setdefault("buyBanUntilTm", "000000")
     p.setdefault("reclaimMinPct", 0)
     p.setdefault("banBuyIfOpenBelowSma", False)
@@ -1740,11 +1743,8 @@ def _enqueueLimitTimeouts():
                 pendKey = (wait.get("cd"), "LIMIT_TO", int(wait.get("step") or 20))
                 kind = "LIMIT_TO"
                 step = int(wait.get("step") or 20)
-            elif side == "SELL" and wait.get("isTp1Limit"):
-                pendKey = (wait.get("cd"), "TP1_LIMIT_CNCL", 0)
-                kind = "TP1_LIMIT_CNCL"
-                step = 0
             else:
+                # v61: 1차매도 지정가는 시간취소 없음 (−1% 틱에서 취소)
                 continue
             if pendKey in _pending:
                 continue
@@ -2055,13 +2055,12 @@ def _limitTimeoutTp1SellCancel(stkCd, waitKey):
         _dropOrdWait(waitKey)
         _saveState()
     _notify(
-        f"[이평터치] 1차익절 지정가 {int((_params or {}).get('tp1LimitSec') or 600)//60}분 "
-        f"미체결 취소 {stkCd} 잔량{leftover}주 · 재도달 대기"
+        f"[이평터치] 1차익절 지정가 취소 {stkCd} 잔량{leftover}주 · −1%↓ · 재무장 대기"
     )
     _writeAlgEvt(
         "SELL_ORD_CNCL" if gotQty <= 0 else "SELL_CNCL",
         stkCd,
-        reason="TP1_LIMIT_UNFILL",
+        reason="TP1_LIMIT_CANCEL_DD",
         px=pxNow or limitPx,
         qty=leftover,
         note=(reason or "1차익절")[:80],
@@ -2321,7 +2320,7 @@ def _placeSell(stkCd, qty, px, reason, useLimit=False, limitWaitSec=None):
             "limitPx": float(px) if useLimit else 0.0,
             "isTp1Limit": bool(useLimit and "1차익절" in str(reason or "")),
         }
-        if useLimit:
+        if useLimit and waitSec > 0:
             wait["limitUntil"] = time.time() + max(1.0, waitSec)
         _registerOrdWait(result.get("ordNo"), wait)
         _sellFailUntil.pop(normStkCd(stkCd), None)
@@ -3539,7 +3538,37 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
             acntQtyNow = -1
         # 체결 보유(qty>0)만 매도. 계좌 0주·쿨다운이면 주문 자체를 큐에 넣지 않음.
         # 매수 00 체결 전엔 익절·손절·15:15 등 매도 금지 (계좌동기 허수 포지션 차단)
+        # v61: 1차지정가 대기 중에도 −1% 취소는 평가
+        tp1CancelAction = None
         if (
+            qtyNow > 0
+            and avgPx > 0
+            and (not tp1Taken)
+            and (not sellCool)
+            and acntQtyNow != 0
+        ):
+            for _k, _w in list(_ordWait.items()):
+                if (
+                    _w.get("cd") == cd
+                    and _w.get("side") == "SELL"
+                    and _w.get("isTp1Limit")
+                ):
+                    _left = int(_w.get("expectQty") or 0) - int(_w.get("gotQty") or 0)
+                    if _left <= 0:
+                        continue
+                    _cancelPct = float(_params.get("tp1CancelPct", -1.0) or -1.0)
+                    if pnlPctNow <= _cancelPct + 1e-9:
+                        tp1CancelAction = (
+                            "TP1_LIMIT_CNCL",
+                            0,
+                            _left,
+                            px,
+                            _k,
+                        )
+                    break
+        if tp1CancelAction is not None:
+            actions.append(tp1CancelAction)
+        elif (
             qtyNow > 0
             and avgPx > 0
             and (not _hasOrdWait(cd, "SELL"))
@@ -3650,10 +3679,19 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
                 # 1주는 비율 분할 불가 → 해당 익절% 도달 시 전량
                 flatQty = _flatSellQty(qtyNow, acntQtyNow)
                 if flatQty >= 1:
-                    if (not tp1Taken) and tp1Pct > 0 and pnlPctNow >= tp1Pct:
-                        actions.append(
-                            ("TP1", 0, flatQty, px, f"1차익절 +{tp1Pct:g}%")
-                        )
+                    if (not tp1Taken) and tp1Pct > 0:
+                        preArm = float(_params.get("tp1PreArmPct", 1.0) or 1.0)
+                        if pnlPctNow + 1e-9 >= preArm:
+                            limPx = avgPx * (1.0 + tp1Pct / 100.0)
+                            actions.append(
+                                (
+                                    "TP1",
+                                    0,
+                                    flatQty,
+                                    limPx,
+                                    f"1차익절 +{tp1Pct:g}%",
+                                )
+                            )
                     elif (
                         tp1Taken
                         and (not tp2Taken)
@@ -3695,10 +3733,21 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
                             actions.append(
                                 ("TP4", 0, flatQty, px, f"4차익절 +{tp4Pct:g}%")
                             )
-            elif (not flatOnly) and (not tp1Taken) and tp1Pct > 0 and qtyNow >= 2 and pnlPctNow >= tp1Pct:
-                sellQty = scaleOutQty(qtyNow, tp1Ratio)
-                if sellQty >= 1:
-                    actions.append(("TP1", 0, sellQty, px, f"1차익절 +{tp1Pct:g}%"))
+            elif (not flatOnly) and (not tp1Taken) and tp1Pct > 0 and qtyNow >= 2:
+                preArm = float(_params.get("tp1PreArmPct", 1.0) or 1.0)
+                if pnlPctNow + 1e-9 >= preArm:
+                    sellQty = scaleOutQty(qtyNow, tp1Ratio)
+                    if sellQty >= 1:
+                        limPx = avgPx * (1.0 + tp1Pct / 100.0)
+                        actions.append(
+                            (
+                                "TP1",
+                                0,
+                                sellQty,
+                                limPx,
+                                f"1차익절 +{tp1Pct:g}%",
+                            )
+                        )
             elif (
                 (not flatOnly)
                 and tp1Taken
@@ -3976,6 +4025,7 @@ def _ordWorker():
                 _limitTimeoutThenMarket(cd, step, extra)
             elif kind == "TP1":
                 # 익절 플래그는 00 매도체결에서만 (주문접수 성공과 분리)
+                # fillPx = 1.4% 지정가. 시간취소 없음(limitWaitSec=0).
                 useLim = bool((_params or {}).get("tp1UseLimit", True))
                 _placeSell(
                     cd,
@@ -3983,7 +4033,7 @@ def _ordWorker():
                     fillPx,
                     extra or "1차익절",
                     useLimit=useLim,
-                    limitWaitSec=float((_params or {}).get("tp1LimitSec") or 600),
+                    limitWaitSec=0.0,
                 )
             elif kind == "TP1_LIMIT_CNCL":
                 _limitTimeoutTp1SellCancel(cd, extra)
