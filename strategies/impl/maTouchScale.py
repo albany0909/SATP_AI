@@ -1156,7 +1156,7 @@ class MaTouchScaleStrategy:
             qtyNow = int(self.pos["qty"] or 0)
             avgPx = float(self.pos["avgPx"] or 0)
             pnlPct = (close - avgPx) / avgPx * 100.0 if avgPx > 0 else 0.0
-            canResid = bool(self.pos.get("tp3Taken")) or qtyNow < 2
+            canResid = bool(self.pos.get("tp3Taken")) or float(self.tp3Pct or 0) <= 0 or qtyNow < 2
             if canResid and qtyNow >= 1 and avgPx > 0:
                 maxPnl = float(self.pos.get("maxPnlPct") or 0)
                 trailMin = float(self.afterHalfTrailMinPct or 0)

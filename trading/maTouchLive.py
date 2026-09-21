@@ -3588,8 +3588,8 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
                 sellQty = scaleOutQty(qtyNow, tp3Ratio)
                 if sellQty >= 1:
                     actions.append(("TP3", 0, sellQty, px, f"3차익절 +{tp3Pct:g}%"))
-            elif (not flatOnly) and qtyNow >= 1 and (tp3Taken or qtyNow < 2) and (tp2Taken or tp1Taken):
-                # 잔량(3차 후 또는 1주라 3차 불가): 트레일 vs 4차 중 먼저
+            elif (not flatOnly) and qtyNow >= 1 and (tp3Taken or tp3Pct <= 0 or qtyNow < 2) and (tp2Taken or tp1Taken):
+                # 잔량(3차 후 · 3차 미사용 · 또는 1주라 3차 불가): 트레일 vs 4차 중 먼저
                 trailMin = float(_params.get("afterHalfTrailMinPct") or 0)
                 trailDd = float(_params.get("afterHalfTrailTpPct") or 0)
                 maxPnl = float(rec.get("maxPnlPct") or 0)
