@@ -301,7 +301,7 @@ def buildMaTouchDeskText(algCd, stratId):
             f"  수익 중 RSI{rsiTpPeriod} ≥ {rsiTpMin:g} → 즉시 전량"
         )
     buyLines.append(
-        f"  1차 평단 +{tp1Pct:g}% → 보유 {tp1Ratio*100:.0f}%"
+        f"  1차 평단 +{tp1Pct:g}% → 보유 {tp1Ratio*100:.0f}% (지정가·10분미체결취소)"
     )
     if tp2Pct > 0:
         buyLines.append(
@@ -474,7 +474,7 @@ def buildMaTouchRuleRows(algCd, stratId):
         halfParts.append(
             f"수익 중 RSI{rsiTpPeriod} ≥ {rsiTpMin:g} → 즉시 전량"
         )
-    halfParts.append(f"1차 평단 +{tp1Pct:g}% → 보유 {tp1Ratio*100:.0f}%")
+    halfParts.append(f"1차 평단 +{tp1Pct:g}% → 보유 {tp1Ratio*100:.0f}% (지정가·10분미체결취소)")
     if tp2Pct > 0:
         halfParts.append(f"2차 평단 +{tp2Pct:g}% → 남은 보유 {tp2Ratio*100:.0f}%")
     if tp3Pct > 0:

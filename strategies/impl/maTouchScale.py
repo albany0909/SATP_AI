@@ -377,6 +377,8 @@ class MaTouchScaleStrategy:
         # 1차 또는 2차 이후 잔량: 평단 대비 이 % 이하이면 전량 (기본 0 = 본전)
         self.afterHalfStopPct = float(p.get("afterHalfStopPct", 0) or 0)
         self.breakevenAfterTp1 = bool(p.get("breakevenAfterTp1", True))
+        self.tp1UseLimit = bool(p.get("tp1UseLimit", True))
+        self.tp1LimitSec = float(p.get("tp1LimitSec") or 600)
         # 이 시각 미만은 회복 매수 없음. 000000 이면 시초 금지 없음
         self.buyBanUntilTm = str(p.get("buyBanUntilTm", "000000")).zfill(6)[-6:]
         self.reclaimMinPct = float(p.get("reclaimMinPct", 0))
@@ -433,6 +435,7 @@ class MaTouchScaleStrategy:
             return False
         if self.pos.get("tp2Taken") or self.pos.get("halfTaken"):
             return True
+        # v60: BE only after tp1Taken (BT fills TP1 same bar at trigger+)
         if self.breakevenAfterTp1 and self.pos.get("tp1Taken"):
             return True
         return False

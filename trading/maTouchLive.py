@@ -199,6 +199,8 @@ def _loadParams():
     p.setdefault("weakPeakMaxPct", 1.0)
     p.setdefault("weakExitMaxPnlPct", -0.5)
     p.setdefault("breakevenAfterTp1", True)
+    p.setdefault("tp1UseLimit", True)
+    p.setdefault("tp1LimitSec", 600)
     p.setdefault("buyBanUntilTm", "000000")
     p.setdefault("reclaimMinPct", 0)
     p.setdefault("banBuyIfOpenBelowSma", False)
@@ -1718,13 +1720,11 @@ def _unfillStepIfEmpty(stkCd, step):
 
 
 def _enqueueLimitTimeouts():
-    """지정가 10분이 지났으면 워커에 취소 작업을 넣는다."""
+    """지정가 대기시간이 지났으면 워커에 취소 작업을 넣는다 (매수·1차매도)."""
     now = time.time()
     jobs = []
     with _lock:
         for key, wait in list(_ordWait.items()):
-            if wait.get("side") != "BUY":
-                continue
             if str(wait.get("trdeTp") or "") != _TRDE_TP_LIMIT:
                 continue
             if wait.get("limitToQueued"):
@@ -1735,7 +1735,17 @@ def _enqueueLimitTimeouts():
             leftover = int(wait.get("expectQty") or 0) - int(wait.get("gotQty") or 0)
             if leftover <= 0:
                 continue
-            pendKey = (wait.get("cd"), "LIMIT_TO", int(wait.get("step") or 20))
+            side = str(wait.get("side") or "")
+            if side == "BUY":
+                pendKey = (wait.get("cd"), "LIMIT_TO", int(wait.get("step") or 20))
+                kind = "LIMIT_TO"
+                step = int(wait.get("step") or 20)
+            elif side == "SELL" and wait.get("isTp1Limit"):
+                pendKey = (wait.get("cd"), "TP1_LIMIT_CNCL", 0)
+                kind = "TP1_LIMIT_CNCL"
+                step = 0
+            else:
+                continue
             if pendKey in _pending:
                 continue
             wait["limitToQueued"] = True
@@ -1744,8 +1754,8 @@ def _enqueueLimitTimeouts():
                 (
                     wait.get("cd"),
                     (
-                        "LIMIT_TO",
-                        int(wait.get("step") or 20),
+                        kind,
+                        step,
                         leftover,
                         0.0,
                         key,
@@ -1973,6 +1983,91 @@ def _reconcileLimitBuyAfterCnclFail(stkCd, step, waitKey, wait, maPx, leftover, 
 
 
 
+
+def _limitTimeoutTp1SellCancel(stkCd, waitKey):
+    """1차익절 지정가 미체결(잔량) 취소. 시장가 전환 없음. tp1Taken 미확정이면 재무장 가능."""
+    with _lock:
+        wait = _ordWait.get(waitKey)
+        if wait is None:
+            for k, w in _ordWait.items():
+                if (
+                    w.get("cd") == stkCd
+                    and w.get("side") == "SELL"
+                    and w.get("isTp1Limit")
+                ):
+                    wait = w
+                    waitKey = k
+                    break
+        if not wait:
+            return
+        leftover = int(wait.get("expectQty") or 0) - int(wait.get("gotQty") or 0)
+        orig = str(wait.get("origOrdNo") or "")
+        gotQty = int(wait.get("gotQty") or 0)
+        limitPx = float(wait.get("limitPx") or 0)
+        reason = str(wait.get("reason") or "1차익절")
+    if leftover <= 0:
+        return
+    sess = _ordSession()
+    if sess is None:
+        _notify(f"[이평터치] {modeLabel()} 미로그인/불가 — {stkCd} 1차지정가 취소 생략")
+        return
+    hostUrl, token, tokenType = sess
+    pxNow = float(_lastPx.get(stkCd) or limitPx or 0)
+    if orig:
+        _waitOrdGap()
+        cncl = placeCnclOrd(
+            hostUrl,
+            token,
+            _ordExch(stkCd),
+            orig,
+            stkCd,
+            cnclQty="0",
+            tokenType=tokenType,
+        )
+        if not cncl.get("ok"):
+            errMsg = str(cncl.get("errMsg") or "")
+            if not _cnclErrNoCancelableQty(errMsg):
+                _notify(f"[이평터치] 1차지정가 취소실패 {stkCd}: {errMsg}")
+                termLog(f"[maTouch] TP1 limit cncl fail {stkCd}: {errMsg}")
+                with _lock:
+                    w = _ordWait.get(waitKey)
+                    if w is not None:
+                        w["limitToQueued"] = False
+                return
+    with _lock:
+        wait = _ordWait.get(waitKey) or wait
+        gotQty = int(wait.get("gotQty") or 0)
+        leftover = int(wait.get("expectQty") or 0) - gotQty
+        rec = _pos.get(stkCd) or {}
+        # 전량 미체결이면 tp1Taken 확정 금지. 부분체결만 있고 잔량취소면
+        # expect 미충족 → tp1Taken False 유지(재도달 시 재주문).
+        if gotQty <= 0:
+            rec["tp1Taken"] = False
+        elif gotQty < int(wait.get("expectQty") or 0):
+            rec["tp1Taken"] = False
+        _pos[stkCd] = rec
+        rec.pop("pendSellReason", None)
+        rec.pop("pendSellQty", None)
+        rec.pop("pendSellQtyBefore", None)
+        rec.pop("pendSellOrdNo", None)
+        rec.pop("flatExitPending", None)
+        _pos[stkCd] = rec
+        _dropOrdWait(waitKey)
+        _saveState()
+    _notify(
+        f"[이평터치] 1차익절 지정가 {int((_params or {}).get('tp1LimitSec') or 600)//60}분 "
+        f"미체결 취소 {stkCd} 잔량{leftover}주 · 재도달 대기"
+    )
+    _writeAlgEvt(
+        "SELL_ORD_CNCL" if gotQty <= 0 else "SELL_CNCL",
+        stkCd,
+        reason="TP1_LIMIT_UNFILL",
+        px=pxNow or limitPx,
+        qty=leftover,
+        note=(reason or "1차익절")[:80],
+    )
+
+
 def _limitTimeoutThenMarket(stkCd, step, waitKey):
     """지정가 10분 미체결 → 잔량 취소만. 시장가로 바꾸지 않는다."""
     with _lock:
@@ -2081,7 +2176,7 @@ def _flatSellQty(memQty, acntQty):
     return max(0, memQty)
 
 
-def _placeSell(stkCd, qty, px, reason):
+def _placeSell(stkCd, qty, px, reason, useLimit=False, limitWaitSec=None):
     sess = _ordSession()
     if sess is None:
         _notify(f"[이평터치] {modeLabel()} 미로그인/불가 — {stkCd} 매도 생략")
@@ -2114,12 +2209,26 @@ def _placeSell(stkCd, qty, px, reason):
     # 전량 청산: 주문 전에 계좌 잔량으로 맞춤 (쪼개진 4차 방지)
     if _isFlatExitReason(reason) and acntQty > 0:
         qty = int(acntQty)
-    # 매도 중 지정가 잔량이 체결되면 청산 후 재진입이 되므로 먼저 취소
+    # 매도 중 지정가 매수 잔량이 체결되면 청산 후 재진입이 되므로 먼저 취소
     _cnclOpenBuyLimits(stkCd)
     hostUrl, token, tokenType = sess
+    trdeTp = _TRDE_TP_LIMIT if useLimit else _TRDE_TP_MARKET
+    ordUv = str(int(round(float(px)))) if useLimit else ""
+    waitSec = float(
+        limitWaitSec
+        if limitWaitSec is not None
+        else ((_params or {}).get("tp1LimitSec") or 600)
+    )
     _waitOrdGap()
     result = placeSellOrd(
-        hostUrl, token, _ordExch(stkCd), stkCd, str(qty), _TRDE_TP_MARKET, tokenType=tokenType
+        hostUrl,
+        token,
+        _ordExch(stkCd),
+        stkCd,
+        str(qty),
+        trdeTp,
+        ordUv=ordUv,
+        tokenType=tokenType,
     )
     # 8005 등 토큰 무효면 재발급 후 주문 1회만 재시도
     if not result.get("ok"):
@@ -2144,7 +2253,8 @@ def _placeSell(stkCd, qty, px, reason):
                         _ordExch(stkCd),
                         stkCd,
                         str(qty),
-                        _TRDE_TP_MARKET,
+                        trdeTp,
+                        ordUv=ordUv,
                         tokenType=tokenType,
                     )
                     if result.get("ok"):
@@ -2195,25 +2305,30 @@ def _placeSell(stkCd, qty, px, reason):
             # 체결 완료(잔량0) 전까지 분할익절로 되돌아가지 않음
             rec["flatExitPending"] = True
         _pos[stkCd] = rec
-        _registerOrdWait(
-            result.get("ordNo"),
-            {
-                "cd": stkCd,
-                "side": "SELL",
-                "kind": "SELL",
-                "step": 0,
-                "expectQty": int(qty),
-                "gotQty": 0,
-                "qtyBefore": qtyBefore,
-                "reason": reason,
-                "ledgerBuy": False,
-                "tradeDt": _todayYmd(),
-            },
-        )
+        wait = {
+            "cd": stkCd,
+            "side": "SELL",
+            "kind": "SELL",
+            "step": 0,
+            "expectQty": int(qty),
+            "gotQty": 0,
+            "qtyBefore": qtyBefore,
+            "reason": reason,
+            "ledgerBuy": False,
+            "tradeDt": _todayYmd(),
+            "trdeTp": trdeTp,
+            "origOrdNo": str(result.get("ordNo") or ""),
+            "limitPx": float(px) if useLimit else 0.0,
+            "isTp1Limit": bool(useLimit and "1차익절" in str(reason or "")),
+        }
+        if useLimit:
+            wait["limitUntil"] = time.time() + max(1.0, waitSec)
+        _registerOrdWait(result.get("ordNo"), wait)
         _sellFailUntil.pop(normStkCd(stkCd), None)
         _saveState()
+    how = "지정가" if useLimit else "시장가"
     _notify(
-        f"[이평터치매도주문] ({modeLabel()}) {stkCd} {qty}주 ≈{px:,.0f}원 · {reason}\n"
+        f"[이평터치매도주문] ({modeLabel()}) {stkCd} {qty}주 {how} ≈{px:,.0f}원 · {reason}\n"
         f"체결 후 잔량·익절단계 반영 · 주문번호 {result.get('ordNo') or '-'}"
     )
     _writeAlgEvt("SELL_ORD", stkCd, reason=reason, px=px, qty=qty)
@@ -2347,7 +2462,12 @@ def _applySellFillLocked(stkCd, fillPx, fillQty, wait):
         rec["tp2Taken"] = True
         rec["halfTaken"] = True
     elif "1차익절" in reason:
-        rec["tp1Taken"] = True
+        # v60: 부분체결만으로는 tp1Taken 올리지 않음(본전청산 가드).
+        # onBrokerFill 이 gotQty 를 먼저 올린 뒤 호출하므로 gotQty>=expect 로 확정.
+        expect = int((wait or {}).get("expectQty") or 0)
+        got = int((wait or {}).get("gotQty") or 0)
+        if expect > 0 and got + 1e-9 >= expect:
+            rec["tp1Taken"] = True
     elif "4차익절" in reason:
         rec["tp1Taken"] = True
         rec["tp2Taken"] = True
@@ -3442,7 +3562,21 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
                     elif "RSI" in why:
                         kind = "TAKE"
                     actions.append((kind, 0, flatQty, px, why))
-            scaleStop = tp2Taken or (breakevenAfterTp1 and tp1Taken)
+            # v60: 1차 지정가 미체결(또는 부분) 중에는 본전(익절후손절 0%) 금지
+            tp1LimPend = False
+            for _w in _ordWait.values():
+                if (
+                    _w.get("cd") == cd
+                    and _w.get("side") == "SELL"
+                    and _w.get("isTp1Limit")
+                ):
+                    _left = int(_w.get("expectQty") or 0) - int(_w.get("gotQty") or 0)
+                    if _left > 0:
+                        tp1LimPend = True
+                        break
+            scaleStop = (not tp1LimPend) and (
+                tp2Taken or (breakevenAfterTp1 and tp1Taken)
+            )
             stopPct = afterHalfStopPct if scaleStop else hardPct
             if (not flatOnly) and px <= avgPx * (1.0 - stopPct / 100.0):
                 why = (
@@ -3842,7 +3976,17 @@ def _ordWorker():
                 _limitTimeoutThenMarket(cd, step, extra)
             elif kind == "TP1":
                 # 익절 플래그는 00 매도체결에서만 (주문접수 성공과 분리)
-                _placeSell(cd, qty, fillPx, extra or "1차익절")
+                useLim = bool((_params or {}).get("tp1UseLimit", True))
+                _placeSell(
+                    cd,
+                    qty,
+                    fillPx,
+                    extra or "1차익절",
+                    useLimit=useLim,
+                    limitWaitSec=float((_params or {}).get("tp1LimitSec") or 600),
+                )
+            elif kind == "TP1_LIMIT_CNCL":
+                _limitTimeoutTp1SellCancel(cd, extra)
             elif kind == "TP2":
                 _placeSell(cd, qty, fillPx, extra or "2차익절")
             elif kind == "TP3":
