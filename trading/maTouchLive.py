@@ -191,7 +191,7 @@ def _loadParams():
     p.setdefault("tp1QtyRatio", 0.5)
     p.setdefault("tp2Pct", 2)
     p.setdefault("tp2QtyRatio", 0.5)
-    p.setdefault("hardStopPct", 2)
+    p.setdefault("hardStopPct", 1.5)
     p.setdefault("afterHalfStopPct", 0)
     # 약세조기청산: N분·1차미도달(현 tp1Pct)·고점·평가
     p.setdefault("weakMfeExitEnabled", True)
@@ -3504,7 +3504,7 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
         enteredToday = bool(qtyNow > 0 and entryDt == _todayYmd())
         takeMa = sma.get(int(_params.get("takeMa", 10)))
         stopMa = sma.get(int(_params.get("stopMa", 20)))
-        hardPct = float(_params.get("hardStopPct", 2))
+        hardPct = float(_params.get("hardStopPct", 1.5))
         tp1Pct = float(_params.get("tp1Pct", 1.4) or 0)
         tp1Ratio = float(_params.get("tp1QtyRatio", 0.3) or 0)
         tp2Pct = float(_params.get("tp2Pct", 2) or 0)

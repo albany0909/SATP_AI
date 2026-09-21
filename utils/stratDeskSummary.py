@@ -228,7 +228,7 @@ def buildMaTouchDeskText(algCd, stratId):
     exitTxt = fmtHm(exitTm)
     steps = p.get("maSteps") or [20]
     stopMa = int(p.get("stopMa") or 20)
-    hardPct = float(p.get("hardStopPct") or 2)
+    hardPct = float(p.get("hardStopPct") or 1.5)
     tp1Pct = float(p.get("tp1Pct") or 1.4)
     tp1Ratio = float(p.get("tp1QtyRatio") or 0.5)
     tp2Pct = float(p["tp2Pct"]) if p.get("tp2Pct") is not None else 2.0
@@ -423,7 +423,7 @@ def buildMaTouchRuleRows(algCd, stratId):
     exitTxt = fmtHm(exitTm)
     steps = p.get("maSteps") or [20]
     stopMa = int(p.get("stopMa") or 20)
-    hardPct = float(p.get("hardStopPct") or 2)
+    hardPct = float(p.get("hardStopPct") or 1.5)
     tp1Pct = float(p.get("tp1Pct") or 1.4)
     tp1Ratio = float(p.get("tp1QtyRatio") or 0.5)
     tp2Pct = float(p["tp2Pct"]) if p.get("tp2Pct") is not None else 2.0

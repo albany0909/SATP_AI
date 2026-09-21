@@ -10,7 +10,7 @@
 - 1차: 평단 +1.5% 도달 시 보유비중의 30% 익절 / 2차: +2% 도달 시 보유 30% 익절
 - 3차: 2차 후 잔량 +4% 이상이면 보유 50% / 4차: +7% 이상이면 잔량 전량
 - 수익 중 RSI14 >= rsiTpMin(기본 70) 이면 잔량 전량 (부분익절보다 앞)
-- 하드 -hardStopPct(기본 2%)는 **1·2차 전**만. **1차 또는 2차 이후** 잔량은 평단 -afterHalfStopPct(기본 0%, 본전) 이하면 전량
+- 하드 -hardStopPct(기본 1.5%)는 **1·2차 전**만. **1차 또는 2차 이후** 잔량은 평단 -afterHalfStopPct(기본 0%, 본전) 이하면 전량
 - 시초 매수금지·회복 +N%·시가≤SMA20 제외·다음날 추가는 스펙이 켜진 경우만
 
 - 당일 매수: 15:18 이후 평단 이하(미수익)면 전량. 오버나잇 시초 갭을 막기 위함
@@ -373,7 +373,7 @@ class MaTouchScaleStrategy:
         self.tp2Pct = float(p.get("tp2Pct", 2) or 0)
         self.tp2QtyRatio = float(p.get("tp2QtyRatio", 0.5) or 0)
         self.halfTpPct = float(p.get("halfTpPct", 3))
-        self.hardStopPct = float(p.get("hardStopPct", 2))
+        self.hardStopPct = float(p.get("hardStopPct", 1.5))
         # 1차 또는 2차 이후 잔량: 평단 대비 이 % 이하이면 전량 (기본 0 = 본전)
         self.afterHalfStopPct = float(p.get("afterHalfStopPct", 0) or 0)
         self.breakevenAfterTp1 = bool(p.get("breakevenAfterTp1", True))
