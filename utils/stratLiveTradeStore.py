@@ -3,8 +3,12 @@
 from utils.dbConn import openDbConn
 from utils.stkCdUtil import normStkCd
 from utils.stratLiveTradeTables import ensureStratLiveTradeTable
-from utils.stratRoundFill import calcRoundFill
+from utils.stratRoundFill import _estFee, calcRoundFill, calcRoundFromDeskFills
 from utils.termLog import termLog
+
+
+# 원장보강: 오늘 청산은 원장 UPDATED_AT 이 이 분수 이상 지난 것만
+_BACKFILL_SETTLE_MIN = 5
 
 
 def _resolveRowAlg(row):
@@ -21,6 +25,55 @@ def _resolveRowAlg(row):
     return str(raw or "").strip().upper()[:5], str(row.get("stratId") or "")
 
 
+# 같은 청산 중복 판정: 매도금액 차이 허용 비율
+_DUP_SELL_AMT_TOL = 0.005
+# 손익 절대값이 매도금액의 이 비율을 넘으면 매수기준 누락으로 보고 거부
+_GUARD_PNL_RATIO = 0.5
+_BACKFILL_NOTE = "ledgerBackfill"
+
+
+def _guardLiveRow(row):
+    """
+    저장 전 이상치 가드. 문제 있으면 사유 문자열, 없으면 None.
+    매수 0·평단 0(=매도금액이 통째로 손익이 되는 이월 청산 버그)을 막는다.
+    """
+    buyQty = int(_flt(row.get("buyQty")) or 0)
+    avgPx = _flt(row.get("avgBuyPx")) or 0.0
+    sellAmt = abs(_flt(row.get("sellAmt")) or 0.0)
+    pnl = abs(_flt(row.get("pnlWon")) or 0.0)
+    if buyQty <= 0:
+        return f"매수수량 {buyQty}"
+    if avgPx <= 0:
+        return f"평단 {avgPx}"
+    if sellAmt > 0 and pnl > sellAmt * _GUARD_PNL_RATIO:
+        return f"손익 {pnl:,.0f} > 매도금액 {sellAmt:,.0f}×{_GUARD_PNL_RATIO}"
+    return None
+
+
+def _findDupLiveTrade(cur, md, algCd, cd, exitDt, sellQty, sellAmt):
+    """
+    같은 청산이 이미 있으면 그 행. (MODE,ALG,STK,EXIT_DT) + 매도수량 동일 + 매도금액 근사.
+    같은 날 재진입한 별도 라운드는 매도수량·금액이 달라 걸리지 않는다
+    (DB 유니크 키로는 이 둘을 구분할 수 없어 앱에서 판정한다).
+    """
+    cur.execute(
+        """
+        SELECT TRADE_ID, SELL_QTY, SELL_AMT, NOTE FROM AI_STRAT_LIVE_TRADE
+        WHERE MODE=%s AND ALG_CD=%s AND STK_CD=%s AND EXIT_DT=%s
+        ORDER BY TRADE_ID
+        """,
+        (md, algCd, cd, exitDt),
+    )
+    for got in cur.fetchall() or []:
+        if int(got.get("SELL_QTY") or 0) != int(sellQty or 0):
+            continue
+        oldAmt = float(got.get("SELL_AMT") or 0)
+        base = max(abs(oldAmt), abs(float(sellAmt or 0)), 1.0)
+        if abs(oldAmt - float(sellAmt or 0)) <= base * _DUP_SELL_AMT_TOL:
+            return got
+    return None
+
+
 def insertLiveTrade(row, refreshPnl=True):
     """
     전량 청산 1라운드 저장.
@@ -28,16 +81,84 @@ def insertLiveTrade(row, refreshPnl=True):
          exitReason, buyQty, sellQty, buyAmt, sellAmt, avgBuyPx, exitPx,
          pnlWon, pnlPct, halfYn, steps, note
     refreshPnl=False 이면 algPnl 스냅샷 재집계를 생략 (원장 일괄 보강용).
+    같은 청산이 이미 있으면 새로 넣지 않는다 (dup=skip). 기존이 원장보강이고
+    이번이 실시간 청산이면 실시간 값으로 덮는다 (dup=update).
     """
     if not ensureStratLiveTradeTable():
         return {"ok": False, "errMsg": "AI_STRAT_LIVE_TRADE 없음"}
     algCd, sid = _resolveRowAlg(row)
     if not algCd:
         return {"ok": False, "errMsg": "알고리즘코드 없음"}
+    bad = _guardLiveRow(row)
+    if bad:
+        termLog(
+            f"[stratLiveTrade] 저장 거부 {algCd} {normStkCd(row.get('stkCd'))} "
+            f"{row.get('exitDt')} — {bad} (매수 {row.get('buyQty')}주 · "
+            f"평단 {row.get('avgBuyPx')} · 매도 {row.get('sellAmt')} · "
+            f"손익 {row.get('pnlWon')})"
+        )
+        return {"ok": False, "errMsg": f"guard:{bad}"}
+    md = row.get("mode") or "paper"
+    cd = normStkCd(row.get("stkCd"))
     conn = None
     try:
         conn = openDbConn()
         with conn.cursor() as cur:
+            dup = _findDupLiveTrade(
+                cur, md, algCd, cd, row.get("exitDt"),
+                int(row.get("sellQty") or 0), float(row.get("sellAmt") or 0),
+            )
+            newIsBackfill = str(row.get("note") or "").startswith(_BACKFILL_NOTE)
+            if dup:
+                oldIsBackfill = str(dup.get("NOTE") or "").startswith(_BACKFILL_NOTE)
+                if not (oldIsBackfill and not newIsBackfill):
+                    termLog(
+                        f"[stratLiveTrade] 중복 청산 스킵 {algCd} {cd} "
+                        f"{row.get('exitDt')} — 기존 TRADE_ID {dup.get('TRADE_ID')}"
+                    )
+                    return {"ok": True, "tradeId": dup.get("TRADE_ID"), "dup": "skip"}
+                cur.execute(
+                    """
+                    UPDATE AI_STRAT_LIVE_TRADE SET
+                      ENTRY_DT=%s, EXIT_TM=%s, EXIT_REASON=%s,
+                      BUY_QTY=%s, SELL_QTY=%s, BUY_AMT=%s, SELL_AMT=%s,
+                      AVG_BUY_PX=%s, EXIT_PX=%s, PNL_WON=%s, PNL_PCT=%s,
+                      HALF_YN=%s, STEPS=%s, NOTE=%s, MAX_PNL_PCT=%s, MAX_PX=%s
+                    WHERE TRADE_ID=%s
+                    """,
+                    (
+                        row.get("entryDt") or None,
+                        row.get("exitTm") or None,
+                        row.get("exitReason"),
+                        int(row.get("buyQty") or 0),
+                        int(row.get("sellQty") or 0),
+                        float(row.get("buyAmt") or 0),
+                        float(row.get("sellAmt") or 0),
+                        row.get("avgBuyPx"),
+                        row.get("exitPx"),
+                        row.get("pnlWon"),
+                        row.get("pnlPct"),
+                        row.get("halfYn") or "N",
+                        row.get("steps") or None,
+                        row.get("note") or None,
+                        row.get("maxPnlPct"),
+                        row.get("maxPx"),
+                        dup.get("TRADE_ID"),
+                    ),
+                )
+                conn.commit()
+                termLog(
+                    f"[stratLiveTrade] 원장보강 행을 실시간 청산으로 갱신 {algCd} {cd} "
+                    f"TRADE_ID {dup.get('TRADE_ID')}"
+                )
+                if refreshPnl:
+                    try:
+                        from utils.algPnlDayStore import rebuildAlgPnlDay
+
+                        rebuildAlgPnlDay(mode=md, tradeDt=row.get("exitDt"), algCd=algCd)
+                    except Exception as snapErr:
+                        termLog(f"[stratLiveTrade] algPnl 스냅샷 실패: {snapErr}")
+                return {"ok": True, "tradeId": dup.get("TRADE_ID"), "dup": "update"}
             cur.execute(
                 """
                 INSERT INTO AI_STRAT_LIVE_TRADE (
@@ -57,8 +178,8 @@ def insertLiveTrade(row, refreshPnl=True):
                 (
                     algCd,
                     sid or None,
-                    row.get("mode") or "paper",
-                    normStkCd(row.get("stkCd")),
+                    md,
+                    cd,
                     row.get("stkNm") or None,
                     row.get("entryDt") or None,
                     row.get("exitDt"),
@@ -141,6 +262,11 @@ def backfillLiveTradeFromLedger(mode="paper", exitDt=None, algCd=None):
 
         ymd = datetime.now().strftime("%Y%m%d")
     wantAlg = str(algCd or "").strip().upper()[:5]
+    from datetime import datetime, timedelta
+
+    isToday = ymd == datetime.now().strftime("%Y%m%d")
+    # 오늘 청산분은 실시간 저장(_onFullClose)이 먼저 하도록 몇 분 기다린다
+    settleBefore = datetime.now() - timedelta(minutes=_BACKFILL_SETTLE_MIN)
     conn = None
     inserted = 0
     skipped = 0
@@ -150,7 +276,8 @@ def backfillLiveTradeFromLedger(mode="paper", exitDt=None, algCd=None):
             sql = """
                 SELECT TRADE_CD, ALG_CD, STK_CD, STK_NM, FIRST_BUY_DT, CLOSE_DT,
                        BUY_QTY, SELL_QTY, BUY_AMT, SELL_AMT, BUY_PX, SELL_PX,
-                       CLOSE_PNL_PCT, HALF_YN, FILLED_STEPS, MODE
+                       CLOSE_PNL_PCT, HALF_YN, FILLED_STEPS, MODE,
+                       MAX_PNL_PCT, MAX_PX, UPDATED_AT
                 FROM AI_STRAT_ORD_LEDGER
                 WHERE CLOSE_DT=%s AND STK_STS_CD='9'
                   AND (MODE=%s OR MODE IS NULL OR MODE='')
@@ -167,15 +294,25 @@ def backfillLiveTradeFromLedger(mode="paper", exitDt=None, algCd=None):
             if not alg or not cd:
                 skipped += 1
                 continue
-            # 동일 청산일·종목 LIVE 이력이 있으면 스킵
+            tradeCd = str(row.get("TRADE_CD") or "").strip()
+            upd = row.get("UPDATED_AT")
+            if isToday and isinstance(upd, datetime) and upd > settleBefore:
+                skipped += 1
+                continue
+            # 이 청산일을 포함하는 LIVE 라운드(이월·병합 라운드 포함)가 있거나
+            # NOTE 에 원장 TRADE_CD 가 남아 있으면 이미 반영된 것 → 스킵
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     SELECT TRADE_ID FROM AI_STRAT_LIVE_TRADE
-                    WHERE MODE=%s AND ALG_CD=%s AND STK_CD=%s AND EXIT_DT=%s
+                    WHERE MODE=%s AND ALG_CD=%s AND STK_CD=%s
+                      AND (EXIT_DT=%s
+                           OR (ENTRY_DT IS NOT NULL AND ENTRY_DT<>''
+                               AND ENTRY_DT<=%s AND EXIT_DT>=%s)
+                           OR (%s<>'' AND NOTE LIKE %s))
                     LIMIT 1
                     """,
-                    (md, alg, cd, ymd),
+                    (md, alg, cd, ymd, ymd, ymd, tradeCd, f"%{tradeCd}%"),
                 )
                 if cur.fetchone():
                     skipped += 1
@@ -186,12 +323,34 @@ def backfillLiveTradeFromLedger(mode="paper", exitDt=None, algCd=None):
             sellQty = int(row.get("SELL_QTY") or 0)
             avgBuyPx = row.get("BUY_PX")
             exitPx = row.get("SELL_PX")
-            # 원장 수량·금액은 주문 접수 시점 값이라 부분체결·미체결취소가 빠져 있다.
-            # 체결 로그로 다시 세고, 실제로 전량청산된 라운드만 올린다.
-            fill = calcRoundFill(
-                alg, cd, row.get("FIRST_BUY_DT") or ymd, ymd, mode=md
+            netPnl = None
+            # 1순위: 00 실체결 로그(단위 체결가·수수료·세금) 기준 순손익
+            desk = calcRoundFromDeskFills(
+                cd, row.get("FIRST_BUY_DT") or ymd, ymd, mode=md
             )
-            if fill.get("ok"):
+            if (
+                desk.get("ok")
+                and desk.get("closed")
+                and str(desk.get("exitDt") or "")[:8] == ymd
+                and int(desk.get("buyQty") or 0) > 0
+            ):
+                fill = {"ok": False}
+                buyQty = int(desk.get("buyQty") or 0)
+                sellQty = int(desk.get("sellQty") or 0)
+                buyAmt = float(desk.get("buyAmt") or 0)
+                sellAmt = float(desk.get("sellAmt") or 0)
+                avgBuyPx = desk.get("avgBuyPx") or avgBuyPx
+                exitPx = desk.get("exitPx") or exitPx
+                netPnl = float(desk.get("pnlWon") or 0)
+            else:
+                # 원장 수량·금액은 주문 접수 시점 값이라 부분체결·미체결취소가 빠져 있다.
+                # 체결 로그로 다시 세고, 실제로 전량청산된 라운드만 올린다.
+                fill = calcRoundFill(
+                    alg, cd, row.get("FIRST_BUY_DT") or ymd, ymd, mode=md
+                )
+            if netPnl is not None:
+                pass
+            elif fill.get("ok"):
                 fBuy = int(fill.get("buyQty") or 0)
                 fSell = int(fill.get("sellQty") or 0)
                 if fill.get("closed"):
@@ -229,7 +388,12 @@ def backfillLiveTradeFromLedger(mode="paper", exitDt=None, algCd=None):
                     sellQty = buyQty
                     buyAmt = avgPx * buyQty
                     sellAmt = lastPx * buyQty
-            pnlWon = sellAmt - buyAmt
+            if netPnl is None:
+                # 00 로그가 없으면 추정 수수료·세금을 뺀 순손익 (LIVE 기준과 맞춤)
+                bCm, _bTx = _estFee(buyAmt, False, md)
+                sCm, sTx = _estFee(sellAmt, True, md)
+                netPnl = sellAmt - buyAmt - bCm - sCm - sTx
+            pnlWon = round(netPnl)
             pnlPct = (pnlWon / buyAmt * 100.0) if buyAmt > 0 else 0.0
             got = insertLiveTrade(
                 {
@@ -251,14 +415,16 @@ def backfillLiveTradeFromLedger(mode="paper", exitDt=None, algCd=None):
                     "pnlPct": pnlPct,
                     "halfYn": str(row.get("HALF_YN") or "N"),
                     "steps": row.get("FILLED_STEPS") or "",
-                    "note": f"ledgerBackfill {row.get('TRADE_CD') or ''}",
+                    "note": f"{_BACKFILL_NOTE} {tradeCd}",
                     "maxPnlPct": row.get("MAX_PNL_PCT"),
                     "maxPx": row.get("MAX_PX"),
                 },
                 refreshPnl=False,
             )
-            if got.get("ok"):
+            if got.get("ok") and not got.get("dup"):
                 inserted += 1
+            elif got.get("ok"):
+                skipped += 1
             else:
                 skipped += 1
                 termLog(

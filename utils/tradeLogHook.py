@@ -34,8 +34,11 @@ def emitTradeLogRow(row):
         pass
 
 
-def emitFillLog(sideLabel, stkCd, stkNm, qty, px, ordNo="", cmsn=0, tax=0):
-    """00 체결을 일별 로그에 남기고 매매창으로 보낸다."""
+def emitFillLog(sideLabel, stkCd, stkNm, qty, px, ordNo="", cmsn=0, tax=0, cumQty=0):
+    """
+    00 체결을 일별 로그에 남기고 매매창으로 보낸다.
+    qty 는 **단위 체결량**(분할 체결 1건분). cumQty 는 주문 누계(참고·로그 표시용).
+    """
     try:
         from utils.deskLogStore import insertDeskFill
         from utils.tradeSession import getDeskTradeMode
@@ -51,13 +54,14 @@ def emitFillLog(sideLabel, stkCd, stkNm, qty, px, ordNo="", cmsn=0, tax=0):
             mode=mode,
             cmsn=cmsn,
             tax=tax,
+            cumQty=cumQty,
         )
     except Exception:
         pass
     try:
         from trading.maTouchLive import onBrokerFill
 
-        onBrokerFill(sideLabel, stkCd, qty, px, ordNo)
+        onBrokerFill(sideLabel, stkCd, qty, px, ordNo, cmsn=cmsn, tax=tax)
     except Exception:
         pass
     fn = _fillHook

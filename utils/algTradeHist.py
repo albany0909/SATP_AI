@@ -99,6 +99,55 @@ def resolveSellAvgPx(stkCd, tradeDt, dayAvgPx, ledger=None):
     return float(led.get("avgPx") or dayAvg or 0)
 
 
+def _fallbackSellAvgPx(algCd, stkCd, ymd, mode=None):
+    """
+    당일 원장 맵에 평단이 없을 때(이월분 원장이 무효 처리된 경우 등).
+    1) 오늘 LIVE_TRADE 청산 라운드 평단 2) 상태 무관 최근 원장 BUY_PX.
+    """
+    cd = normStkCd(stkCd)
+    alg = str(algCd or "")[:5]
+    md = str(mode or "").strip().lower()
+    conn = None
+    try:
+        conn = openDbConn()
+        with conn.cursor() as cur:
+            sql = """
+                SELECT AVG_BUY_PX FROM AI_STRAT_LIVE_TRADE
+                WHERE ALG_CD=%s AND STK_CD=%s AND EXIT_DT=%s AND AVG_BUY_PX > 0
+            """
+            args = [alg, cd, ymd]
+            if md in ("paper", "real"):
+                sql += " AND MODE=%s"
+                args.append(md)
+            cur.execute(sql + " ORDER BY TRADE_ID DESC LIMIT 1", tuple(args))
+            got = cur.fetchone()
+            if got and _flt(got.get("AVG_BUY_PX")):
+                return float(got.get("AVG_BUY_PX"))
+            sql = """
+                SELECT BUY_PX FROM AI_STRAT_ORD_LEDGER
+                WHERE ALG_CD=%s AND STK_CD=%s AND BUY_PX > 0 AND FIRST_BUY_DT<=%s
+            """
+            args = [alg, cd, ymd]
+            if md in ("paper", "real"):
+                sql += " AND (MODE=%s OR MODE IS NULL OR MODE='')"
+                args.append(md)
+            cur.execute(
+                sql + " ORDER BY CREATED_AT DESC, TRADE_CD DESC LIMIT 1", tuple(args)
+            )
+            got = cur.fetchone()
+            if got and _flt(got.get("BUY_PX")):
+                return float(got.get("BUY_PX"))
+    except Exception as err:
+        termLog(f"[tradeHist] 평단 보조조회 실패 {cd}: {err}")
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return 0.0
+
+
 def ledgerAvgMap(algCd, tradeDt, mode=None):
     """거래탭·계좌손익용 원장 평단 맵."""
     ymd = str(tradeDt or datetime.now().strftime("%Y%m%d")).replace("-", "")[:8]
@@ -219,6 +268,8 @@ def sumTodaySellPnlDetail(algCd="MTS01", tradeDt=None, mode=None):
     sellCnt = 0
     totSellAmt = 0.0
     stkPnl = {}
+    fbAvg = {}
+    skipped = {}
     for r in rows:
         tp = str(r.get("EVT_TP") or "").strip().upper()
         if tp not in ("BUY", "SELL"):
@@ -238,6 +289,13 @@ def sumTodaySellPnlDetail(algCd="MTS01", tradeDt=None, mode=None):
             st["qty"] = newQty
             continue
         avgPx = resolveSellAvgPx(cd, ymd, st.get("avgPx"), ledger)
+        if avgPx <= 0:
+            # 원장 맵에 없음(이월 원장 무효 등) → LIVE_TRADE·최근 원장 평단
+            if cd not in fbAvg:
+                fbAvg[cd] = _fallbackSellAvgPx(algCd, cd, ymd, mode=modeKey or None)
+            avgPx = fbAvg[cd]
+        if avgPx <= 0:
+            skipped[cd] = int(skipped.get(cd) or 0) + qty
         if avgPx > 0:
             bucket = feeBuckets.get(cd)
             buyCmsn, sellCmsn, sellTax = takeSellFees(
@@ -259,6 +317,11 @@ def sumTodaySellPnlDetail(algCd="MTS01", tradeDt=None, mode=None):
             st["avgPx"] = 0.0
         sellCnt += 1
         totSellAmt += px * qty
+    if skipped:
+        termLog(
+            f"[tradeHist] {algCd} {ymd} 평단 없어 TDY 에서 뺀 매도: "
+            + ", ".join(f"{cd} {q}주" for cd, q in skipped.items())
+        )
     winCnt = 0
     lossCnt = 0
     try:
@@ -279,6 +342,7 @@ def sumTodaySellPnlDetail(algCd="MTS01", tradeDt=None, mode=None):
         "lossCnt": lossCnt,
         "sellAmt": totSellAmt,
         "stkCnt": len(stkPnl),
+        "skipSellQty": int(sum(skipped.values())),
     }
 
 

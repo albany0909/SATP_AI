@@ -58,6 +58,10 @@ def fmtFillLine(sideLabel, stkCd, stkNm, qty, px, ordNo="", tm=None):
     return line, kind, hms
 
 
+# 단위체결량 저장 이후 행 표식 (분할체결 2건째부터 LINE 에 붙는다)
+FILL_CUM_MARK = "누계"
+
+
 def insertDeskFill(
     sideLabel,
     stkCd,
@@ -69,13 +73,24 @@ def insertDeskFill(
     tradeDt=None,
     cmsn=0,
     tax=0,
+    cumQty=0,
 ):
-    """00 체결을 당일 로그로 남긴다. 실패해도 예외를 올리지 않는다."""
+    """
+    00 체결을 당일 로그로 남긴다. 실패해도 예외를 올리지 않는다.
+    QTY 는 단위 체결량. 분할 체결이면 LINE 끝에 FILL_CUM_MARK(누계) 를 붙여
+    예전(누계수량 저장) 행과 구분한다 (utils.stratRoundFill.normDeskFillRows).
+    """
     if not ensureDeskLogTable():
         return {"ok": False, "errMsg": "AI_DESK_LOG 없음"}
     now = datetime.now()
     ymd = str(tradeDt or now.strftime("%Y%m%d"))[:8]
     line, kind, hms = fmtFillLine(sideLabel, stkCd, stkNm, qty, px, ordNo, tm=now)
+    try:
+        cumNum = int(cumQty or 0)
+        if qty and cumNum > int(qty):
+            line = f"{line or ''} ({FILL_CUM_MARK} {cumNum}주)"
+    except (TypeError, ValueError):
+        pass
     cd = normStkCd(stkCd) or None
     pxNum = None
     try:

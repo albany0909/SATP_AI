@@ -68,6 +68,10 @@ _STRAT_ID = "maTouchScale_v1"
 # 복기·원장은 상용 알고리즘코드로 연결 (파일명은 내부 로드용)
 _ALG_CD = "MTS01"
 _TRDE_TP_LIMIT = "0"
+# 청산 매수기준 복구·00체결 라운드 조회 창(달력일)
+_ROUND_LOOKBACK_DAYS = 14
+# 계좌잔량0 인데 매도 00 이 아직 안 온 종목을 청산대기로 두는 시간(초)
+_PEND_CLOSE_SEC = 900.0
 _TRDE_TP_MARKET = "3"
 _PAPER_WAIT_SEC = 1.05
 _LIMIT_WAIT_SEC = 600.0
@@ -110,6 +114,10 @@ _acntSyncAt = 0.0
 _acntSyncStarted = False
 # 매도실패 쿨다운. stkCd → epoch until
 _sellFailUntil = {}
+# 청산대기: 매도 주문 후 계좌잔량은 0 인데 매도 00 이 아직 안 온 포지션.
+# 원장 무효·메모리 삭제 대신 여기 보관했다가 늦은 00 이 오면 평단·진입일 그대로 청산한다.
+# stkCd → rec 스냅샷(+_pendAt)
+_pendClose = {}
 
 
 def _notify(msg):
@@ -609,6 +617,39 @@ def _forgetWait(wait):
         for k, w in list(store.items()):
             if w is wait:
                 store.pop(k, None)
+
+
+def _hasRecentSellOrd(cd):
+    """산 매도 대기 또는 _PEND_CLOSE_SEC 안의 만료 매도 대기가 있으면 True."""
+    if _hasOrdWait(cd, "SELL"):
+        return True
+    wait = _ordWaitGone.get(f"SELL:{cd}")
+    if wait and time.time() - float(wait.get("at") or 0) < _PEND_CLOSE_SEC:
+        return True
+    return False
+
+
+def _stashPendClose(cd, rec, why):
+    """계좌잔량0 · 매도 00 미도착 → 청산대기. 원장은 무효로 만들지 않는다."""
+    snap = dict(rec or {})
+    snap["_pendAt"] = time.time()
+    _pendClose[cd] = snap
+    termLog(
+        f"[maTouch] 청산대기 {cd} — {why}. 늦은 매도 00 을 기다린다 "
+        f"(평단 {float(snap.get('avgPx') or 0):,.0f} · 진입 {snap.get('entryDt') or '-'} 유지)"
+    )
+
+
+def _takeExpiredPendCloses():
+    """_PEND_CLOSE_SEC 지난 청산대기를 꺼낸다 (락 안에서 호출)."""
+    now = time.time()
+    out = []
+    for cd, snap in list(_pendClose.items()):
+        if now - float(snap.get("_pendAt") or 0) >= _PEND_CLOSE_SEC:
+            _pendClose.pop(cd, None)
+            snap.pop("_pendAt", None)
+            out.append((cd, snap))
+    return out
 
 
 def _dropOrdWait(key):
@@ -2419,7 +2460,7 @@ def _buildSellWaitRecover(cd, fillQty, ordNo):
     대기 없는 매도 00. 우리 포지션일 때만 복구한다.
     주문접수가 체결보다 늦거나, 60초 만료 후 체결이 온 경우.
     """
-    rec = _pos.get(cd)
+    rec = _pos.get(cd) or _pendClose.get(cd)
     if not rec:
         return None
     reason = str(rec.get("pendSellReason") or "")
@@ -2454,7 +2495,16 @@ def _buildSellWaitRecover(cd, fillQty, ordNo):
 
 def _applySellFillLocked(stkCd, fillPx, fillQty, wait):
     """락 안에서 매도 체결 반영. 평단은 유지하고 잔량만 줄인다."""
-    rec = _pos.get(stkCd) or {}
+    rec = _pos.get(stkCd)
+    if not rec and stkCd in _pendClose:
+        # 계좌동기가 먼저 잔량0 을 봐서 청산대기로 옮겨 둔 포지션 — 평단·진입일 그대로 복원
+        rec = _pendClose.pop(stkCd, None) or {}
+        rec.pop("_pendAt", None)
+        termLog(
+            f"[maTouch] 청산대기 복원 {stkCd} 보유 {int(rec.get('qty') or 0)}주 "
+            f"평단 {float(rec.get('avgPx') or 0):,.0f} — 늦은 매도 00 반영"
+        )
+    rec = rec or {}
     posQty = int(rec.get("qty") or 0)
     qty = int(fillQty or 0)
     alreadyCut = _sellQtyAlreadyCut(rec, wait, qty)
@@ -2510,10 +2560,12 @@ def _applySellFillLocked(stkCd, fillPx, fillQty, wait):
     return rec, closed, reason
 
 
-def onBrokerFill(sideLabel, stkCd, fillQty, fillPx, ordNo=""):
+def onBrokerFill(sideLabel, stkCd, fillQty, fillPx, ordNo="", cmsn=0, tax=0):
     """
     00 실체결. 이평터치 매수·매도 모두 대기 없이 와도 포지션에 반영한다.
     키움 체결가가 오므로 주문 당시 시세가와 달라도 실제 체결가로 맞춘다.
+    fillQty 는 단위 체결량(ordExecNotifier.resolveUnitFill). cmsn/tax 는 참고용
+    (청산 손익은 AI_DESK_LOG 00 로그의 수수료·세금으로 계산한다).
     """
     if not _isEnabled():
         return
@@ -2648,6 +2700,11 @@ def _closeGhostToMatchAcnt(stkCd, rec, reason="계좌잔량0"):
     except Exception as err:
         termLog(f"[maTouch] 매도체결 확인 실패 {cd}: {err}")
         soldAny = True
+    if not soldAny and _hasRecentSellOrd(cd):
+        with _lock:
+            if cd not in _pendClose:
+                _stashPendClose(cd, rec, f"{reason} · 매도 00 미도착")
+        return
     if not soldAny:
         _voidUnfilledLedger(cd, reason=reason)
         _banBuyToday(cd)
@@ -2901,6 +2958,12 @@ def syncFromAcntEvlt(body):
             if not item or acntQty <= 0:
                 if _hasOrdWait(cd):
                     continue
+                if _hasRecentSellOrd(cd):
+                    # 매도 주문 뒤 계좌가 먼저 0 — 00 이 늦는 중. 원장 무효 금지
+                    _stashPendClose(cd, rec, "계좌잔량0 · 매도 00 미도착")
+                    _pos.pop(cd, None)
+                    changed.append((cd, 0.0, 0, "pend"))
+                    continue
                 missing.append((cd, dict(rec)))
                 _pos.pop(cd, None)
                 continue
@@ -2961,6 +3024,8 @@ def syncFromAcntEvlt(body):
             termLog(f"[maTouch] 시한경과 매수승격 실패 {cd}: {err}")
 
     for cd, avgPx, qty, _kind in changed:
+        if _kind == "pend":
+            continue
         rec = _pos.get(cd)
         if rec:
             step = 20
@@ -3052,6 +3117,12 @@ def syncFromAcntEvlt(body):
     except Exception as err:
         termLog(f"[maTouch] 계좌고아복구 실패: {err}")
 
+    # 청산대기가 시한을 넘기면 예전처럼 계좌 기준 정리 (복구 불가 시 원장 무효)
+    with _lock:
+        expiredPend = _takeExpiredPendCloses()
+    for cd, snap in expiredPend:
+        termLog(f"[maTouch] 청산대기 만료 {cd} — 매도 00 미도착, 계좌 기준 정리")
+        missing.append((cd, snap))
     for cd, rec in missing:
         _closeGhostToMatchAcnt(cd, rec)
     # 메모리에 없어도 원장만 미청산인 종목도 계좌 기준으로 닫는다
@@ -3063,7 +3134,7 @@ def syncFromAcntEvlt(body):
             cd = normStkCd(row.get("STK_CD"))
             if not cd or cd in missCds or cd in holds:
                 continue
-            if _hasOrdWait(cd):
+            if _hasOrdWait(cd) or cd in _pendClose:
                 continue
             rec = rowToLivePos(row, todayYmd=_todayYmd()) or {}
             _closeGhostToMatchAcnt(cd, rec)
@@ -3130,112 +3201,245 @@ def _acntSyncLoop():
             time.sleep(5.0)
 
 
-def _onFullClose(stkCd, rec, exitPx, exitKind):
-    """전량 청산 후 검증 이력 저장 · 관심종목 해제 · 0B 해지."""
-    buyQty = int(rec.get("buyQty") or 0)
-    sellQty = int(rec.get("sellQty") or 0)
+def _ymdDaysAgo(days):
+    """오늘 기준 N일 전 YYYYMMDD (달력일)."""
+    from datetime import timedelta
+
+    return (datetime.now() - timedelta(days=int(days))).strftime("%Y%m%d")
+
+
+def _recoverRoundBasis(stkCd, rec):
+    """
+    전일 이월 청산·계좌동기 선반영 등으로 rec 에 진입일·평단이 비었을 때 복구.
+    순서: 원장 최근 행(미청산·무효0·청산9 모두) → 상태파일 → 00 체결로그(최근 N일).
+    반환: {entryDt, avgPx, src} — 못 찾으면 빈 값.
+    """
+    cd = normStkCd(stkCd)
+    out = {"entryDt": "", "avgPx": 0.0, "src": ""}
+    try:
+        from utils.stratOrdLedgerStore import getLatestLedgerRow
+
+        row = getLatestLedgerRow(
+            _STRAT_ID,
+            cd,
+            sinceYmd=_ymdDaysAgo(_ROUND_LOOKBACK_DAYS),
+            mode=_tradeMode(),
+        )
+        if row:
+            out["entryDt"] = str(row.get("FIRST_BUY_DT") or "")[:8]
+            out["avgPx"] = float(row.get("BUY_PX") or 0)
+            out["src"] = "ledger"
+    except Exception as err:
+        termLog(f"[maTouch] 원장 매수기준 조회 실패 {cd}: {err}")
+    if out["avgPx"] <= 0 or not out["entryDt"]:
+        try:
+            data = json.loads(_STATE_PATH.read_text(encoding="utf-8"))
+            prev = ((data or {}).get("pos") or {}).get(cd) or {}
+            if not out["entryDt"]:
+                out["entryDt"] = str(prev.get("entryDt") or "")[:8]
+            if out["avgPx"] <= 0 and float(prev.get("avgPx") or 0) > 0:
+                out["avgPx"] = float(prev.get("avgPx") or 0)
+                out["src"] = out["src"] or "state"
+        except Exception:
+            pass
+    if out["avgPx"] <= 0 or not out["entryDt"]:
+        try:
+            from utils.stratRoundFill import calcRoundFromDeskFills
+
+            dk = calcRoundFromDeskFills(
+                cd, _ymdDaysAgo(_ROUND_LOOKBACK_DAYS), _todayYmd(), mode=_tradeMode()
+            )
+            if dk.get("ok") and int(dk.get("buyQty") or 0) > 0:
+                if not out["entryDt"]:
+                    out["entryDt"] = str(dk.get("entryDt") or "")[:8]
+                if out["avgPx"] <= 0:
+                    out["avgPx"] = float(dk.get("avgBuyPx") or 0)
+                    out["src"] = out["src"] or "deskFill"
+        except Exception as err:
+            termLog(f"[maTouch] 체결로그 매수기준 조회 실패 {cd}: {err}")
+    return out
+
+
+def _estRoundFees(cost, sellAmt):
+    """체결로그가 없을 때 라운드 수수료·세금 추정 (매수·매도 수수료 + 매도세)."""
+    try:
+        from utils.heroPnl import estimateCmsn, estimateSellTax
+
+        mode = _tradeMode()
+        return float(
+            estimateCmsn(cost, mode=mode)
+            + estimateCmsn(sellAmt, mode=mode)
+            + estimateSellTax(sellAmt)
+        )
+    except Exception:
+        return 0.0
+
+
+def calcCloseRound(stkCd, rec, exitPx):
+    """
+    전량 청산 라운드 손익 (체결 단위 누적, 수수료·세금 차감).
+
+    우선순위
+      1) 00 실체결 로그(AI_DESK_LOG) — 체결가·실수수료로 체결마다 실현손익 누적
+      2) AI_ALG_EVT 체결 집계 — 매도금액 합 − 평단×매도수량 − 추정수수료
+      3) 메모리 rec (평단·매도금액)
+      4) 복구 평단(원장·상태파일·체결로그) × 매도수량
+    평단을 끝내 모르면 ok=False (LIVE_TRADE 저장 안 함).
+    예전처럼 매수 0 으로 두고 손익=매도금액이 되는 폴백은 없다.
+    """
+    rec = rec or {}
+    today = _todayYmd()
+    mode = _tradeMode()
+    memBuy = int(rec.get("buyQty") or 0)
+    memSell = int(rec.get("sellQty") or 0)
     avgPx = float(rec.get("avgPx") or 0)
-    buyAmt = float(rec.get("buyAmt") or 0)
-    sellAmt = float(rec.get("sellAmt") or 0)
+    memSellAmt = float(rec.get("sellAmt") or 0)
     px = float(exitPx or 0)
-    # 메모리·원장 수량은 주문 시점 값이라 부분체결·미체결취소가 빠질 수 있다.
-    # 라운드 손익은 체결 로그(BUY − BUY_CNCL vs SELL)를 진실로 삼는다.
-    fill = None
-    roundOk = True
+    entryDt = str(rec.get("entryDt") or "")[:8]
+    basisSrc = ""
+    if not entryDt or memBuy <= 0 or avgPx <= 0:
+        basis = _recoverRoundBasis(stkCd, rec)
+        if not entryDt:
+            entryDt = basis.get("entryDt") or ""
+        if avgPx <= 0:
+            avgPx = float(basis.get("avgPx") or 0)
+        basisSrc = basis.get("src") or "없음"
+        termLog(
+            f"[maTouch] 청산 매수기준 복구 {stkCd} 진입 {entryDt or '-'} "
+            f"평단 {avgPx:,.0f} ({basisSrc})"
+        )
+    lookFrom = entryDt or _ymdDaysAgo(_ROUND_LOOKBACK_DAYS)
+    out = {"ok": False, "entryDt": entryDt, "px": px, "src": ""}
+
+    # 1) 00 실체결 로그
+    try:
+        from utils.stratRoundFill import calcRoundFromDeskFills
+
+        dk = calcRoundFromDeskFills(stkCd, lookFrom, today, mode=mode)
+    except Exception as err:
+        termLog(f"[maTouch] 00체결 라운드 집계 실패 {stkCd}: {err}")
+        dk = {}
+    if (
+        dk.get("ok")
+        and dk.get("closed")
+        and str(dk.get("exitDt") or "") == today
+        and int(dk.get("buyQty") or 0) > 0
+        and int(dk.get("sellQty") or 0) > 0
+        and int(dk.get("orphanSellQty") or 0) <= 0
+    ):
+        out.update(
+            {
+                "ok": True,
+                "src": "deskFill",
+                "entryDt": str(dk.get("entryDt") or entryDt)[:8],
+                "buyQty": int(dk.get("buyQty") or 0),
+                "sellQty": int(dk.get("sellQty") or 0),
+                "buyAmt": float(dk.get("buyAmt") or 0),
+                "sellAmt": float(dk.get("sellAmt") or 0),
+                "avgPx": float(dk.get("avgBuyPx") or 0),
+                "px": float(dk.get("exitPx") or px),
+                "pnlWon": float(dk.get("pnlWon") or 0),
+                "pnlPct": float(dk.get("pnlPct") or 0),
+                "evalPct": float(dk.get("evalPct") or 0),
+            }
+        )
+        return out
+
+    # 2) EVT 체결 집계 · 3) 메모리 · 4) 복구 평단
+    buyQty = sellQty = 0
+    buyAmt = sellAmt = 0.0
+    src = ""
     try:
         from utils.stratRoundFill import calcRoundFill
 
-        entryDt = str(rec.get("entryDt") or "")[:8] or _todayYmd()
-        got = calcRoundFill(_ALG_CD, stkCd, entryDt, _todayYmd(), mode=_tradeMode())
-        if got.get("ok") and int(got.get("buyQty") or 0) > 0:
-            fill = got
+        got = calcRoundFill(_ALG_CD, stkCd, lookFrom, today, mode=mode)
     except Exception as err:
         termLog(f"[maTouch] 청산 체결집계 실패 {stkCd}: {err}")
-    if fill is not None:
-        fBuy = int(fill.get("buyQty") or 0)
-        fSell = int(fill.get("sellQty") or 0)
-        if fill.get("closed"):
+        got = {}
+    if got.get("ok") and int(got.get("buyQty") or 0) > 0 and int(got.get("sellQty") or 0) > 0:
+        fBuy = int(got.get("buyQty") or 0)
+        fSell = int(got.get("sellQty") or 0)
+        avgPx = float(got.get("avgBuyPx") or avgPx)
+        px = float(got.get("exitPx") or px)
+        sellAmt = float(got.get("sellAmt") or 0)
+        if got.get("closed"):
             buyQty, sellQty = fBuy, fSell
-            buyAmt = float(fill.get("buyAmt") or 0)
-            sellAmt = float(fill.get("sellAmt") or 0)
-            avgPx = float(fill.get("avgBuyPx") or avgPx)
-            px = float(fill.get("exitPx") or px)
-            pnlWon = float(fill.get("pnlWon") or 0)
-            pnlPct = float(fill.get("pnlPct") or 0)
-        elif fSell > 0:
-            # 엔진이 잔량 0으로 전량청산을 확정한 상태다.
-            # BUY 이벤트는 주문수량(미체결 취소 BUY_CNCL 누락)이라 buy>sell 로
-            # 보일 수 있다. 실제 왕복분은 매도체결과 같으므로 매도 기준으로 닫는다.
+            buyAmt = float(got.get("buyAmt") or 0)
+        else:
+            # 엔진이 잔량 0 으로 청산을 확정했다 — 매도체결 기준으로 닫는다
             sellQty = fSell
-            sellAmt = float(fill.get("sellAmt") or 0)
-            avgPx = float(fill.get("avgBuyPx") or avgPx)
-            px = float(fill.get("exitPx") or px)
             buyQty = sellQty
-            buyAmt = avgPx * buyQty if avgPx > 0 else float(fill.get("buyAmt") or 0)
-            # 매도분만의 원가 — 미체결 주문수량은 손익에 넣지 않는다
-            pnlWon = sellAmt - buyAmt
-            pnlPct = (pnlWon / buyAmt * 100.0) if buyAmt > 0 else 0.0
+            buyAmt = avgPx * buyQty
             termLog(
                 f"[maTouch] 청산집계 보정 {stkCd} 이벤트 매수 {fBuy}주 / 매도 {fSell}주 "
-                f"→ 전량청산 확정이라 매도 {fSell}주 기준으로 라운드 기록 "
-                f"(pnl={pnlWon:+,.0f})"
+                f"→ 매도 {fSell}주 기준"
             )
-        else:
-            # 매도 체결이 하나도 없으면 유령 — 승패에 넣지 않는다
-            roundOk = False
-            memBuy, memSell = buyQty, sellQty
-            buyQty, sellQty = fBuy, fSell
-            buyAmt = float(fill.get("buyAmt") or 0)
-            sellAmt = float(fill.get("sellAmt") or 0)
-            pnlWon = 0.0
-            pnlPct = 0.0
-            termLog(
-                f"[maTouch] 라운드 이력 생략 {stkCd} — 매도체결 0 "
-                f"(이벤트 매수 {fBuy}주, 메모리 {memBuy}/{memSell})"
-            )
-    else:
-        # 체결 로그를 못 읽었을 때만 예전 보정 (금액이 비면 평단·청산가로 채움)
-        if buyAmt <= 0 and avgPx > 0 and buyQty > 0:
-            buyAmt = avgPx * buyQty
-        if sellAmt <= 0 and px > 0 and sellQty > 0:
-            sellAmt = px * sellQty
-        pnlWon = sellAmt - buyAmt
-        pnlPct = (pnlWon / buyAmt * 100.0) if buyAmt > 0 else 0.0
-    # 평가%(비용 전) — 실현 반영 전에 확정
-    evalPct = float(pnlPct) if roundOk else 0.0
-    # 영웅문식: 수수료·세금 차감 (00 FID 또는 추정)
-    if roundOk and avgPx > 0 and sellQty > 0 and px > 0:
-        try:
-            from utils.heroPnl import heroRealizedPnl, loadDeskFeeBuckets, takeSellFees
+        src = "evt"
+    elif memSell > 0 and avgPx > 0:
+        sellQty = memSell
+        sellAmt = memSellAmt if memSellAmt > 0 else px * sellQty
+        buyQty = sellQty
+        buyAmt = avgPx * buyQty
+        src = "mem" if memBuy > 0 and not basisSrc else f"recover:{basisSrc}"
+    if avgPx <= 0 or sellQty <= 0 or buyQty <= 0:
+        out["reason"] = (
+            f"평단/수량 미확인 (평단 {avgPx:,.0f}, 매수 {buyQty}, 매도 {sellQty})"
+        )
+        return out
+    cost = avgPx * sellQty
+    gross = sellAmt - cost
+    fees = _estRoundFees(cost, sellAmt)
+    net = gross - fees
+    out.update(
+        {
+            "ok": True,
+            "src": src,
+            "buyQty": buyQty,
+            "sellQty": sellQty,
+            "buyAmt": buyAmt,
+            "sellAmt": sellAmt,
+            "avgPx": avgPx,
+            "px": px,
+            "pnlWon": float(round(net)),
+            "pnlPct": (net / cost * 100.0) if cost > 0 else 0.0,
+            "evalPct": (gross / cost * 100.0) if cost > 0 else 0.0,
+        }
+    )
+    return out
 
-            mode = _tradeMode()
-            buckets = loadDeskFeeBuckets(_todayYmd(), mode=mode)
-            buyCmsn, sellCmsn, sellTax = takeSellFees(
-                buckets.get(normStkCd(stkCd)),
-                sellQty,
-                sellPx=px,
-                buyPx=avgPx,
-                mode=mode,
-            )
-            got = heroRealizedPnl(
-                avgPx,
-                px,
-                sellQty,
-                buyCmsn=buyCmsn,
-                sellCmsn=sellCmsn,
-                sellTax=sellTax,
-            )
-            evalPct = float(got.get("evalRt") if got.get("evalRt") is not None else evalPct)
-            pnlWon = float(got.get("netPnl") or pnlWon)
-            pnlPct = float(got.get("pnlRt") or pnlPct)
-            if buyCmsn or sellCmsn or sellTax:
-                termLog(
-                    f"[maTouch] 영웅문손익 {stkCd} 수수료 "
-                    f"매수{buyCmsn}+매도{sellCmsn} 세금{sellTax} "
-                    f"→ 평가{evalPct:+.2f}% 실현{pnlPct:+.2f}% {pnlWon:+,.0f}원"
-                )
-        except Exception as err:
-            termLog(f"[maTouch] 수수료반영 실패 {stkCd}: {err}")
+
+def _onFullClose(stkCd, rec, exitPx, exitKind):
+    """전량 청산 후 검증 이력 저장 · 관심종목 해제 · 0B 해지."""
+    rec = rec or {}
+    # 손익은 체결 단위 누적(수수료·세금 차감). 마지막 청산가×전체수량 재계산은 하지 않는다.
+    rnd = {}
+    try:
+        rnd = calcCloseRound(stkCd, rec, exitPx) or {}
+    except Exception as err:
+        termLog(f"[maTouch] 청산 라운드 계산 실패 {stkCd}: {err}")
+        rnd = {"ok": False, "reason": str(err)}
+    roundOk = bool(rnd.get("ok"))
+    buyQty = int(rnd.get("buyQty") or rec.get("buyQty") or 0)
+    sellQty = int(rnd.get("sellQty") or rec.get("sellQty") or 0)
+    buyAmt = float(rnd.get("buyAmt") or 0)
+    sellAmt = float(rnd.get("sellAmt") or rec.get("sellAmt") or 0)
+    avgPx = float(rnd.get("avgPx") or 0)
+    px = float(rnd.get("px") or exitPx or 0)
+    pnlWon = float(rnd.get("pnlWon") or 0) if roundOk else 0.0
+    pnlPct = float(rnd.get("pnlPct") or 0) if roundOk else 0.0
+    evalPct = float(rnd.get("evalPct") or 0) if roundOk else 0.0
+    roundEntryDt = str(rnd.get("entryDt") or rec.get("entryDt") or "")[:8]
+    if roundOk:
+        termLog(
+            f"[maTouch] 청산손익 {stkCd} ({rnd.get('src')}) 매수 {buyQty}주 평단 {avgPx:,.0f} "
+            f"· 매도 {sellQty}주 {sellAmt:,.0f}원 → 평가{evalPct:+.2f}% "
+            f"실현{pnlPct:+.2f}% {pnlWon:+,.0f}원"
+        )
+    else:
+        termLog(
+            f"[maTouch] ⚠ 청산 라운드 저장 생략 {stkCd} — {rnd.get('reason') or '체결 확인 불가'}. "
+            f"승패·손익에 넣지 않는다 (수동 확인 필요)"
+        )
     steps = rec.get("filled") or []
     halfYn = "Y" if rec.get("halfTaken") else "N"
     stkNm = ""
@@ -3251,11 +3455,6 @@ def _onFullClose(stkCd, rec, exitPx, exitKind):
     if not stkNm:
         stkNm = str(rec.get("stkNm") or "")
 
-    if not roundOk:
-        termLog(
-            f"[maTouch] 라운드 이력 생략 {stkCd} {stkNm} — 체결 매수 {buyQty}주 / "
-            f"매도 {sellQty}주 (전량청산 아님). 승패·손익에 넣지 않는다"
-        )
     closeNote = (
         f"eval={evalPct:+.2f} real={pnlPct:+.2f}" if roundOk else None
     )
@@ -3269,7 +3468,7 @@ def _onFullClose(stkCd, rec, exitPx, exitKind):
                 "mode": _tradeMode(),
                 "stkCd": stkCd,
                 "stkNm": stkNm,
-                "entryDt": rec.get("entryDt") or rec.get("tradeDt"),
+                "entryDt": roundEntryDt or rec.get("tradeDt"),
                 "exitDt": _todayYmd(),
                 "exitTm": _nowHms(),
                 "exitReason": exitKind,
@@ -3288,12 +3487,17 @@ def _onFullClose(stkCd, rec, exitPx, exitKind):
                 "note": closeNote,
             }
         )
+        if (got or {}).get("dup") == "skip":
+            # 같은 청산이 이미 저장됨 — 승패 푸시 중복 방지
+            roundOk = False
         if not (got or {}).get("ok"):
+            roundOk = False
             termLog(
                 f"[maTouch] 청산이력 저장 실패 {stkCd}: "
                 f"{(got or {}).get('errMsg') or 'unknown'}"
             )
     except Exception as err:
+        roundOk = False
         termLog(f"[maTouch] 청산이력 저장 실패: {err}")
 
     try:
@@ -3409,7 +3613,8 @@ def onExternalFullClose(stkCd, exitPx, reasonLabel, qty=0, avgPx=0):
                 "avgPx": a,
                 "filled": [],
                 "halfTaken": False,
-                "entryDt": _todayYmd(),
+                # 진입일 모름 — 비워 두면 _onFullClose 가 원장·체결로그로 복구한다
+                "entryDt": "",
             }
     _onFullClose(cd, rec, exitPx, exitKind)
 

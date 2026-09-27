@@ -27,6 +27,10 @@ _LOGIN_HANDLER_NAME = "ordExec00Login"
 # 동일 체결번호 중복 알림 방지 (최근 N건 유지)
 _seenFillKeys = []
 _seenFillMax = 200
+# 주문번호·방향별 누계 체결량(FID 911). 911 은 주문 누계라 단위 체결량 계산에 쓴다.
+# key=(ymd, ordNo, side) → 누계수량
+_cumFillQty = {}
+_cumFillLock = threading.Lock()
 
 # 장중 구독·알림 활성 여부
 _isNotifyEnabled = False
@@ -79,6 +83,46 @@ def _parsePrice(values, keys):
     if num is None:
         return None
     return abs(int(num))
+
+
+def resolveUnitFill(values, ordNo, sideKey, ymd=None):
+    """
+    00 체결 1건 → (단위체결량, 단위체결가, 누계체결량).
+
+    FID 911(체결량)은 **주문 누계**다 (예: 2주 → 64주). 이를 그대로 쓰면
+    분할 체결마다 누계가 다시 더해져 수량이 부풀려진다.
+    - 915(단위체결량)가 있으면 그것을 쓴다.
+    - 없으면 같은 주문번호의 직전 누계와의 차이를 쓴다.
+    - 921(대체FID)은 911 키 자체가 없을 때만 누계로 본다 (접수 행의 921 쓰레기값 방지).
+    단위체결량이 0 이하(중복·역행)면 (0, px, cum) 을 돌려 호출부가 무시한다.
+    """
+    vals = values if isinstance(values, dict) else {}
+    unitQty = _parseIntField(vals, ["915"])
+    cumKeys = ["911"] if "911" in vals else ["921"]
+    cumQty = _parseIntField(vals, cumKeys)
+    unitPx = _parsePrice(vals, ["914"])
+    if not unitPx:
+        unitPx = _parsePrice(vals, ["910", "920"])
+    day = str(ymd or time.strftime("%Y%m%d"))[:8]
+    key = (day, str(ordNo or "").strip(), str(sideKey or ""))
+    with _cumFillLock:
+        prevCum = int(_cumFillQty.get(key) or 0)
+        if unitQty is not None and unitQty > 0:
+            qty = int(unitQty)
+            newCum = int(cumQty) if cumQty and cumQty > 0 else prevCum + qty
+        elif cumQty is not None and cumQty > 0:
+            qty = int(cumQty) - prevCum if key[1] else int(cumQty)
+            newCum = int(cumQty)
+        else:
+            qty = 0
+            newCum = prevCum
+        if key[1] and newCum > prevCum:
+            _cumFillQty[key] = newCum
+        # 날짜 지난 키 정리
+        if len(_cumFillQty) > 2000:
+            for k in [k for k in _cumFillQty if k[0] != day]:
+                _cumFillQty.pop(k, None)
+    return max(0, int(qty)), int(unitPx or 0), int(newCum or 0)
 
 
 def _isBuySide(values):
@@ -222,31 +266,38 @@ def _onWsMessage(msg):
         if bizTp and bizTp not in ("JJ", ""):
             continue
 
-        fillQty = _parseIntField(values, ["911", "915", "921"])
         ordSts = _firstNonEmpty(values, ["913"])
-
-        # 체결량 없거나 0이면 접수/확인만 — 알림 생략
-        if fillQty is None or fillQty <= 0:
-            continue
         # 상태가 있으면 체결만 (접수·확인 스킵). 상태 필드를 못 받으면 체결량 기준으로 알림
         if ordSts and ("체결" not in ordSts):
+            continue
+        rawCumQty = _parseIntField(values, ["911"] if "911" in values else ["921"])
+        rawUnitQty = _parseIntField(values, ["915"])
+        # 체결량 없거나 0이면 접수/확인만 — 알림 생략
+        if not ((rawUnitQty or 0) > 0 or (rawCumQty or 0) > 0):
             continue
 
         stkCd = normStkCd(_firstNonEmpty(values, ["9001"]) or row.get("item"))
         stkNm = _firstNonEmpty(values, ["302"])
-        fillPrc = _parsePrice(values, ["910", "914", "920"])
         ordNo = _firstNonEmpty(values, ["9203", "904"])
         fillNo = _firstNonEmpty(values, ["909"])
         unfilledQty = _parseIntField(values, ["902"])
 
-        if fillPrc is None:
-            fillPrc = 0
-
-        dedupeKey = f"{ordNo}|{fillNo}|{stkCd}|{fillQty}|{fillPrc}"
+        buySide = _isBuySide(values)
+        sideKey = "B" if buySide is True else ("S" if buySide is False else "?")
+        dedupeKey = f"{ordNo}|{fillNo}|{stkCd}|{rawCumQty}|{rawUnitQty}"
         if not _rememberFill(dedupeKey):
             continue
+        # 911 은 주문 누계 — 단위 체결량(915 또는 누계 차이)으로 바꿔 넘긴다
+        fillQty, fillPrc, cumQty = resolveUnitFill(values, ordNo, sideKey)
+        if fillQty <= 0:
+            termLog(
+                f"[체결알림] 단위체결량 0 — 무시 {stkCd} 주문 {ordNo} "
+                f"누계 {rawCumQty} 단위 {rawUnitQty}"
+            )
+            continue
+        if not fillPrc:
+            fillPrc = 0
 
-        buySide = _isBuySide(values)
         if buySide is True:
             sideLabel = "매수"
         elif buySide is False:
@@ -265,6 +316,8 @@ def _onWsMessage(msg):
         text = _formatOrdExecMsg(
             stkCd, stkNm, sideLabel, fillQty, fillPrc, ordNo, ordSts, unfilledQty
         )
+        if cumQty and cumQty != fillQty:
+            text += f"\n누계: {cumQty:,}주"
         termLog(text)
         try:
             from utils.tradeLogHook import emitFillLog
@@ -278,6 +331,7 @@ def _onWsMessage(msg):
                 ordNo,
                 cmsn=fillCmsn,
                 tax=fillTax,
+                cumQty=cumQty,
             )
         except Exception:
             pass

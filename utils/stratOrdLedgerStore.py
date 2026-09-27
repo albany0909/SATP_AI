@@ -99,6 +99,48 @@ def getOpenLedgerRow(stratId, stkCd):
                 pass
 
 
+def getLatestLedgerRow(stratId, stkCd, sinceYmd=None, mode=None):
+    """
+    상태 무관(미청산·무효0·청산9) 최근 원장 1행.
+    계좌잔량0 무효 처리 뒤 늦게 온 매도 체결의 평단·진입일 복구용.
+    """
+    if not ensureStratOrdLedgerTable():
+        return None
+    cd = padStkCd(stkCd)
+    algCd = resolveAlgCd(stratId)
+    if not algCd or not cd:
+        return None
+    sql = """
+        SELECT *
+        FROM AI_STRAT_ORD_LEDGER
+        WHERE ALG_CD=%s AND STK_CD=%s AND BUY_PX > 0
+    """
+    args = [algCd, cd]
+    if sinceYmd:
+        sql += " AND FIRST_BUY_DT>=%s"
+        args.append(str(sinceYmd)[:8])
+    modeKey = str(mode or "").strip().lower()
+    if modeKey in ("paper", "real"):
+        sql += " AND (MODE=%s OR MODE IS NULL OR MODE='')"
+        args.append(modeKey)
+    sql += " ORDER BY CREATED_AT DESC, TRADE_CD DESC LIMIT 1"
+    conn = None
+    try:
+        conn = openDbConn()
+        with conn.cursor() as cur:
+            cur.execute(sql, args)
+            return cur.fetchone()
+    except Exception as err:
+        termLog(f"[stratOrdLedger] 최근 원장 조회 실패: {err}")
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def listOpenLedgerRows(stratId=None):
     """이어 매매할 미청산 원장. 장 시작 전 로드용."""
     if not ensureStratOrdLedgerTable():
