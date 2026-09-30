@@ -50,7 +50,7 @@ def _maTouchReclaimLine(p):
         waitMin = max(1, int(round(waitSec / 60.0)))
         return (
             f"터치 후 {barMin}분봉이 SMA20을 종가 돌파하고 양봉(종가>시가)이면 "
-            f"SMA20 인근 호가 지정가 매수. {waitMin}분 미체결이면 취소 "
+            f"SMA20 이하 호가(내림) 지정가 매수. {waitMin}분 미체결이면 취소 "
             f"(시장가 전환 없음)"
         )
     reclaimMin = float(p.get("reclaimMinPct") or 0)

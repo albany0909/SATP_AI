@@ -43,7 +43,7 @@ from strategies.impl.maTouchScale import (
 from strategies.specLoader import loadStratSpec
 from telegram.telSend import sendTelegramMsg
 from utils.dbConn import openDbConn
-from utils.krxTick import roundToKrxTick
+from utils.krxTick import ceilToKrxTick, floorToKrxTick
 from utils.stkCdUtil import normStkCd
 from utils.termLog import termLog
 from utils.tradeSession import getOrdSession, isModeLoggedIn, modeLabel
@@ -984,7 +984,8 @@ def _tryLiveBar3Buy(cd, closed3, filled, queuedBuy, sma, openBelowSma, actions, 
         if act != "buy":
             continue
         if useLimit:
-            limitPx = float(roundToKrxTick(maPx))
+            # v63: 지정가 매수는 호가 내림 (SMA20 보다 비싸게 사지 않음)
+            limitPx = float(floorToKrxTick(maPx))
             if limitPx <= 0:
                 continue
             qty = int(buyAmtForStep(_params, step) // limitPx)
@@ -1569,6 +1570,9 @@ def _placeBuy(stkCd, qty, px, step, isAdd=False, isRemain=False, maPx=None):
         and maPx is not None
     )
     trdeTp = _TRDE_TP_LIMIT if useLimit else _TRDE_TP_MARKET
+    if useLimit:
+        # 지정가 매수 단가 = 호가 내림. 대기·이벤트에도 같은 값을 쓴다
+        px = float(floorToKrxTick(px)) or px
     ordUv = str(int(px)) if useLimit else ""
     waitSec = float((_params or {}).get("limitWaitSec") or _LIMIT_WAIT_SEC)
     smaRef = float(maPx) if maPx not in (None, "") else float(px or 0)
@@ -2271,6 +2275,9 @@ def _placeSell(stkCd, qty, px, reason, useLimit=False, limitWaitSec=None):
     _cnclOpenBuyLimits(stkCd)
     hostUrl, token, tokenType = sess
     trdeTp = _TRDE_TP_LIMIT if useLimit else _TRDE_TP_MARKET
+    if useLimit:
+        # 지정가 매도 단가 = 호가 올림. 대기(limitPx)·이벤트에도 같은 값을 쓴다
+        px = float(ceilToKrxTick(px)) or px
     ordUv = str(int(round(float(px)))) if useLimit else ""
     waitSec = float(
         limitWaitSec
@@ -3905,7 +3912,8 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
                     if (not tp1Taken) and tp1Pct > 0:
                         preArm = float(_params.get("tp1PreArmPct", 1.0) or 1.0)
                         if pnlPctNow + 1e-9 >= preArm:
-                            limPx = avgPx * (1.0 + tp1Pct / 100.0)
+                            # v63: 매도 지정가는 호가 올림 (571557 방지, +tp1Pct 이상 유지)
+                            limPx = float(ceilToKrxTick(avgPx * (1.0 + tp1Pct / 100.0)))
                             actions.append(
                                 (
                                     "TP1",
@@ -3961,7 +3969,8 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
                 if pnlPctNow + 1e-9 >= preArm:
                     sellQty = scaleOutQty(qtyNow, tp1Ratio)
                     if sellQty >= 1:
-                        limPx = avgPx * (1.0 + tp1Pct / 100.0)
+                        # v63: 매도 지정가는 호가 올림 (571557 방지, +tp1Pct 이상 유지)
+                        limPx = float(ceilToKrxTick(avgPx * (1.0 + tp1Pct / 100.0)))
                         actions.append(
                             (
                                 "TP1",

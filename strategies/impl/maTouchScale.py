@@ -23,7 +23,7 @@
 from datetime import datetime
 
 from strategies.indicators import calcRsiSeries, calcSmaSeries
-from utils.krxTick import roundToKrxTick
+from utils.krxTick import floorToKrxTick
 
 
 def inNextClosedHalfBand(px, avgPx, minPct=0.0, maxPct=4.0):
@@ -729,7 +729,8 @@ class MaTouchScaleStrategy:
             if act != "buy":
                 continue
             if useLimit:
-                limitPx = float(roundToKrxTick(maPx))
+                # v63: 실전과 같이 지정가 매수는 호가 내림
+                limitPx = float(floorToKrxTick(maPx))
                 if limitPx <= 0:
                     continue
                 qty = int(buyAmtForStep(self.params, step) // limitPx)

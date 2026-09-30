@@ -2,7 +2,32 @@
 
 import requests
 
+from utils.krxTick import limitOrdPx
 from utils.stkCdUtil import normStkCd
+
+
+def _tickOrdUv(ordUv, stkCd=""):
+    """
+    지정가 단가를 유효 KRX 호가로 맞춘다 (매수: 내림).
+    빈 값(시장가 등)·0 이하·숫자 아님은 그대로 둔다.
+    """
+    if ordUv in (None, ""):
+        return ""
+    try:
+        raw = float(str(ordUv).replace(",", ""))
+    except (TypeError, ValueError):
+        return str(ordUv)
+    if raw <= 0:
+        return str(ordUv)
+    px = limitOrdPx(raw, "BUY")
+    if px != raw:
+        try:
+            from utils.termLog import termLog
+
+            termLog(f"[주문호가] 매수 {normStkCd(stkCd)} 단가 {raw:,.2f} → {px:,} (호가단위)")
+        except Exception:
+            pass
+    return str(px)
 
 
 def buyStk(
@@ -39,7 +64,7 @@ def buyStk(
         "dmst_stex_tp": dmstStexTp,
         "stk_cd": normStkCd(stkCd),
         "ord_qty": str(ordQty),
-        "ord_uv": str(ordUv) if ordUv not in (None, "") else "",
+        "ord_uv": _tickOrdUv(ordUv, stkCd),
         "trde_tp": str(trdeTp),
         "cond_uv": str(condUv) if condUv not in (None, "") else "",
     }
