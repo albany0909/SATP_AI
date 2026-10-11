@@ -79,6 +79,10 @@ _LIMIT_WAIT_SEC = 600.0
 _lock = threading.Lock()
 # stkCd → {qty, avgPx, filled, halfTaken, lastPx, tradeDt}
 _pos = {}
+# v64: 이평터치가 낸 매수 주문번호·주문시도(종목) — 체결선착 대기복구 허용 근거
+_mtsOrdNos = {}
+_mtsBuyInflight = {}
+_MTS_INFLIGHT_SEC = 180
 # stkCd → {5: ma, 10: ma, ...}
 _smaMap = {}
 _smaYmd = ""
@@ -1528,6 +1532,31 @@ def holdsOrPendingBuy(stkCd):
     return False
 
 
+def _noteMtsBuyOrd(ordNo, stkCd):
+    no = _normOrdNo(ordNo)
+    if no:
+        _mtsOrdNos[no] = {"cd": normStkCd(stkCd), "at": time.time()}
+        old = [k for k, v in _mtsOrdNos.items() if time.time() - v["at"] > 3 * 86400]
+        for k in old:
+            _mtsOrdNos.pop(k, None)
+
+
+def _mtsOwnsBuyFill(cd, ordNo):
+    """
+    v64: 대기 없는 매수 체결을 이평터치 것으로 볼지.
+    봇(이평터치) 주문번호 일치 / 최근 이평터치 매수 주문 시도 / 이미 이평터치 보유 종목만 True.
+    수동(HTS/MTS)·다른 전략 체결은 False → 대기복구·편입하지 않는다.
+    """
+    no = _normOrdNo(ordNo)
+    if no and no in _mtsOrdNos:
+        return True
+    t = _mtsBuyInflight.get(cd)
+    if t and time.time() - t <= _MTS_INFLIGHT_SEC:
+        return True
+    rec0 = _pos.get(cd) or {}
+    return int(rec0.get("qty") or 0) > 0 or bool(rec0.get("tradeCd"))
+
+
 def _placeBuy(stkCd, qty, px, step, isAdd=False, isRemain=False, maPx=None):
     """
     매수 주문. 신규 3분확인은 SMA20 인근 호가 지정가.
@@ -1577,6 +1606,7 @@ def _placeBuy(stkCd, qty, px, step, isAdd=False, isRemain=False, maPx=None):
     waitSec = float((_params or {}).get("limitWaitSec") or _LIMIT_WAIT_SEC)
     smaRef = float(maPx) if maPx not in (None, "") else float(px or 0)
     hostUrl, token, tokenType = sess
+    _mtsBuyInflight[normStkCd(stkCd)] = time.time()
     _waitOrdGap()
     result = placeBuyOrd(
         hostUrl,
@@ -1639,6 +1669,7 @@ def _placeBuy(stkCd, qty, px, step, isAdd=False, isRemain=False, maPx=None):
             note=errMsg[:200],
         )
         return False
+    _noteMtsBuyOrd(result.get("ordNo"), stkCd)
     # 평단·수량은 00 체결·kt00004 에서만 올린다.
     # 주문 접수만으로 원장/BUY 이벤트/보유수량을 만들지 않는다 (미체결 허수 포지션 방지).
     with _lock:
@@ -2594,6 +2625,9 @@ def onBrokerFill(sideLabel, stkCd, fillQty, fillPx, ordNo="", cmsn=0, tax=0):
         wKey, wait = _findOrdWait(ordNo, cd, side)
         # 00 체결이 _registerOrdWait 보다 먼저 오면 대기가 없다.
         # 주문접수만으로 qty>0 포지션을 만들지 않으므로, 대기 복구는 주문번호·최근 BUY 대기로.
+        if not wait and side == "BUY" and not _mtsOwnsBuyFill(cd, ordNo):
+            termLog(f"[maTouch] 외부매수 체결 무시(v64) {cd} {qty}주 ord={ordNo}")
+            return
         if not wait and side == "BUY":
             rec0 = _pos.get(cd) or {}
             filled = list(rec0.get("filled") or [])
