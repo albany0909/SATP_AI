@@ -64,6 +64,12 @@ def emitFillLog(sideLabel, stkCd, stkNm, qty, px, ordNo="", cmsn=0, tax=0, cumQt
         onBrokerFill(sideLabel, stkCd, qty, px, ordNo, cmsn=cmsn, tax=tax)
     except Exception:
         pass
+    try:
+        from trading.manualMgrLive import onBrokerFill as mmgOnBrokerFill
+
+        mmgOnBrokerFill(sideLabel, stkCd, qty, px, ordNo)
+    except Exception:
+        pass
     fn = _fillHook
     if fn is None:
         return

@@ -966,7 +966,17 @@ def _schedLoop():
         time.sleep(30)
 
 
+def _startMmg01():
+    try:
+        from trading.manualMgrLive import startManualMgrLive
+
+        startManualMgrLive()
+    except Exception as err:
+        termLog(f"[MMG01] 기동 실패: {err}")
+
+
 def startMaSupportEodLive():
+    _startMmg01()
     """프로세스 기동 시 상태 로드 + 스케줄 스레드."""
     global _workerStarted
     _loadParams()

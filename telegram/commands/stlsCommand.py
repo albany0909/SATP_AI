@@ -20,6 +20,13 @@ def handleStls(action):
     act = (action or "").strip().lower()
 
     if act == "start":
+        try:
+            from trading.manualMgrLive import isMmgEnabled
+
+            if isMmgEnabled():
+                return "MMG01(수동정찰 피라미딩) 운영 중에는 스탑로스 감시(stls)를 켤 수 없습니다 — 손절은 MMG01 이 관리합니다."
+        except Exception:
+            pass
         ok, msg = startStlsMonitor()
         termLog(msg)
         return msg

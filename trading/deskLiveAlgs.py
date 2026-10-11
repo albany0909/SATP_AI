@@ -9,11 +9,13 @@ _DEFAULT_ALG_TABS = ("MTS01", "MSE01")
 _ALG_BG = {
     "MTS01": "#90CAF9",  # 이평터치 — 파랑
     "MSE01": "#A5D6A7",  # 이평지지 — 초록
+    "MMG01": "#FFCC80",  # 수동정찰 피라미딩 — 주황
 }
 # 거래로그 글자색 — 탭 파스텔과 같은 계열, 흰 배경에서 읽히게 진하게
 _ALG_FG = {
     "MTS01": "#1565C0",
     "MSE01": "#2E7D32",
+    "MMG01": "#E65100",
 }
 _ALG_BG_FALLBACK = ("#FFCC80", "#CE93D8", "#80DEEA", "#EF9A9A", "#B0BEC5")
 _UNK_BG = "#E0E0E0"

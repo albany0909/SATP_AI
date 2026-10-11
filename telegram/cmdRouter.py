@@ -11,6 +11,7 @@ from telegram.commands.inqRankCommand import handleInqRank
 from telegram.commands.loginCommand import handleLogin, handleLoginRenewal
 from telegram.commands.minPrcCommand import handleMinPrc
 from telegram.commands.mkhrCommand import handleMkhr
+from telegram.commands.mmgCommand import handleMmg
 from telegram.commands.offCommand import handleOff
 from telegram.commands.reportCommand import handleReport
 from telegram.commands.rsvCommand import handleRsv
@@ -67,6 +68,10 @@ def routeCommand(text):
     if cmd == "stop":
         # stop stls — 스탑로스 감시 중지
         return handleStopCmd(rawParts)
+
+    if cmd == "mmg":
+        # mmg list|add|del|adopt|scan|status — MMG01 풀·상태
+        return handleMmg(rawParts)
 
     if cmd in ("report", "r"):
         # 자금현황·보유종목 조회

@@ -1374,6 +1374,14 @@ class TradeDeskWin(QMainWindow):
         settHint.setStyleSheet("color: #666; font-size: 12px;")
         settHint.setWordWrap(True)
         settLay.addWidget(settHint)
+        try:
+            from ui.mmgSettRow import addMmgSettRow
+
+            addMmgSettRow(self, settLay)
+        except Exception as err:
+            from utils.termLog import termLog
+
+            termLog(f"[desk] MMG01 설정행 실패: {err}")
         settLay.addStretch(1)
         self.sideStack.addWidget(settPane)
         self._loadTradeModeCmb()

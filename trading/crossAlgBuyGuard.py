@@ -102,6 +102,15 @@ def isNewBuyBlocked(algCd, stkCd):
     if not myAlg or not cd:
         return False, ""
 
+    if myAlg != "MMG01":
+        try:
+            from trading.manualMgrLive import isMmgPoolStk
+
+            if isMmgPoolStk(cd):
+                return True, "MMG01_POOL"
+        except Exception:
+            pass
+
     openAlgs = _openAlgCdsForStk(cd)
     others = [a for a in openAlgs if a != myAlg]
     if others:
@@ -131,6 +140,8 @@ def skipReasonLabel(reason):
         return f"다른전략보유({r.split(':', 1)[1]})"
     if r == "ACNT_HOLD":
         return "계좌보유"
+    if r == "MMG01_POOL":
+        return "MMG01관리종목"
     if r == "MTS01_LIVE":
         return "이평터치보유/주문중"
     return r or "중복보유"

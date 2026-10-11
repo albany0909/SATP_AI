@@ -88,6 +88,12 @@ def placeBuyOrd(
     실패: ok=False, errMsg=사유
     """
     try:
+        from utils.botOrdRegistry import noteInflight
+
+        noteInflight(stkCd, "BUY")
+    except Exception:
+        pass
+    try:
         res = buyStk(
             hostUrl,
             token,
@@ -134,6 +140,12 @@ def placeBuyOrd(
             "body": body,
         }
 
+    try:
+        from utils.botOrdRegistry import noteOrdNo
+
+        noteOrdNo(ordNo, stkCd, "BUY")
+    except Exception:
+        pass
     return {
         "ok": True,
         "body": body,

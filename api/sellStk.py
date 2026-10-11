@@ -88,6 +88,12 @@ def placeSellOrd(
     실패: ok=False, errMsg=사유
     """
     try:
+        from utils.botOrdRegistry import noteInflight
+
+        noteInflight(stkCd, "SELL")
+    except Exception:
+        pass
+    try:
         res = sellStk(
             hostUrl,
             token,
@@ -134,6 +140,12 @@ def placeSellOrd(
             "body": body,
         }
 
+    try:
+        from utils.botOrdRegistry import noteOrdNo
+
+        noteOrdNo(ordNo, stkCd, "SELL")
+    except Exception:
+        pass
     return {
         "ok": True,
         "body": body,
