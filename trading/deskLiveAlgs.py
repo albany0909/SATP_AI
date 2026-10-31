@@ -9,13 +9,17 @@ _DEFAULT_ALG_TABS = ("MTS01", "MSE01")
 _ALG_BG = {
     "MTS01": "#90CAF9",  # 이평터치 — 파랑
     "MSE01": "#A5D6A7",  # 이평지지 — 초록
-    "MMG01": "#FFCC80",  # 수동정찰 피라미딩 — 주황
+    "MMG01": "#FFCC80",
+    "LDR01": "#FFAB91",  # 수동정찰 피라미딩 — 주황
+    "RAM01": "#CE93D8",  # 실계좌관리 — 보라
 }
 # 거래로그 글자색 — 탭 파스텔과 같은 계열, 흰 배경에서 읽히게 진하게
 _ALG_FG = {
     "MTS01": "#1565C0",
     "MSE01": "#2E7D32",
     "MMG01": "#E65100",
+    "LDR01": "#BF360C",
+    "RAM01": "#6A1B9A",
 }
 _ALG_BG_FALLBACK = ("#FFCC80", "#CE93D8", "#80DEEA", "#EF9A9A", "#B0BEC5")
 _UNK_BG = "#E0E0E0"
@@ -37,24 +41,23 @@ def getDeskAlgTabs():
     try:
         from config.settingsStore import loadSettings
 
-        raw = (loadSettings() or {}).get("deskAlgTabs")
-        if isinstance(raw, list) and raw:
+        settings = loadSettings() or {}
+        if "deskAlgTabs" in settings and isinstance(settings.get("deskAlgTabs"), list):
             out = []
             seen = set()
-            for item in raw:
+            for item in settings.get("deskAlgTabs") or []:
                 alg = normAlgCd(item)
                 if alg and alg not in seen:
                     seen.add(alg)
                     out.append(alg)
-            if out:
-                return out
+            return out
     except Exception:
         pass
     return list(_DEFAULT_ALG_TABS)
 
 
 def setDeskAlgTabs(algCds):
-    """탭 순서 저장. 최소 1개 유지."""
+    """탭 순서 저장. 빈 목록이면 매매창에 전략 탭을 두지 않는다."""
     from config.settingsStore import loadSettings, saveSettings
 
     out = []
@@ -64,8 +67,6 @@ def setDeskAlgTabs(algCds):
         if alg and alg not in seen:
             seen.add(alg)
             out.append(alg)
-    if not out:
-        out = list(_DEFAULT_ALG_TABS)
     settings = loadSettings() or {}
     settings["deskAlgTabs"] = out
     saveSettings(settings)

@@ -1,0 +1,72 @@
+{
+  "stratId": "leaderScale_v1",
+  "algCd": "LDR01",
+  "name": "주도주 피라미딩",
+  "status": "paper",
+  "version": 2,
+  "enabled": true,
+  "timeframe": "D",
+  "docPath": "strategies/docs/leaderScale_v1.md",
+  "universe": {
+    "type": "leaderEvent",
+    "markets": [
+      "KOSPI",
+      "KOSDAQ"
+    ],
+    "minFluRt": 7,
+    "volVsPrev": true,
+    "volMult": 1.5,
+    "eventWindowDays": 3,
+    "themeMinUpCnt": 3,
+    "themeMinUpFlu": 2,
+    "themeUpRatio": 0.3,
+    "rsVsIndex": true,
+    "rsLookbackD": 20
+  },
+  "params": {
+    "scoutQty": 1,
+    "addQtys": [
+      2,
+      3,
+      4
+    ],
+    "maxAdds": 3,
+    "setupValidDays": 15,
+    "gapSkipPct": 5.0,
+    "setupMinFluPct": 7.0,
+    "pullbackLow": 0.38,
+    "pullbackHigh": 0.62,
+    "smaFast": 5,
+    "smaMid": 10,
+    "smaSlow": 20,
+    "softStopMa": 10,
+    "hardStopMa": 20,
+    "hardStopPct": 8.0,
+    "partialTpPct": 15.0,
+    "partialTpRatio": 0.25,
+    "trailFromPeakPct": 12.0,
+    "riskPerTradePct": 1.0,
+    "maxRiskPerStkPct": 2.0,
+    "maxNewScoutPerDay": 2,
+    "maxTradePositions": 6,
+    "indexFilterSma": 20,
+    "indexBlockDownPct": 2.0,
+    "buyStartTm": "091000",
+    "buyEndTm": "143000",
+    "eodDecideTm": "151500",
+    "paperOnly": true
+  },
+  "rules": {
+    "watch": "theme breadth + flu/vol spike + RS>index; WATCH only until TRADE unlock",
+    "scout": "1 share on breakout/setup while close>SMA20 and gap<=5%; hard stop -8% or setup low / SMA20 2d",
+    "add": "only when pnl>0 and uptrend SMA5>10>20; pullback 38-62% or SMA10 touch; qty 2 then 3 then 4; max 3 adds; no averaging down",
+    "trim": "close<SMA10 sells adds; close<SMA20 or setup low or trail -12% from peak flattens; optional +15% sell 25%"
+  },
+  "fill": {
+    "entryPrice": "close",
+    "exitPrice": "close",
+    "feeRate": 0.0015,
+    "btNote": "v2 LDR-PYR: ONeil/Minervini/Livermore style leader scout+pullback pyramid+MA exit; paperOnly"
+  },
+  "notes": "v2. 모의 전용(paperOnly). 실주문 엔진은 당분간 MMG01(manualMgrLive) 모의 기동으로 피라미딩 실행. LDR01은 스펙·탭·복기 기준."
+}
