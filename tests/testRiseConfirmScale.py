@@ -165,6 +165,7 @@ class OctoberParityTests(unittest.TestCase):
         hist = parseDocVerHist((ROOT / "strategies" / "docs" / "riseConfirmScale_v1.md").read_text(encoding="utf-8"))
         self.assertEqual(hist[-1]["ver"], 2)
         self.assertIn("100000", hist[-1]["note"])
+        self.assertEqual(gitHashFromVerNote(hist[-1]["note"]), "059d13f01e69ba19")
         self.assertEqual(hist[0]["ver"], 1)
 
     def test_desk_text_uses_spec_loss_and_not_a_hard_cap(self):
