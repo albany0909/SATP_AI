@@ -12,13 +12,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from strategies.impl.riseConfirmScale import DataError, RiseConfirmBook
+from strategies.impl.riseConfirmScale import LOSS_BUDGET, DataError, RiseConfirmBook
 
 SCHEMA = "rcs01.research-parity.v1"
 SCHEMA_LOSS_100K = "rcs01.research-parity.loss100k.v1"
 OCT_START = "20261001"
 OCT_END = "20261106"
-DEFAULT_LOSS_KRW = 300_000
+# 스펙 기본값. rcs01.research-parity.v1 픽스처의 loss=300000 은 과거 명시 파라미터다.
+DEFAULT_LOSS_KRW = LOSS_BUDGET
 
 
 def load_parity_fixture(path):
@@ -47,7 +48,7 @@ def load_parity_fixture(path):
 
 
 def load_loss100k_fixture(path):
-    """손실예산 10만원 실험 픽스처. 기본 30만원을 바꾸지 않는다."""
+    """기본 손절예산 10만원과 같은 10월 A 픽스처. 스펙 파일은 수정하지 않는다."""
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise DataError("픽스처가 객체가 아니다")
@@ -358,7 +359,7 @@ def causality_issues(actual, track, calendar, start=OCT_START):
 
 
 def replay_official_fixture(path):
-    """스키마로 30만원 기본 창과 10만원 파라미터 창을 가른다."""
+    """스키마로 기본 10만원 창과 과거 30만원 명시 파라미터 창을 가른다."""
     blob = json.loads(Path(path).read_text(encoding="utf-8"))
     if blob.get("schema_version") == SCHEMA_LOSS_100K:
         return run_october_loss100k(path)
@@ -425,7 +426,7 @@ def run_october_parity(path):
 
 
 def run_october_loss100k(path):
-    """같은 10월 창, 손실예산만 10만원. 기본 30만원 스펙은 읽기만 하고 쓰지 않는다."""
+    """기본 손절예산 10만원으로 10월 A를 재생한다. 스펙·설정 파일은 쓰지 않는다."""
     fixture = load_loss100k_fixture(path)
     report = {
         "status": "FAIL",

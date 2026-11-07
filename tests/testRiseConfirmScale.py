@@ -30,15 +30,21 @@ REF_ENGINE_SHA = "0ad3e36bcf3f9361891c2f9d2fcd65fe20925b268453ba5b41cc5f6cad4db9
 
 
 class OctoberParityTests(unittest.TestCase):
-    def test_default_loss_stays_300k(self):
+    def test_default_loss_is_100k(self):
         spec = json.loads((ROOT / "strategies" / "specs" / "riseConfirmScale_v1.json").read_text(encoding="utf-8"))
-        self.assertEqual(spec["params"]["lossKrw"], 300000)
+        self.assertEqual(spec["version"], 2)
+        self.assertEqual(spec["nameEn"], "Rise Confirmation Scale Trading")
+        self.assertEqual(spec["stratId"], "riseConfirmScale_v1")
+        self.assertEqual(spec["params"]["lossKrw"], 100000)
         self.assertFalse(spec["enabled"])
         self.assertEqual(spec["algCd"], "RCS01")
-        self.assertEqual(LOSS_BUDGET, 300_000)
-        self.assertEqual(DEFAULT_LOSS_KRW, 300_000)
+        self.assertEqual(LOSS_BUDGET, 100_000)
+        self.assertEqual(DEFAULT_LOSS_KRW, 100_000)
 
     def test_300k_fixture_matches_app_path(self):
+        historical = load_parity_fixture(FIX_300)
+        self.assertEqual(historical["config"]["loss"], 300000)
+        self.assertNotEqual(historical["config"]["loss"], LOSS_BUDGET)
         report = run_october_parity(FIX_300)
         self.assertEqual(report["status"], "PASS", report["diffs"][:12])
         self.assertTrue(report["passed"])
@@ -57,12 +63,12 @@ class OctoberParityTests(unittest.TestCase):
             self.assertEqual(row["qualified"], exp["qualified"], exp["day"])
             self.assertEqual([item[2] for item in row["top3"]], [item[2] for item in exp["top3"]], exp["day"])
 
-    def test_100k_is_parameter_replay_not_default(self):
+    def test_default_spec_october_100k_parity(self):
         report = run_october_loss100k(FIX_100)
         self.assertEqual(report["status"], "PASS", report["diffs"][:12])
         self.assertTrue(report["passed"])
         self.assertEqual(report["loss_krw"], 100_000)
-        self.assertEqual(report["default_loss_krw"], 300_000)
+        self.assertEqual(report["default_loss_krw"], 100_000)
         self.assertFalse(report["default_changed"])
         self.assertEqual(report["final_equity"], 9_846_798)
         self.assertAlmostEqual(report["return_percent"], -1.53202, places=5)
@@ -71,13 +77,38 @@ class OctoberParityTests(unittest.TestCase):
         self.assertEqual(report["pending"]["code"], "033780")
         self.assertTrue(all(value > 0 for value in report["overshoots"]))
         spec = json.loads((ROOT / "strategies" / "specs" / "riseConfirmScale_v1.json").read_text(encoding="utf-8"))
-        self.assertEqual(spec["params"]["lossKrw"], 300000)
+        self.assertEqual(spec["params"]["lossKrw"], 100000)
+        fixture = load_loss100k_fixture(FIX_100)
+        cfg = dict(fixture["config"])
+        cfg["loss"] = spec["params"]["lossKrw"]
+        book = RiseConfirmBook(fixture, cfg, fixture["initial_states"]["A"], research_auto_exit=True)
+        book.run()
+        self.assertEqual(book.loss, 100_000)
+        self.assertIsNotNone(book.pending)
+        self.assertEqual(book.pending["reason"], "profit_ma20")
+        self.assertEqual(book.pending["signal_date"], "20261106")
+        self.assertFalse(any(row["kind"] == "sell" and row["date"] == "20261106" for row in book.ledger))
 
     def test_schemas_are_not_interchangeable(self):
         with self.assertRaises(DataError):
             load_parity_fixture(FIX_100)
         with self.assertRaises(DataError):
             load_loss100k_fixture(FIX_300)
+
+    def test_live_loss_confirmation_under_100k(self):
+        fixture = load_loss100k_fixture(FIX_100)
+        book = RiseConfirmBook(
+            fixture,
+            fixture["config"],
+            fixture["initial_states"]["A"],
+            research_auto_exit=False,
+        )
+        self.assertEqual(book.loss, 100_000)
+        book.run()
+        self.assertFalse(any(row["kind"] == "sell" for row in book.ledger))
+        self.assertTrue(book.confirms)
+        self.assertGreater(book.confirms[0]["expected_loss"], 100_000)
+        self.assertFalse(book.confirms[0]["confirmed"])
 
     def test_live_loss_is_not_the_research_fill(self):
         fixture = load_parity_fixture(FIX_300)
@@ -127,8 +158,22 @@ class OctoberParityTests(unittest.TestCase):
         self.assertIsNone(got["summary"])
 
     def test_version_note_keeps_git_hash_without_db(self):
+        from utils.stratVerHist import parseDocVerHist
+
         self.assertEqual(gitHashFromVerNote("v1 git abcdef1234567890abcd"), "abcdef1234567890")
         self.assertEqual(gitHashFromVerNote("해시 없음"), "")
+        hist = parseDocVerHist((ROOT / "strategies" / "docs" / "riseConfirmScale_v1.md").read_text(encoding="utf-8"))
+        self.assertEqual(hist[-1]["ver"], 2)
+        self.assertIn("100000", hist[-1]["note"])
+        self.assertEqual(hist[0]["ver"], 1)
+
+    def test_desk_text_uses_spec_loss_and_not_a_hard_cap(self):
+        from utils.stratDeskSummary import buildRiseConfirmDeskText
+
+        text = buildRiseConfirmDeskText("RCS01", "riseConfirmScale_v1")
+        self.assertIn("100,000원", text)
+        self.assertIn("보장 상한 아님", text)
+        self.assertIn("v2", text)
 
 
 if __name__ == "__main__":

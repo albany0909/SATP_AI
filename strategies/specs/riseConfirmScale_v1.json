@@ -2,8 +2,9 @@
   "stratId": "riseConfirmScale_v1",
   "algCd": "RCS01",
   "name": "상승확인분할매매",
+  "nameEn": "Rise Confirmation Scale Trading",
   "status": "test",
-  "version": 1,
+  "version": 2,
   "enabled": false,
   "timeframe": "D",
   "docPath": "strategies/docs/riseConfirmScale_v1.md",
@@ -17,7 +18,7 @@
   },
   "params": {
     "allocations": [4000000, 3000000, 2000000, 1000000],
-    "lossKrw": 300000,
+    "lossKrw": 100000,
     "buyFee": 0.00015,
     "sellFee": 0.00015,
     "sellTax": 0.002,
@@ -34,7 +35,7 @@
   "rules": {
     "entry": "종가 신호 다음 세션 시가. 종가>MA60, MA60>20세션 전 MA60, 60일수익>지수60일, 종가>직전20일 고가(당일 제외). 20일 정규 거래대금 평균(신호일 포함)>=100억. 순위는 60일수익, 거래대금, 코드. 초기 진입은 +3% 갭으로 취소하지 않고 상태·편입·현금·매매가능만 본다.",
     "add": "종가/원시매수평균>=1.05 이고 종가>=직전체결*1.05. 다음 시가에 같은 조건과 +3% 갭을 모형체결가로 재확인. 추가만 취소. 하루 한 번. 4백/3백/2백/1백만원, 수수료 포함 정수 주, 캠페인 1천만원.",
-    "stop": "캠페인 30만원 손실 예산. 추가 후 손절가를 내리지 않는다. 시가가 손절 이하면 시가, 아니면 저가 터치 근사. 장중 손절은 추가 체결 이후에도 본다. 미래 저가로 시가 추가를 취소하지 않는다.",
+    "stop": "캠페인 10만원 손실 예산. 보장 상한이 아니다. 추가 후 손절가를 내리지 않는다. 시가가 손절 이하면 시가, 아니면 저가 터치 근사. 장중 손절은 추가 체결 이후에도 본다. 미래 저가로 시가 추가를 취소하지 않는다.",
     "exit": "연구 리플레이는 순청산이익>0, 음봉, 전일종가>=전일 MA20, 종가<MA20 이면 다음 시가에 자동 청산(갭 손실 포함). 라이브의 모든 손실 매도는 예상손실·사유 확인 전 자동체결하지 않는다."
   },
   "fill": {
@@ -47,8 +48,11 @@
     "window": {"start": "20261001", "end": "20261106"},
     "freshCapitalKrw": 10000000,
     "warmup": "pre_oct_bars_retained_no_sep30_signal",
-    "fixtureSchema": "rcs01.research-parity.v1",
+    "defaultLossKrw": 100000,
+    "fixtureSchema": "rcs01.research-parity.loss100k.v1",
+    "historicalLossKrw": 300000,
+    "historicalFixtureSchema": "rcs01.research-parity.v1",
     "parity": "isolated_replay_vs_fixture_golden"
   },
-  "notes": "v1 기본 꺼짐. 손절예산 기본값 300000. 100000 은 같은 10월 창의 격리 파라미터 실험일 뿐이며 기본 스펙·실전 설정을 바꾸지 않는다. 주문·알림·배포를 하지 않는다."
+  "notes": "v2 기본 꺼짐. 손절예산 기본값 100000. 300000 픽스처는 과거 명시 파라미터이며 기본값이 아니다. 10만원은 보장 상한이 아니다. 주문·알림·배포를 하지 않는다."
 }

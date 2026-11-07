@@ -18,9 +18,11 @@ from decimal import Decimal, ROUND_FLOOR
 
 ALG_CD = "RCS01"
 STRAT_ID = "riseConfirmScale_v1"
+NAME_EN = "Rise Confirmation Scale Trading"
 
 ALLOCATIONS = (4_000_000, 3_000_000, 2_000_000, 1_000_000)
-LOSS_BUDGET = 300_000
+# 캠페인 손실 예산 기본값. 보장 상한이 아니다. 과거 30만원 픽스처는 명시 파라미터다.
+LOSS_BUDGET = 100_000
 BUY_FEE = 0.00015
 SELL_FEE = 0.00015
 SELL_TAX = 0.002
@@ -77,7 +79,7 @@ class RiseConfirmBook:
         self.start = str(config["start"])
         self.end = str(config["end"])
         self.allocations = tuple(whole_money(x) for x in config["allocations"])
-        self.loss = whole_money(config["loss"])
+        self.loss = whole_money(config.get("loss", LOSS_BUDGET))
         self.buy_fee = float(config["buy_fee"])
         self.sell_fee = float(config["sell_fee"])
         self.sell_tax = float(config["sell_tax"])

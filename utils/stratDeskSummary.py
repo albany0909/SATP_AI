@@ -613,10 +613,10 @@ def buildStratRunnerNote(algCd, stratId):
 
 
 def buildRiseConfirmDeskText(algCd, stratId):
-    """RCS01 탭. 기본 손절 30만원. 10만원 실험 수치는 여기 적지 않는다."""
+    """RCS01 탭. 기본 손절 10만원. 30만원 픽스처는 과거 명시 파라미터다."""
     spec = loadStratSpec(stratId) or {}
     p = dict(spec.get("params") or {})
-    loss = int(p.get("lossKrw") or 300000)
+    loss = int(p.get("lossKrw") or 100000)
     return "\n".join(
         [
             stratTitle(spec, "상승확인분할매매"),
@@ -627,7 +627,7 @@ def buildRiseConfirmDeskText(algCd, stratId):
             "[연구 리플레이]",
             "  종가 신호 → 다음 세션 시가. 초기 진입은 +3% 갭으로 취소하지 않음",
             "  추가는 평균·직전매수 +5%, 모형체결 +3% 갭이면 취소",
-            f"  손절 예산 {loss:,}원 (추가 후 올리지 않음, 보장 상한 아님)",
+            f"  손절 예산 {loss:,}원 (추가 후 올리지 않음, 10만원도 보장 상한 아님)",
             "  이익 청산 신호도 연구 경로에서는 다음 시가에 자동 체결될 수 있음",
             "",
             "[라이브]",
@@ -636,7 +636,7 @@ def buildRiseConfirmDeskText(algCd, stratId):
             "",
             "[10월 검증]",
             "  20261001~20261106, 새 현금 1천만원, 9/30 신호 없음",
-            "  30만원 기본 픽스처와 10만원 파라미터 픽스처는 테스트가 따로 비교",
+            "  기본 검증은 손절 10만원. 30만원 픽스처는 과거 명시 파라미터",
             "  맞지 않으면 통과로 적지 않음. 수익률 보장 없음",
         ]
     )
