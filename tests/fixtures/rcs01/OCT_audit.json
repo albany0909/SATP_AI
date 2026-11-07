@@ -1,0 +1,396 @@
+{
+  "status": "PASS research engine ONLY; app implementation parity NOT VERIFIED",
+  "days": [
+    "20261001",
+    "20261002",
+    "20261006",
+    "20261007",
+    "20261008",
+    "20261012",
+    "20261013",
+    "20261014",
+    "20261015",
+    "20261016",
+    "20261019",
+    "20261020",
+    "20261021",
+    "20261022",
+    "20261023",
+    "20261026",
+    "20261027",
+    "20261028",
+    "20261029",
+    "20261030",
+    "20261102",
+    "20261103",
+    "20261104",
+    "20261105",
+    "20261106"
+  ],
+  "previous_session": "20260930",
+  "sources_verified": 507,
+  "original_manifest_unchanged": true,
+  "independent_full_daily_simulation": true,
+  "all_fills_and_cancel_match": true,
+  "all_equity_cash_quantity_match": true,
+  "all_daily_rankings": [
+    {
+      "day": "20261001",
+      "qualified": 1,
+      "top3": [
+        [
+          0.2969121140142519,
+          17088051790.0,
+          "112610"
+        ]
+      ]
+    },
+    {
+      "day": "20261002",
+      "qualified": 1,
+      "top3": [
+        [
+          0.33978234582829514,
+          17689630752.5,
+          "112610"
+        ]
+      ]
+    },
+    {
+      "day": "20261006",
+      "qualified": 4,
+      "top3": [
+        [
+          0.6284153005464481,
+          27731619537.5,
+          "192820"
+        ],
+        [
+          0.4007308160779537,
+          18882232448.75,
+          "112610"
+        ],
+        [
+          0.29266750948166886,
+          53353045770.0,
+          "003670"
+        ]
+      ]
+    },
+    {
+      "day": "20261007",
+      "qualified": 1,
+      "top3": [
+        [
+          0.7177060133630289,
+          29079400712.5,
+          "192820"
+        ]
+      ]
+    },
+    {
+      "day": "20261008",
+      "qualified": 0,
+      "top3": []
+    },
+    {
+      "day": "20261012",
+      "qualified": 1,
+      "top3": [
+        [
+          0.22857142857142865,
+          18082046382.25,
+          "028670"
+        ]
+      ]
+    },
+    {
+      "day": "20261013",
+      "qualified": 0,
+      "top3": []
+    },
+    {
+      "day": "20261014",
+      "qualified": 4,
+      "top3": [
+        [
+          0.5527210884353742,
+          22486209640.0,
+          "457190"
+        ],
+        [
+          0.4168297455968688,
+          24690588739.75,
+          "028670"
+        ],
+        [
+          0.18168016194331993,
+          25571614723.85,
+          "011200"
+        ]
+      ]
+    },
+    {
+      "day": "20261015",
+      "qualified": 2,
+      "top3": [
+        [
+          0.09565217391304337,
+          41356839248.3,
+          "033780"
+        ],
+        [
+          0.061267605633802846,
+          12522213734.6,
+          "032640"
+        ]
+      ]
+    },
+    {
+      "day": "20261016",
+      "qualified": 2,
+      "top3": [
+        [
+          0.10352673492605224,
+          75020889103.25,
+          "068270"
+        ],
+        [
+          0.060875512995896,
+          13183111476.35,
+          "032640"
+        ]
+      ]
+    },
+    {
+      "day": "20261019",
+      "qualified": 3,
+      "top3": [
+        [
+          0.3606299212598425,
+          150971899350.0,
+          "373220"
+        ],
+        [
+          0.26300578034682087,
+          19593014955.0,
+          "000100"
+        ],
+        [
+          0.1483198146002318,
+          79872853325.45,
+          "068270"
+        ]
+      ]
+    },
+    {
+      "day": "20261020",
+      "qualified": 0,
+      "top3": []
+    },
+    {
+      "day": "20261021",
+      "qualified": 0,
+      "top3": []
+    },
+    {
+      "day": "20261022",
+      "qualified": 1,
+      "top3": [
+        [
+          0.187566988210075,
+          96758847655.55,
+          "028050"
+        ]
+      ]
+    },
+    {
+      "day": "20261023",
+      "qualified": 1,
+      "top3": [
+        [
+          0.25630252100840334,
+          130582584693.05,
+          "028050"
+        ]
+      ]
+    },
+    {
+      "day": "20261026",
+      "qualified": 0,
+      "top3": []
+    },
+    {
+      "day": "20261027",
+      "qualified": 2,
+      "top3": [
+        [
+          0.4088335220838053,
+          151862580731.8,
+          "028050"
+        ],
+        [
+          0.21521035598705507,
+          42106327138.2,
+          "064400"
+        ]
+      ]
+    },
+    {
+      "day": "20261028",
+      "qualified": 2,
+      "top3": [
+        [
+          0.6150943396226416,
+          160814140805.55,
+          "028050"
+        ],
+        [
+          0.3322091062394603,
+          45221080398.2,
+          "064400"
+        ]
+      ]
+    },
+    {
+      "day": "20261029",
+      "qualified": 0,
+      "top3": []
+    },
+    {
+      "day": "20261030",
+      "qualified": 0,
+      "top3": []
+    },
+    {
+      "day": "20261102",
+      "qualified": 0,
+      "top3": []
+    },
+    {
+      "day": "20261103",
+      "qualified": 1,
+      "top3": [
+        [
+          0.45514950166112955,
+          17422876749.0,
+          "180640"
+        ]
+      ]
+    },
+    {
+      "day": "20261104",
+      "qualified": 1,
+      "top3": [
+        [
+          0.5044897959183674,
+          35036059317.5,
+          "180640"
+        ]
+      ]
+    },
+    {
+      "day": "20261105",
+      "qualified": 1,
+      "top3": [
+        [
+          0.10256410256410264,
+          119801093717.2,
+          "068270"
+        ]
+      ]
+    },
+    {
+      "day": "20261106",
+      "qualified": 1,
+      "top3": [
+        [
+          0.1203208556149733,
+          17142047323.25,
+          "032640"
+        ]
+      ]
+    }
+  ],
+  "A_mdd": {
+    "fraction": -0.07957680967472369,
+    "peak_date": "20261006",
+    "peak_equity": 10211103.0,
+    "trough_date": "20261022",
+    "trough_equity": 9398536.0
+  },
+  "A_costs": {
+    "buys": 5,
+    "sells": 2,
+    "cancelled": 1,
+    "buy_cost": 16842123.0,
+    "sell_net": 7323023,
+    "buy_fee": 2523,
+    "sell_fee": 1100,
+    "sell_tax": 14677
+  },
+  "A_terminal_with_adverse_tick": 9581692.0,
+  "A_terminal_with_adverse_tick_return_percent": -4.183079999999995,
+  "A_stop_overruns": [
+    538.0,
+    926.0
+  ],
+  "A_cash": 480900.0,
+  "A_largest_positive_closed_campaign": null,
+  "A_positive_mark_contribution": {
+    "code": "028050",
+    "gross_unrealized": 217864,
+    "note": "No positive closed campaigns; losses offset only by one open holding, contribution percentage of negative net profit would be misleading"
+  },
+  "A_rights_blocker": null,
+  "A_repeat_byte_identical": true,
+  "B_summary": {
+    "label": "Jan-start unchanged path marked from Sep30 close, including all Oct1 P/L; NOT fresh10m",
+    "boundary": {
+      "date": "20260930",
+      "cash": 16710413.0,
+      "market_value": 3868400.0,
+      "equity": 20578813.0,
+      "liquidation_equity": 20570497.0,
+      "cost_exposure": 3975396.0,
+      "stop_price": 48500,
+      "quantity": 76
+    },
+    "return_percent": -1.3500146971547873,
+    "pnl": -277817.0,
+    "final_equity": 20300996.0,
+    "realized_closed_campaign_profit": -602677.0,
+    "initial_gross_unrealized": -106996.0,
+    "final_gross_unrealized": 217864.0,
+    "unrealized_change": 324860.0,
+    "mdd_percent": -5.086781955009457,
+    "mdd_dates": {
+      "fraction": -0.05086781955009456,
+      "peak_date": "20261006",
+      "peak_equity": 21159468.0,
+      "trough_date": "20261022",
+      "trough_equity": 20083132.0
+    },
+    "index_return_percent": -27.600709914773248,
+    "costs": {
+      "buys": 5,
+      "sells": 2,
+      "cancelled": 0,
+      "buy_cost": 15824171.0,
+      "sell_net": 10279254,
+      "buy_fee": 2371,
+      "sell_fee": 1544,
+      "sell_tax": 20602
+    },
+    "pending": null,
+    "terminal_fee_tax_only": 20281355.0,
+    "terminal_with_adverse_tick": 20266288.0
+  },
+  "hashes": {
+    "engine.py": "0ad3e36bcf3f9361891c2f9d2fcd65fe20925b268453ba5b41cc5f6cad4db916",
+    "LOCKED_SPEC.md": "6827455436ce1e659b5ed7d8e75b4373d0870c4a70a93a626c38ba53fb4d17ce",
+    "verified_input_20261106.json": "8ea3cb7b9137e2bca4032e4e4d404ed32304433fd7712d66cb9dedcdbdf65a71",
+    "OCT_A_result.json": "ed07632651e4abae5f3de6c0844d7ed5e9a72c23fdb0c7036a6b13b789308064",
+    "VERIFIED_result_20260102_20261106.json": "62b6caec24752d65132cbfa1dd954db7289f0cb10f2139cd94e7d5a986a025fc"
+  }
+}

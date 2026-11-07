@@ -27,6 +27,7 @@ _IMPL_BY_PREFIX = {
     "bullBodyMa2050": "bullBodyMa2050.py",
     "maTouchScale": "maTouchScale.py",
     "maSupportEod": "maSupportEod.py",
+    "riseConfirmScale": "riseConfirmScale.py",
 }
 
 

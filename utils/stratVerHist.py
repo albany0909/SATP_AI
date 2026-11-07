@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 _VER_RE = re.compile(r"(?:\*\*)?v(\d+)(?:\*\*)?", re.I)
+_GIT_RE = re.compile(r"\bgit[:\s]+([0-9a-fA-F]{7,40})\b")
 _SEP_RE = re.compile(r"^\|\s*-+")
 _ROW_RE = re.compile(r"^\|\s*([^|]+)\s*\|\s*(.+?)\s*\|?\s*$")
 _ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +34,14 @@ def _plainNote(raw):
     text = text.replace("**", "")
     text = re.sub(r"`([^`]+)`", r"\1", text)
     return " ".join(text.split())
+
+
+def gitHashFromVerNote(note):
+    """변경 이력 문장의 git 해시. DB 컬럼 길이에 맞춰 16자. DB에는 쓰지 않는다."""
+    matched = _GIT_RE.search(str(note or ""))
+    if not matched:
+        return ""
+    return matched.group(1).lower()[:16]
 
 
 def parseDocVerHist(mdText):
@@ -163,7 +172,7 @@ def listAlgVerHist(algCd=None, preferDb=True):
                         "ymd": row.get("ymd") or "",
                         "ver": ver,
                         "note": row.get("note") or "",
-                        "gitHash": "",
+                        "gitHash": gitHashFromVerNote(row.get("note")),
                         "src": "doc",
                         "isCur": bool(curVer and ver == curVer),
                     }

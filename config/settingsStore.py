@@ -61,6 +61,15 @@ _FALLBACK = {
             "enabled": True,
             "buyAmtWon": 2000000,
         },
+        "RCS01": {
+            "enabled": False,
+            "paperOnly": True,
+        },
+    },
+    # 실계좌·주도주 탭. 기본 숨김. true 로 되돌릴 수 있다.
+    "deskFeatureFlags": {
+        "RAM01": False,
+        "LDR01": False,
     },
     "batchSched": {
         "usMorningLoad": True,
@@ -177,7 +186,7 @@ def loadSettings():
     merged = dict(defaults)
     merged.update(data)
     # 중첩 dict는 키 단위로 합침 (배치/푸시 on·off)
-    for nestKey in ("batchSched", "telegramPush", "maTouchLive"):
+    for nestKey in ("batchSched", "telegramPush", "maTouchLive", "deskFeatureFlags"):
         base = dict(defaults.get(nestKey) or {})
         extra = data.get(nestKey)
         if isinstance(extra, dict):
