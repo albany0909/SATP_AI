@@ -18,11 +18,30 @@ def _smaInt(raw):
         return None
 
 
-def loadPriorSmaMap(stkCds, periods=None, endDt=None):
+def loadPriorSmaMap(stkCds, periods=None, endDt=None, _forceLocal=False):
     """
     TRADE_DT < endDt 종가로 SMA.
     반환: {stkCd: {sma5, sma10, sma20, lastClose, fluRt, lastDt}}
+    client/서버모드: deskDataApi(STP SATPAIIQ040).
     """
+    if not _forceLocal:
+        try:
+            from config.settingsStore import getDeskDataViaServer, isDeskClient
+            from utils.dbConn import isLocalDbEnabled
+
+            if isDeskClient() or getDeskDataViaServer() or (not isLocalDbEnabled()):
+                from utils.deskDataApi import loadPriorSmaMap as _via
+
+                return _via(stkCds, periods=periods, endDt=endDt)
+        except Exception:
+            try:
+                from utils.dbConn import isLocalDbEnabled
+
+                if not isLocalDbEnabled():
+                    return {}
+            except Exception:
+                pass
+
     pers = tuple(int(p) for p in (periods or _DEFAULT_PERIODS) if p)
     need = max(pers) if pers else 20
     today = str(endDt or datetime.now().strftime("%Y%m%d"))[:8]
@@ -103,11 +122,30 @@ _RSI_LOOKBACK = 400
 _RSI_IN_CHUNK = 50
 
 
-def loadRsiCloseHist(stkCds, need=None, endDt=None):
+def loadRsiCloseHist(stkCds, need=None, endDt=None, _forceLocal=False):
     """
     일봉 종가 히스토리 (오래된→최신). 당일 봉이 있으면 포함.
     반환: {stkCd: {"closes": [float, ...], "lastDt": "YYYYMMDD"}}
+    client/서버모드: deskDataApi(STP SATPAIIQ041).
     """
+    if not _forceLocal:
+        try:
+            from config.settingsStore import getDeskDataViaServer, isDeskClient
+            from utils.dbConn import isLocalDbEnabled
+
+            if isDeskClient() or getDeskDataViaServer() or (not isLocalDbEnabled()):
+                from utils.deskDataApi import loadRsiCloseHist as _via
+
+                return _via(stkCds, need=need, endDt=endDt)
+        except Exception:
+            try:
+                from utils.dbConn import isLocalDbEnabled
+
+                if not isLocalDbEnabled():
+                    return {}
+            except Exception:
+                pass
+
     today = str(endDt or datetime.now().strftime("%Y%m%d"))[:8]
     lim = max(int(need or _RSI_LOOKBACK), 16)
     codes = []

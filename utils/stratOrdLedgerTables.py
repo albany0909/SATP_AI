@@ -108,6 +108,13 @@ def ensureStratOrdLedgerTable():
     if _ensured:
         return True
     try:
+        from utils.dbConn import isLocalDbEnabled
+
+        if not isLocalDbEnabled():
+            return False
+    except Exception:
+        pass
+    try:
         _runSqlFile(_SQL_DIR / "stratOrdLedger.sql")
         conn = openDbConn()
         try:
@@ -119,5 +126,12 @@ def ensureStratOrdLedgerTable():
         _ensured = True
         return True
     except Exception as err:
+        try:
+            from utils.dbConn import DbDisabledError, DbDownError
+
+            if isinstance(err, (DbDisabledError, DbDownError)):
+                return False
+        except Exception:
+            pass
         termLog(f"[stratOrdLedger] 테이블 생성/변경 실패: {err}")
         return False

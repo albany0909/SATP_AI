@@ -57,6 +57,15 @@ def listBatchSchedJobs():
             "weekday": "국내 거래일",
         },
         {
+            "id": "watchDayPrc",
+            "label": "관심·실계좌 일봉",
+            "sortHm": _closePlusMin(closeHm, 2),
+            "whenLabel": "장마감 후 (증분)",
+            "table": "AI_DAY_STK_PRC",
+            "desc": "실계좌·관심종목 일봉 — DB 마지막일 이후분만 적재 (차트용)",
+            "weekday": "국내 거래일",
+        },
+        {
             "id": "rankDayPrc",
             "label": "순위종목 일봉",
             "sortHm": _closePlusMin(closeHm, 1),

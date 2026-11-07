@@ -85,6 +85,16 @@ def handleSell(stkCd, ordQty, limitPrice=None):
         ordUv = ""
         ordTypeLabel = "시장가"
 
+    try:
+        from trading.realAcntMgr import acntOrderBlockReason
+
+        if acntOrderBlockReason(stkCdClean):
+            failMsg = f"실계좌 미등록 보유 — 매도 생략 {stkCdClean}"
+            termLog(failMsg)
+            return failMsg
+    except Exception:
+        pass
+
     result = placeSellOrd(
         hostUrl,
         token,

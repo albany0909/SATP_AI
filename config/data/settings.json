@@ -6,37 +6,64 @@
   "tprPct": 5,
   "slrPct": -10,
   "maTouchLive": {
-    "enabled": true,
-    "paperOnly": false,
+    "enabled": false,
+    "paperOnly": true,
     "buyAmt5": 1000000,
     "buyAmt10": 1000000,
-    "buyAmt15": 1000000
+    "buyAmt15": 1000000,
+    "halfTpPct": 2.3,
+    "halfTpFromStat": true,
+    "halfTpStatYmd": "20261014",
+    "halfTpStatFromYmd": "20260929",
+    "halfTpStatN": 5
   },
   "deskTradeExch": "KRX",
-  "deskTradeMode": "real",
+  "deskTradeMode": "paper",
+  "deskRole": "main",
+  "deskDataViaServer": false,
+  "stpServerUrl": "http://satp1.iptime.org:8080/STP/tran",
   "deskAlgTabs": [
-    "MTS01",
-    "MSE01"
+    "LDR01",
+    "MMG01",
+    "RAM01"
   ],
   "stratLive": {
     "MTS01": {
       "buyAmt5": 1000000,
       "buyAmt10": 1000000,
       "buyAmt15": 1000000,
-      "paperOnly": false
+      "enabled": false,
+      "paperOnly": true
     },
     "MSE01": {
       "enabled": false,
       "buyAmtWon": 2000000,
+      "paperOnly": true
+    },
+    "LDR01": {
+      "enabled": false,
+      "paperOnly": false
+    },
+    "MMG01": {
+      "enabled": false,
+      "paperOnly": false
+    },
+    "RAM01": {
+      "enabled": false,
       "paperOnly": false
     }
   },
   "batchSched": {
-    "usMorningLoad": true,
-    "watchNewsDisc": true,
-    "dayInqRank": true,
-    "ntlFirst": true,
-    "dayInvSr": true
+    "usMorningLoad": false,
+    "watchNewsDisc": false,
+    "dayInqRank": false,
+    "ntlFirst": false,
+    "dayInvSr": false,
+    "rankDayPrc": false,
+    "rankScore": false,
+    "maTouchUniv": false,
+    "algDayReview": false,
+    "prcRefix": false
   },
   "telegramPush": {
     "master": true,
@@ -51,5 +78,8 @@
     "tokenRenew": false,
     "btVal": false,
     "dayReview": false
+  },
+  "watchRt": {
+    "subscribeScope": "realAcnt"
   }
 }

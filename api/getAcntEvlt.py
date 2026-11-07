@@ -71,6 +71,9 @@ def fetchAcntEvlt(hostUrl, token, qryTp="1", dmstStexTp="KRX", tokenType="bearer
         # return_code 누락 시 예수금/평가액 필드로 판단
         codeOk = "entr" in body or "aset_evlt_amt" in body
 
+    # 보유종목이 없어 '조회 자료 없음'으로 와도 예수금 필드가 있으면 계좌정보는 출력
+    if not codeOk and isinstance(body, dict) and ("entr" in body or "d2_entra" in body):
+        codeOk = True
     if not codeOk:
         return {
             "ok": False,

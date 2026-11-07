@@ -147,6 +147,15 @@ def _trySellStk(stkCd, reason, plRt, curPrc):
     global _session
     if _session is None:
         return
+    try:
+        from trading.realAcntMgr import acntOrderBlockReason
+
+        # 매매 버튼 전 보유는 스탑로스도 타지 않는다
+        if acntOrderBlockReason(stkCd):
+            termLog(f"[STLS] 실계좌 미등록 — 매도 생략 {stkCd}")
+            return
+    except Exception:
+        pass
 
     if not isWithinMktHours():
         termLog(f"[STLS] 장시간 외 — 매도 보류 {stkCd} ({reason} {plRt:.2f}%)")

@@ -1562,6 +1562,14 @@ def _placeBuy(stkCd, qty, px, step, isAdd=False, isRemain=False, maPx=None):
     매수 주문. 신규 3분확인은 SMA20 인근 호가 지정가.
     isRemain 이면 예전 잔량 시장가 경로(v46은 타임아웃에서 쓰지 않음).
     """
+    try:
+        from trading.realAcntMgr import acntOrderBlockReason
+
+        if acntOrderBlockReason(stkCd):
+            _notify(f"[이평터치] 실계좌 미등록 — {stkCd} 매수 생략")
+            return False
+    except Exception:
+        pass
     if (not isAdd) and (not isRemain) and _isBuyBanned(stkCd):
         _notify(f"[이평터치] 당일재매수금지 — {stkCd} SMA{step} 매수 생략")
         _writeAlgEvt("BUY_SKIP", stkCd, reason="REBUY_BANNED", px=px, note=f"SMA{step}")
@@ -2270,6 +2278,14 @@ def _flatSellQty(memQty, acntQty):
 
 
 def _placeSell(stkCd, qty, px, reason, useLimit=False, limitWaitSec=None):
+    try:
+        from trading.realAcntMgr import acntOrderBlockReason
+
+        if acntOrderBlockReason(stkCd):
+            _notify(f"[이평터치] 실계좌 미등록 — {stkCd} 매도 생략")
+            return False
+    except Exception:
+        pass
     sess = _ordSession()
     if sess is None:
         _notify(f"[이평터치] {modeLabel()} 미로그인/불가 — {stkCd} 매도 생략")
@@ -4489,6 +4505,9 @@ def startMaTouchLive():
     global _params, _paramsAt, _workerStarted, _acntSyncStarted
     _params = _loadParams()
     _paramsAt = time.time()
+    if not _params.get("_enabled", True):
+        termLog("[maTouch] 비활성 — 기동 생략")
+        return
     # v41: 1차 +1.5%. MFE 통계로 tp1 을 덮지 않는다.
     if bool(_params.get("halfTpFromStat", False)):
         try:

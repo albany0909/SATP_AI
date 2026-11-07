@@ -45,6 +45,13 @@ def _onAboutToQuit():
     """quit() 이후 GUI 스레드에서 창을 닫아 좀비 윈도우를 남기지 않는다."""
     global _win
     try:
+        from utils.deskSessWatch import stopDeskSessWatch
+
+        # 매매창만 닫을 때는 서버 세션 유지(로그인 창이 보유). 감시만 중지.
+        stopDeskSessWatch()
+    except Exception:
+        pass
+    try:
         from utils.tradeLogHook import clearTradeLogHooks
         from ui.tradeLogBus import clearTradeLogBus
         from ui.deskErrBus import clearDeskErrBus
@@ -202,12 +209,26 @@ def createTradeUi():
         termLog(f"[UI] PySide6 import 실패: {err}")
         return None, None
 
+    # 작업표시줄 — python.exe 대신 번개 아이콘 (창 생성 전)
+    try:
+        from utils.appIcon import setAppUserModelId
+
+        setAppUserModelId("SATP_AI.TradeDesk")
+    except Exception:
+        pass
+
     try:
         from telegram.commands.offCommand import isShutdownRequested
         from ui.tradeDeskWin import TradeDeskWin
 
         _app = QApplication.instance() or QApplication(sys.argv)
-        _app.setApplicationName("SATP_AI")
+        _app.setApplicationName("천둥이")
+        try:
+            from utils.appIcon import applyAppIcon
+
+            applyAppIcon(_app, appId="SATP_AI.TradeDesk", kind="trade")
+        except Exception:
+            pass
         _app.setQuitOnLastWindowClosed(True)
         _installQtErrHandler()
         _app.aboutToQuit.connect(_onAboutToQuit)
@@ -232,6 +253,27 @@ def createTradeUi():
         topOff.setSingleShot(True)
         topOff.timeout.connect(lambda: _dropStayOnTop(_win))
         topOff.start(3000)
+
+        # 계정 중복 로그인 감시 (다른 PC 로그인 시 매매창 종료)
+        try:
+            from utils.deskSessWatch import startDeskSessWatch
+
+            def _kickTrade(msg):
+                try:
+                    from PySide6.QtWidgets import QMessageBox
+
+                    QMessageBox.warning(
+                        _win,
+                        "중복 로그인",
+                        str(msg or "다른 곳에서 로그인되어 매매창을 종료합니다."),
+                    )
+                except Exception:
+                    pass
+                closeTradeUi()
+
+            startDeskSessWatch(intervalMs=45000, onKick=_kickTrade)
+        except Exception as err:
+            termLog(f"[UI] 세션감시 실패: {err}")
 
         termLog("[UI] 매매 화면 표시")
         return _app, _win

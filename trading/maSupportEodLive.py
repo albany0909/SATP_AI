@@ -393,6 +393,14 @@ def _openLedgerRec(stkCd):
 
 def _placeBuy(stkCd, qty, px):
     try:
+        from trading.realAcntMgr import acntOrderBlockReason
+
+        if acntOrderBlockReason(stkCd):
+            termLog(f"[이평지지] 실계좌 미등록 — {stkCd} 매수 생략")
+            return False
+    except Exception:
+        pass
+    try:
         from trading.crossAlgBuyGuard import isNewBuyBlocked, logBuySkip, skipReasonLabel
 
         blocked, why = isNewBuyBlocked(_ALG_CD, stkCd)
@@ -535,6 +543,14 @@ def _writeSellEvt(stkCd, nm, px, qty, reason):
 
 
 def _placeSell(stkCd, qty, px, reason):
+    try:
+        from trading.realAcntMgr import acntOrderBlockReason
+
+        if acntOrderBlockReason(stkCd):
+            termLog(f"[이평지지] 실계좌 미등록 — {stkCd} 매도 생략")
+            return False
+    except Exception:
+        pass
     sess = _ordSession()
     if sess is None:
         termLog(f"[이평지지] {modeLabel()} 미로그인/불가 — {stkCd} 매도 생략")
@@ -979,6 +995,9 @@ def startMaSupportEodLive():
     _startMmg01()
     """프로세스 기동 시 상태 로드 + 스케줄 스레드."""
     global _workerStarted
+    if not _isEnabled():
+        termLog("[이평지지] 비활성 — 기동 생략")
+        return
     _loadParams()
     _loadState()
     if _workerStarted:

@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QPushButton,
     QMainWindow,
     QMessageBox,
     QSizePolicy,
@@ -889,6 +890,8 @@ class TradeDeskWin(QMainWindow):
     watchSnapOk = Signal()
     # 차트 일봉 백그라운드 조회 완료 (종목, 봉목록, 종목명)
     chartBarsOk = Signal(str, object, str)
+    # 차트 일봉 수동 최신화 완료 (종목, 결과dict)
+    chartRefreshDone = Signal(str, object)
 
     def __init__(self):
         super().__init__()
@@ -905,7 +908,7 @@ class TradeDeskWin(QMainWindow):
         self._stratAlgCd = "MTS01"
         self._stratAlgTabCds = []
         self._stratAlgTabsBusy = False
-        self._watchAlgCd = "MTS01"
+        self._watchAlgCd = "acnt"
         self._watchAlgTabCds = []
         self._watchAlgTabsBusy = False
         self._watchNetCache = {}
@@ -932,6 +935,7 @@ class TradeDeskWin(QMainWindow):
         self.watchNetOk.connect(self._onWatchNetOk)
         self.watchSnapOk.connect(self._onWatchSnapOk)
         self.chartBarsOk.connect(self._onChartBarsOk)
+        self.chartRefreshDone.connect(self._onChartRefreshDone)
         self._chartStkCd = ""
         self._chartStkNm = ""
         self._chartLoadTok = 0
@@ -954,6 +958,10 @@ class TradeDeskWin(QMainWindow):
         self._watchTimer = QTimer(self)
         self._watchTimer.timeout.connect(self.refreshTradeWatch)
         self._watchTimer.start(20000)
+        # 실계좌 탭 현재가/손익% 0B 캐시 반영 (2초 스로틀)
+        self._acntWatchPxTimer = QTimer(self)
+        self._acntWatchPxTimer.timeout.connect(self._tickRealAcntWatchPx)
+        self._acntWatchPxTimer.start(2000)
         # 거래일 08:00 에 전날 로그/거래를 비우고 당일 분으로 바꾼다.
         self._deskDayTimer = QTimer(self)
         self._deskDayTimer.timeout.connect(self._rollDeskIfNewDay)
@@ -966,6 +974,17 @@ class TradeDeskWin(QMainWindow):
         self._acntSoon.setSingleShot(True)
         self._acntSoon.timeout.connect(self.refreshAcnt)
         QTimer.singleShot(800, self.refreshAcnt)
+        try:
+            from utils.riseRankBoard import startRiseRankBoard
+
+            startRiseRankBoard()
+        except Exception as err:
+            try:
+                from utils.termLog import termLog
+
+                termLog(f"[매매창] 주도주 보드 시작 실패: {err}")
+            except Exception:
+                pass
         # 상단 지수 0J 캐시 — 1초마다 글자만 갱신
         self._indsTimer = QTimer(self)
         self._indsTimer.timeout.connect(self._paintIndsBar)
@@ -1032,7 +1051,7 @@ class TradeDeskWin(QMainWindow):
         self.holdSumLbl.setStyleSheet("color: #000; font-weight: 600;")
         holdHeadLay.addWidget(self.holdSumLbl, 1)
         holdLay.addWidget(holdHead)
-        self.holdTbl = QTableWidget(0, 10)
+        self.holdTbl = QTableWidget(0, 11)
         self.holdTbl.setHorizontalHeaderLabels(
             [
                 "종목명",
@@ -1041,6 +1060,7 @@ class TradeDeskWin(QMainWindow):
                 "평가수익률",
                 "수량",
                 "등락률",
+                "보유비중",
                 "매입금액",
                 "평가금액",
                 "현재가",
@@ -1075,6 +1095,32 @@ class TradeDeskWin(QMainWindow):
         self.watchAlgTabBar = AlgColorTabBar()
         self.watchAlgTabBar.currentChanged.connect(self._onWatchAlgTabChanged)
         watchLay.addWidget(self.watchAlgTabBar)
+        # 주도주 탭 전용: 최종 업데이트 일시 + 수동 갱신 (다른 탭에서는 숨김)
+        self._leaderRankTools = QWidget()
+        _lrLay = QHBoxLayout(self._leaderRankTools)
+        _lrLay.setContentsMargins(4, 0, 4, 2)
+        _lrLay.setSpacing(8)
+        self._leaderRankUpdatedLbl = QLabel("최종 업데이트: -")
+        self._leaderRankUpdatedLbl.setStyleSheet(
+            "font-size: 12px; color: #424242; padding: 2px 4px;"
+        )
+        self._leaderRankRefreshBtn = QPushButton("수동 업데이트")
+        self._leaderRankRefreshBtn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._leaderRankRefreshBtn.setStyleSheet(
+            "QPushButton { font-size: 12px; padding: 2px 10px; "
+            "background: #FFCC80; color: #3E2723; border: 1px solid #FFB74D; }"
+            "QPushButton:hover { background: #FFB74D; }"
+            "QPushButton:disabled { background: #EEEEEE; color: #9E9E9E; border: 1px solid #E0E0E0; }"
+        )
+        self._leaderRankRefreshBtn.clicked.connect(self._onLeaderRankRefresh)
+        _lrLay.addWidget(self._leaderRankUpdatedLbl)
+        _lrLay.addWidget(self._leaderRankRefreshBtn)
+        _lrLay.addStretch(1)
+        self._leaderRankTools.setVisible(False)
+        watchLay.addWidget(self._leaderRankTools)
+        self._leaderRankPoll = QTimer(self)
+        self._leaderRankPoll.setInterval(2000)
+        self._leaderRankPoll.timeout.connect(self._pollLeaderRankScan)
         # 종목·등락률·RSI·순매수·배열 틀고정 + 나머지 가로 스크롤
         # 선택 알고리즘은 이 프레임 테두리색으로 표시 (행번호 전체 칠하기 대신)
         watchSplit = QWidget()
@@ -1329,6 +1375,7 @@ class TradeDeskWin(QMainWindow):
 
         chartPane = DeskStkChartPane()
         self.deskChart = chartPane
+        self.deskChart.btnRefresh.clicked.connect(self._onChartRefreshClick)
         self.sideStack.addWidget(chartPane)
 
         # 설정 — 투자모드·매매방식 (상단바에서 이동)
@@ -1723,7 +1770,13 @@ class TradeDeskWin(QMainWindow):
             return "", ""
         cd = normStkCd(cds[row]) or ""
         nm = ""
-        cell = frz.item(row, 0)
+        _nc = 0
+        try:
+            if str(frz.horizontalHeaderItem(0).text()) == "변동":
+                _nc = 1
+        except Exception:
+            pass
+        cell = frz.item(row, _nc)
         if cell is not None:
             nm = str(cell.text() or "").strip()
         return cd, nm
@@ -1809,6 +1862,56 @@ class TradeDeskWin(QMainWindow):
             self.chartBarsOk.emit(cd, bars, nm)
 
         threading.Thread(target=_job, daemon=True).start()
+
+    def _onChartRefreshClick(self):
+        """차트 최신화: 선택 종목 일봉 증분+마지막날 재조회 → DB 적재 → 차트 다시 읽기."""
+        cd = str(getattr(self, "_chartStkCd", "") or "")
+        nm = str(getattr(self, "_chartStkNm", "") or "")
+        if not cd:
+            self.deskChart.headLbl.setText("관심종목에서 종목을 먼저 선택하세요")
+            return
+        btn = self.deskChart.btnRefresh
+        btn.setEnabled(False)
+        btn.setText("갱신 중…")
+        self.deskChart.headLbl.setText(f"{nm}({cd}) 일봉 최신화 중…")
+
+        def _job():
+            try:
+                from utils.rankDayPrcLoad import loadDayPrcForRankStks, DEFAULT_MONTHS
+
+                res = loadDayPrcForRankStks(
+                    [cd], months=DEFAULT_MONTHS, skipIfEnough=False, refetchLastDay=True
+                ) or {}
+            except Exception as e:
+                res = {"ok": False, "errMsg": str(e)}
+            self.chartRefreshDone.emit(cd, res)
+
+        threading.Thread(target=_job, daemon=True).start()
+
+    def _onChartRefreshDone(self, stkCd, res):
+        btn = self.deskChart.btnRefresh
+        btn.setEnabled(True)
+        btn.setText("차트 최신화")
+        res = res or {}
+        nm = str(getattr(self, "_chartStkNm", "") or "")
+        if not res.get("ok", False) or int(res.get("failCnt", 0) or 0) > 0:
+            err = res.get("errMsg") or res.get("fails") or "실패"
+            self.deskChart.headLbl.setText(f"{nm}({stkCd}) 최신화 실패: {str(err)[:120]}")
+            return
+        msg = (
+            f"{nm}({stkCd}) 최신화 완료 · {int(res.get('upsertCnt', 0) or 0)}건 "
+            f"({res.get('startDt', '')}~{res.get('endDt', '')})"
+        )
+        try:
+            from PySide6.QtWidgets import QToolTip  # noqa
+        except Exception:
+            pass
+        if str(stkCd) == str(getattr(self, "_chartStkCd", "") or ""):
+            self._reloadDeskChart()
+        try:
+            self.statusBar().showMessage(msg, 6000)
+        except Exception:
+            pass
 
     def _onChartBarsOk(self, stkCd, bars, stkNm):
         if getattr(self, "_sideKey", "") != "chart":
@@ -2801,8 +2904,6 @@ class TradeDeskWin(QMainWindow):
         except Exception:
             algs = []
             algBgColor = None
-        if not algs:
-            algs = [{"algCd": "MTS01", "name": "이평선터치"}]
         cds = [r.get("algCd") or "" for r in algs if r.get("algCd")]
         bar = self.stratAlgTabBar
 
@@ -2862,33 +2963,14 @@ class TradeDeskWin(QMainWindow):
         self.refreshStratInfo()
 
     def _rebuildWatchAlgTabs(self):
-        """관심종목 탭 — 운영 알고리즘마다 관리종목을 분리한다."""
-        try:
-            from trading.deskLiveAlgs import algBgColor, listDeskLiveAlgs
-
-            algs = listDeskLiveAlgs()
-        except Exception:
-            algs = []
-        if not algs:
-            algs = [{"algCd": "MTS01", "name": "이평선터치"}]
-        cds = [r.get("algCd") or "" for r in algs if r.get("algCd")]
+        """관심종목 — 실계좌 보유만. 상승순위 탭은 쓰지 않는다."""
+        tabs = (
+            ("acnt", "실계좌", "#CE93D8"),
+            ("leader", "주도주", "#FFCC80"),
+        )
+        cds = [k for k, _n, _c in tabs]
         bar = self.watchAlgTabBar
-        same = cds == getattr(self, "_watchAlgTabCds", None)
-        if same:
-            for i, r in enumerate(algs):
-                if i >= bar.count():
-                    break
-                alg = r.get("algCd") or ""
-                name = r.get("name") or alg
-                # 건수는 refreshTradeWatch 가 덮어씀. 여기선 이름·색만
-                if "(" not in (bar.tabText(i) or ""):
-                    bar.setTabText(i, name)
-                bar.setTabToolTip(i, str(alg))
-                try:
-                    bar.setTabBg(i, algBgColor(alg))
-                except Exception:
-                    bar.setTabBg(i, "#ECEFF1")
-            bar.update()
+        if cds == getattr(self, "_watchAlgTabCds", None) and bar.count() == len(cds):
             return
         self._watchAlgTabsBusy = True
         try:
@@ -2896,27 +2978,22 @@ class TradeDeskWin(QMainWindow):
             while bar.count():
                 bar.removeTab(0)
             self._watchAlgTabCds = []
-            for r in algs:
-                alg = r.get("algCd") or ""
-                name = r.get("name") or alg
+            for key, name, bg in tabs:
                 idx = bar.addTab(name)
-                bar.setTabToolTip(idx, str(alg))
-                bar.setTabData(idx, alg)
+                bar.setTabToolTip(idx, name)
+                bar.setTabData(idx, key)
                 try:
-                    bar.setTabBg(idx, algBgColor(alg))
+                    bar.setTabBg(idx, bg)
                 except Exception:
-                    bar.setTabBg(idx, "#ECEFF1")
-                self._watchAlgTabCds.append(alg)
-            cur = self._watchAlgCd if self._watchAlgCd in self._watchAlgTabCds else (
-                self._watchAlgTabCds[0] if self._watchAlgTabCds else "MTS01"
-            )
+                    pass
+                self._watchAlgTabCds.append(key)
+            cur = self._watchAlgCd if self._watchAlgCd in self._watchAlgTabCds else "acnt"
             self._watchAlgCd = cur
             if cur in self._watchAlgTabCds:
                 bar.setCurrentIndex(self._watchAlgTabCds.index(cur))
         finally:
             self._watchAlgTabsBusy = False
             bar.update()
-        # 탭 구성이 바뀌면 현재 탭 목록을 바로 채운다
         self.refreshTradeWatch()
 
     def _onWatchAlgTabChanged(self, idx):
@@ -2927,7 +3004,16 @@ class TradeDeskWin(QMainWindow):
         alg = self.watchAlgTabBar.tabData(idx)
         if not alg and 0 <= idx < len(getattr(self, "_watchAlgTabCds", [])):
             alg = self._watchAlgTabCds[idx]
-        self._watchAlgCd = str(alg or "MTS01")
+        self._watchAlgCd = str(alg or "acnt")
+        try:
+            _f = self.tradeWatchFrozen
+            _f.setItemDelegateForColumn(1, SignedPnlDelegate(_f))
+            _f.setItemDelegateForColumn(2, RsiDelegate(_f))
+            _f.setItemDelegateForColumn(3, NetOrderDelegate(_f))
+            _f.setItemDelegateForColumn(4, PriceOrderDelegate(_f))
+        except Exception:
+            pass
+        self._syncLeaderRankTools()
         self.refreshTradeWatch()
 
     def _listWatchRowsForAlg(self, algCd):
@@ -2986,27 +3072,16 @@ class TradeDeskWin(QMainWindow):
         return list(rows)
 
     def _syncWatchAlgTabCounts(self):
-        """탭 라벨에 알고리즘별 관리종목 건수를 붙인다."""
+        """관심·주도주 탭 이름 유지."""
         bar = getattr(self, "watchAlgTabBar", None)
-        if bar is None:
+        if bar is None or bar.count() < 1:
             return
-        try:
-            from trading.deskLiveAlgs import algDisplayName
-        except Exception:
-            algDisplayName = None
         cds = list(getattr(self, "_watchAlgTabCds", None) or [])
-        for i, alg in enumerate(cds):
+        labels = {"acnt": "실계좌", "leader": "주도주", "rank20": "20일누적"}
+        for i, key in enumerate(cds):
             if i >= bar.count():
                 break
-            name = alg
-            if algDisplayName is not None:
-                try:
-                    name = algDisplayName(alg) or alg
-                except Exception:
-                    name = alg
-            n = len(self._listWatchRowsForAlg(alg) or [])
-            bar.setTabText(i, f"{name} ({n})")
-            bar.setTabToolTip(i, str(alg))
+            bar.setTabText(i, labels.get(key, key))
         bar.update()
 
     def refreshStratInfo(self):
@@ -3512,12 +3587,40 @@ class TradeDeskWin(QMainWindow):
             else "-원 (-%)"
         )
         acctDisp = self._deskAcctNo or "-"
+        # 매수가능금액: 주문가능 필드가 있으면 그것, 없으면 D+2 추정예수금
+        buyAbleNum = None
+        buyAbleKey = ""
+        cashRtTxt = "-"
+        stkEvltNum = 0
+        try:
+            for k in ("ord_alow_amt", "ord_alowa", "100stk_ord_alow_amt", "d2_entra", "entr"):
+                v = parsePadNum(body.get(k))
+                if v is not None:
+                    buyAbleNum = v
+                    buyAbleKey = k
+                    break
+            stkEvltNum = parsePadNum(body.get("tot_est_amt")) or 0
+            cashNum = max(int(buyAbleNum or 0), 0)
+            totAsetNum = cashNum + max(int(stkEvltNum), 0)
+            cashRtTxt = f"{cashNum / totAsetNum * 100:.1f}%" if totAsetNum > 0 else "-"
+        except Exception as err:
+            termLog(f"[매매창] 매수가능/현금비율 계산 실패: {err}")
+        dbgSig = (buyAbleKey, buyAbleNum, cashRtTxt)
+        if getattr(self, "_acntCashDbgSig", None) != dbgSig:
+            self._acntCashDbgSig = dbgSig
+            termLog(
+                f"[매매창] 계좌표 매수가능={buyAbleNum}({buyAbleKey or '필드없음'}) "
+                f"현금비율={cashRtTxt} 필드={sorted(k for k in body.keys() if 'alow' in k or 'entr' in k)}"
+            )
+        self._deskTotEvltForWeight = int(stkEvltNum)
         self._setAcntRows(
             [
                 ("구분", modeLabel),
                 ("계좌번호", acctDisp),
                 ("예수금", f"{fmtAmt(body.get('entr'))}원"),
                 ("D+2추정", f"{fmtAmt(body.get('d2_entra'))}원"),
+                ("매수가능금액", f"{fmtAmt(buyAbleNum)}원" if buyAbleNum is not None else "-"),
+                ("현금비율", cashRtTxt),
                 ("유가평가", f"{fmtAmt(body.get('tot_est_amt'))}원"),
                 ("예탁자산", f"{fmtAmt(body.get('aset_evlt_amt'))}원"),
                 ("총매입", f"{fmtAmt(body.get('tot_pur_amt'))}원"),
@@ -3550,8 +3653,7 @@ class TradeDeskWin(QMainWindow):
                 cd = normStkCd(item.get("stk_cd")) or ""
                 if not cd:
                     continue
-                # 계좌 잔량>0 은 모두 보유표에 표시 (키움 접속·잔고 확인용).
-                # 관리·관심·원장 여부는 algCds(행 색/라벨)에만 반영.
+                # 잔량>0 은 일단 모은 뒤, 매매 등록(RAM01 TRADE)만 좌측에 남긴다.
                 deskOpen = cd in openSet
                 managedWatch = cd in algSet and cd in watchSet
                 if not deskOpen and not managedWatch:
@@ -3630,14 +3732,36 @@ class TradeDeskWin(QMainWindow):
                     str(r.get("stkNm") or ""),
                 )
             )
-        if skipCds != self._holdSkipCds:
-            self._holdSkipCds = skipCds
-            if skipCds:
-                termLog(
-                    "[매매창] 전략외 보유(관리·관심·미청산 아님·표에는 표시) "
-                    + ",".join(sorted(skipCds))
-                )
+        # 실계좌관리: 보유 전체는 관심, 매매 버튼 종목만 좌측
+        self._acntAllHolds = list(holds)
+        syncGot = {}
+        try:
+            from trading.realAcntMgr import isTradeOn, syncAcntHolds
+
+            syncGot = syncAcntHolds(self._acntAllHolds) or {}
+        except Exception as err:
+            termLog(f"[매매창] 실계좌 관심 동기화 실패: {err}")
+
+            def isTradeOn(_cd):
+                return False
+
+        tradeHolds = []
+        for row in self._acntAllHolds:
+            if not isTradeOn(row.get("stkCd")):
+                continue
+            row["algCds"] = ["RAM01"]
+            row["algLabel"] = "실계좌"
+            tradeHolds.append(row)
+        holds = tradeHolds
+        self._holdSkipCds = set()
         self._holdRows = holds
+        if syncGot.get("changed"):
+            try:
+                from trading.watchRtMonitor import reregWatchForExch
+
+                reregWatchForExch("실계좌동기화")
+            except Exception:
+                pass
         self._acntReady = True
         self._paintHoldings()
         # 원장 청산 반영 후 관심 행번호 색을 보유와 맞춘다
@@ -3755,6 +3879,14 @@ class TradeDeskWin(QMainWindow):
                     pxMap = getWatchLastPxMap() or pxMap
                 except Exception:
                     pass
+            # 보유비중 분모 = 계좌 전체 유가평가(tot_est_amt), 없으면 표시 보유 합계
+            holdTotEv = int(getattr(self, "_deskTotEvltForWeight", 0) or 0)
+            if holdTotEv <= 0:
+                for _r in rows:
+                    _cd = normStkCd(_r.get("stkCd"))
+                    _ac = int(_r.get("apiCurNum") or _r.get("curNum") or 0)
+                    _lv = _holdLivePx(pxMap.get(_cd) or {}, _ac) or _ac
+                    holdTotEv += int(_lv or 0) * int(_r.get("qtyNum") or 0)
             for i, row in enumerate(rows):
                 cd = normStkCd(row.get("stkCd"))
                 tick = pxMap.get(cd) or {}
@@ -3801,6 +3933,11 @@ class TradeDeskWin(QMainWindow):
                 else:
                     evltTxt = f"{int(row.get('evltNum') or 0):,}"
                 try:
+                    _evN = int(evltTxt.replace(",", "") or 0)
+                except ValueError:
+                    _evN = 0
+                wtTxt = f"{_evN / holdTotEv * 100:.1f}%" if holdTotEv > 0 else "-"
+                try:
                     from utils.stratOrdLedgerStore import fmtYmdDash
 
                     firstBuyTxt = fmtYmdDash(row.get("firstBuyDt")) or "-"
@@ -3813,6 +3950,7 @@ class TradeDeskWin(QMainWindow):
                     pnlRtTxt,
                     str(row.get("qty") or ""),
                     fluTxt,
+                    wtTxt,
                     purTxt,
                     evltTxt,
                     cur,
@@ -4152,291 +4290,716 @@ class TradeDeskWin(QMainWindow):
         finally:
             self._watchRefreshBusy = False
 
-    def _fillTradeWatch(self):
-        """refreshTradeWatch 본체. 탭 전환 중 중첩 호출을 막기 위해 분리."""
-        from trading.watchRtMonitor import getWatchLastPxMap
-        from utils.stkCdUtil import normStkCd
+    def _fillRiseRankWatch(self):
+        """금일·주간·월간 상위 20, 업종 등락 순위."""
+        from utils.riseRankBoard import riseRank20Snapshot, riseRankSnapshot
 
-        algCd = str(getattr(self, "_watchAlgCd", None) or "MTS01")
+        kind = str(getattr(self, "_watchAlgCd", None) or "day")
+        if kind == "leader":
+            # 주도주 탭 = 20일누적 순위. 20일 집계 전이면 금일 순위로 대체.
+            kind = "rank20"
+        if kind not in ("day", "week", "month", "inds", "rank20"):
+            kind = "day"
+        snap = riseRankSnapshot()
         try:
-            rows = self._listWatchRowsForAlg(algCd)
+            r20 = riseRank20Snapshot()
         except Exception:
-            rows = []
-        pxMap = {}
-        try:
-            pxMap = getWatchLastPxMap() or {}
-        except Exception:
-            pxMap = {}
-
-        evalMap = {}
-        try:
-            from trading.maTouchLive import getMaTouchEvalMap
-
-            evalMap = getMaTouchEvalMap() or {}
-        except Exception:
-            evalMap = {}
-        # 이평터치 캐시에 없는 종목(이평지지 등)은 일봉 SMA 로 5/10/20·배열을 채운다
-        extraSma = {}
-        try:
-            missCds = []
-            for row in rows or []:
-                cd = normStkCd(row.get("STK_CD"))
-                if not cd:
-                    continue
-                if not (evalMap.get(cd) or {}).get("sma20"):
-                    missCds.append(cd)
-            if missCds:
-                from utils.daySmaSnap import loadPriorSmaMap
-
-                extraSma = loadPriorSmaMap(missCds) or {}
-        except Exception:
-            extraSma = {}
-
-        boughtMap = {}
-        try:
-            boughtMap = self._watchBoughtAlgMap() or {}
-        except Exception:
-            boughtMap = {}
-        try:
-            from trading.deskLiveAlgs import algBgColor, algDisplayName
-        except Exception:
-            algBgColor = None
-            algDisplayName = None
-
-        tabBg = "#E0E0E0"
-        tabNm = algCd
-        if algBgColor is not None:
-            try:
-                tabBg = algBgColor(algCd) or tabBg
-            except Exception:
-                pass
-        if algDisplayName is not None:
-            try:
-                tabNm = algDisplayName(algCd) or algCd
-            except Exception:
-                pass
-
-        n = len(rows or [])
-        keepCd = str(getattr(self, "_chartStkCd", "") or "")
-        if not keepCd:
-            keepCd, _nm = self._selectedWatchStk()
-        self.tradeWatchTitle.setText(self._titleText("관심종목"))
+            r20 = {"rows": [], "meta": {}}
+        r20Meta = r20.get("meta") or {}
+        if kind == "rank20":
+            rows = list(r20.get("rows") or [])[:30]
+            if not rows:
+                kind = "day"
+                rows = list(snap.get("day") or [])
+        else:
+            rows = list(snap.get(kind) or [])
+        titles = {
+            "rank20": "주도주 20일누적",
+            "day": "주도주(금일·20일 집계 대기)",
+            "week": "주간상승",
+            "month": "월간상승",
+            "inds": "테마강세",
+        }
+        title = titles.get(kind) or kind
+        msg = str(snap.get("msg") or "")
+        at = str(snap.get("updatedAt") or "")
+        extra = f" · {msg}" if msg else ""
+        if at:
+            extra += f" · {at}"
+        if kind == "rank20":
+            _d = str(r20Meta.get("date") or "")
+            _pd = str(r20Meta.get("prevDate") or "")
+            extra = ""
+            if _d:
+                extra = f" · {_d[4:6]}/{_d[6:8]} {'장중잠정' if r20Meta.get('live') else '확정'}"
+            if _pd:
+                extra += f" · 비교 {_pd[4:6]}/{_pd[6:8]}"
+            if not rows:
+                msg = msg or "20일 순위 집계 중(봉 조회 완료 후 표시)"
+        self.tradeWatchTitle.setText(self._titleText(f"관심종목 {title}{extra}"))
         try:
             self._syncWatchAlgTabCounts()
         except Exception:
             pass
-
-        def _watchSortKey(row):
-            cd = normStkCd(row.get("STK_CD"))
-            nm = str(row.get("STK_NM") or "")
-            pri = row.get("PRIORITY")
-            try:
-                priN = int(pri) if pri is not None else 9999
-            except (TypeError, ValueError):
-                priN = 9999
-            # 이 알고리즘 미청산(보유)을 맨 위
-            held = 0 if algCd in (boughtMap.get(cd) or []) else 1
-            return (held, priN, nm, cd)
-
-        rows = list(rows or [])
-        rows.sort(key=_watchSortKey)
-        paintCds = [normStkCd(r.get("STK_CD")) for r in rows]
-        self._watchPaintCds = paintCds
-        # 일봉 전체 캐시 — 실시간 현재가로 당일 봉만 치환해 RSI14 계산
         try:
-            ymd = datetime.now().strftime("%Y%m%d")
-            rsiVer = 2
-            if str(getattr(self, "_watchRsiYmd", "") or "") != ymd or int(
-                getattr(self, "_watchRsiVer", 0) or 0
-            ) != rsiVer:
-                self._watchRsiCloses = {}
-                self._watchRsiYmd = ymd
-                self._watchRsiVer = rsiVer
-            histMap = getattr(self, "_watchRsiCloses", None)
-            if not isinstance(histMap, dict):
-                histMap = {}
-                self._watchRsiCloses = histMap
-            missRsi = [c for c in paintCds if c and c not in histMap]
-            if missRsi:
-                from utils.daySmaSnap import loadRsiCloseHist
-
-                histMap.update(loadRsiCloseHist(missRsi) or {})
-        except Exception:
-            if not isinstance(getattr(self, "_watchRsiCloses", None), dict):
-                self._watchRsiCloses = {}
-        netMap = None
-        try:
-            netMap = self._peekWatchNetMap(algCd, paintCds)
-        except Exception:
-            netMap = None
-        netLoaded = netMap is not None
-        if netMap is None:
-            netMap = {}
-        self._watchLastNetMap = netMap
-        self._watchLastNetLoaded = netLoaded
-        try:
-            self._kickWatchNetLoad(algCd, paintCds)
-        except Exception:
-            pass
-        try:
-            from utils.stkWatchTipSnap import loadWatchTipMeta
-
-            self._watchTipMeta = loadWatchTipMeta(paintCds) or {}
-        except Exception:
-            self._watchTipMeta = {}
-        try:
-            self._kickWatchSnapLoad(paintCds)
+            self._updateLeaderRankStamp(r20Meta, snap)
         except Exception:
             pass
 
         frz = self.tradeWatchFrozen
         tbl = self.tradeWatchTbl
+        if kind == "inds":
+            frzHeaders = ["테마", "등락률", "구분", "", ""]
+            self._WATCH_FRZ_W = (180, 64, 48, 24, 24)
+        elif kind == "rank20":
+            frzHeaders = ["변동", "순위·종목", "20일누적", "테마", "이슈"]
+            self._WATCH_FRZ_W = (40, 104, 64, 110, 220)
+        else:
+            frzHeaders = ["종목", "등락률", "거래대금", "테마", "이슈"]
+            self._WATCH_FRZ_W = (88, 64, 72, 110, 260)
+        frz.setHorizontalHeaderLabels(frzHeaders)
+        tbl.setHorizontalHeaderLabels(["현재가", "코드", "시장", "당일%"] if kind == "rank20" else ["현재가", "코드", "", ""])
+        # 이슈 칸 배경색이 보이도록: 실계좌/기본 탭의 커스텀 델리게이트(배열·손익) 해제
+        _plainDel = QStyledItemDelegate(frz)
+        for _c in range(5):
+            frz.setItemDelegateForColumn(_c, _plainDel)
+        frz.setItemDelegateForColumn(2 if kind == "rank20" else 1, SignedPnlDelegate(frz))
+
+        def _amtTxt(v):
+            try:
+                n = float(v or 0)
+            except (TypeError, ValueError):
+                return "-"
+            if n >= 100000000:
+                return f"{n / 100000000:.1f}억"
+            if n >= 10000:
+                return f"{n / 10000:.0f}만"
+            return f"{int(n):,}"
+
+        _ISSUE_MAP = (
+            # 지주사·지분경쟁은 금융(업종 분류)보다 먼저 잡는다
+            ("경영권", "지배구조·경영권"), ("지분 경쟁", "지배구조·경영권"), ("지분경쟁", "지배구조·경영권"),
+            ("지분 매집", "지배구조·경영권"), ("장내 매집", "지배구조·경영권"), ("공개매수", "지배구조·경영권"),
+            ("지배구조", "지배구조·경영권"), ("지주사", "지배구조·경영권"), ("m&a", "지배구조·경영권"),
+            ("실적", "실적"), ("어닝", "실적"), ("흑자", "실적"),
+            ("방산", "방산"), ("방위", "방산"), ("전쟁", "전쟁"), ("우크라", "전쟁"), ("이스라엘", "전쟁"), ("재건", "재건"),
+            ("보안", "보안"), ("해킹", "해킹"), ("사이버", "해킹"),
+            ("HBM", "HBM"), ("반도체장비", "반도체장비"), ("장비", "반도체장비"), ("반도체", "반도체"), ("메모리", "반도체"),
+            ("원전", "원전"), ("원자력", "원전"), ("SMR", "원전"), ("전선", "전선"), ("전력", "전력"), ("변압기", "전력"),
+            ("2차전지", "2차전지"), ("배터리", "2차전지"), ("리튬", "2차전지"),
+            ("바이오", "바이오"), ("제약", "바이오"), ("신약", "바이오"), ("비만", "비만약"),
+            ("로봇", "로봇"), ("AI", "AI"), ("인공지능", "AI"), ("조선", "조선"), ("우주", "우주항공"), ("항공", "우주항공"),
+            ("자동차", "자동차"), ("엔터", "엔터"), ("게임", "게임"), ("화장품", "화장품"), ("음식", "K푸드"),
+            ("통신", "통신"), ("5G", "통신"), ("건설", "건설"), ("은행", "금융"), ("증권", "금융"), ("금융", "금융"),
+            ("철강", "철강"), ("석유", "에너지"), ("가스", "에너지"), ("태양광", "태양광"), ("수소", "수소"),
+            ("코인", "가상자산"), ("가상", "가상자산"), ("정책", "정책"), ("밸류업", "밸류업"),
+            ("수주", "실적"), ("턴어라운드", "실적"), ("배당", "밸류업"),
+            ("미사일", "방산"), ("드론", "방산"), ("국방", "방산"), ("북한", "전쟁"), ("중동", "전쟁"),
+            ("CXL", "HBM"), ("파운드리", "반도체"), ("디스플레이", "반도체"), ("OLED", "반도체"), ("PCB", "반도체"), ("기판", "반도체"), ("소재", "반도체장비"),
+            ("데이터센터", "전력"), ("전기", "전력"), ("ESS", "2차전지"), ("양극", "2차전지"), ("음극", "2차전지"), ("전해", "2차전지"), ("전기차", "자동차"), ("자율주행", "자동차"), ("부품", "자동차"),
+            ("의료", "바이오"), ("헬스", "바이오"), ("진단", "바이오"), ("치료", "바이오"), ("백신", "바이오"), ("의약", "바이오"),
+            ("휴머노이드", "로봇"), ("클라우드", "AI"), ("소프트", "AI"), ("SW", "AI"), ("반도체설계", "반도체"), ("6G", "통신"), ("위성", "우주항공"), ("해운", "조선"), ("LNG", "조선"),
+            ("미디어", "엔터"), ("콘텐츠", "엔터"), ("K-", "엔터"), ("여행", "엔터"), ("식품", "K푸드"), ("라면", "K푸드"), ("뷰티", "화장품"),
+            ("인프라", "건설"), ("시멘트", "건설"), ("리츠", "금융"), ("보험", "금융"), ("비철", "철강"), ("구리", "철강"), ("화학", "에너지"), ("정유", "에너지"), ("풍력", "태양광"),
+            ("블록체인", "가상자산"), ("STO", "가상자산"),
+        )
+        _PASTELS = ("#FFF3C4", "#FFD6D6", "#E4D9F7", "#D3E6FF", "#D6F2DD", "#CFF1EF",
+                    "#FAD9EC", "#DCE2F8", "#DCEFFA", "#FFE2C6", "#EEEEDC", "#E8F5C8")
+
+        def _hashClr(txt):
+            import zlib
+            return _PASTELS[zlib.crc32(str(txt).encode("utf-8")) % len(_PASTELS)]
+
+        # 이슈 그룹(유사 이슈 묶음) 순서와 연한 배경색
+        _ISSUE_GRP = (
+            (("실적", "밸류업", "정책", "금융"), "#FFF3C4"),
+            (("방산", "전쟁", "재건"), "#FFD6D6"),
+            (("해킹", "보안"), "#E4D9F7"),
+            (("HBM", "반도체", "반도체장비"), "#D3E6FF"),
+            (("원전", "전선", "전력", "에너지", "태양광", "수소"), "#D6F2DD"),
+            (("2차전지", "자동차"), "#CFF1EF"),
+            (("바이오", "비만약"), "#FAD9EC"),
+            (("로봇", "AI", "통신"), "#DCE2F8"),
+            (("조선", "우주항공", "철강", "건설"), "#DCEFFA"),
+            (("엔터", "게임", "화장품", "K푸드"), "#FFE2C6"),
+            (("가상자산",), "#EEEEDC"),
+            (("지배구조·경영권",), "#E8F5C8"),
+        )
+        _ISSUE_ORD = {}
+        _ISSUE_CLR = {}
+        for gi, (labs, clr) in enumerate(_ISSUE_GRP):
+            for li, lab in enumerate(labs):
+                _ISSUE_ORD[lab] = (gi, li)
+                _ISSUE_CLR[lab] = clr
+
+        def _issueList(row):
+            src = " ".join(
+                str(row.get(k) or "")
+                for k in ("issue", "news", "newsTitle", "thmNm", "theme", "indsNm", "stkNm")
+            ).lower()
+            out = []
+            for key, lab in _ISSUE_MAP:
+                if key.lower() in src and lab not in out:
+                    out.append(lab)
+            if not out:
+                return []
+            # 지주사/경영권 종목은 업종 분류상 '금융'이 붙어도 금융 이슈로 보지 않는다
+            if "지배구조·경영권" in out and "금융" in out:
+                out.remove("금융")
+            # 첫 매칭(주 이슈)의 그룹을 먼저, 같은 그룹끼리 붙여서
+            g0 = _ISSUE_ORD.get(out[0], (99, 0))[0]
+            out.sort(key=lambda x: (_ISSUE_ORD.get(x, (99, 0))[0] != g0,) + _ISSUE_ORD.get(x, (99, 0)))
+            return out[:2]
+
+        from utils.riseRankBoard import riseNewsTitle
+
+        # 뉴스/테마 문구 -> 짧은 이슈 단어 (먼저 나온 것이 우선)
+        _EVENT_MAP = (
+            ("어닝서프", "어닝서프라이즈"), ("어닝 서프", "어닝서프라이즈"), ("깜짝 실적", "어닝서프라이즈"), ("깜짝실적", "어닝서프라이즈"),
+            ("호실적", "어닝서프라이즈"), ("사상 최대", "어닝서프라이즈"), ("최대 실적", "어닝서프라이즈"), ("최대실적", "어닝서프라이즈"),
+            ("어닝쇼크", "어닝쇼크"), ("어닝 쇼크", "어닝쇼크"), ("실적 부진", "어닝쇼크"), ("적자 전환", "어닝쇼크"), ("적자전환", "어닝쇼크"),
+            ("흑자전환", "흑자전환"), ("흑자 전환", "흑자전환"), ("턴어라운드", "흑자전환"),
+            ("공개매수", "공개매수"), ("경영권", "경영권분쟁"), ("지분 경쟁", "경영권분쟁"), ("지분경쟁", "경영권분쟁"),
+            ("장내 매집", "지분매집"), ("지분 매집", "지분매집"), ("인수", "M&A"), ("합병", "M&A"), ("m&a", "M&A"), ("매각", "M&A"),
+            ("이란", "이란전쟁"), ("이스라엘", "중동전쟁"), ("중동", "중동전쟁"), ("우크라", "우크라전쟁"), ("러시아", "우크라전쟁"),
+            ("종전", "종전기대"), ("휴전", "종전기대"), ("재건", "재건"), ("북한", "북한리스크"),
+            ("관세", "관세"), ("트럼프", "트럼프"), ("무역", "관세"), ("수출 규제", "수출규제"), ("수출규제", "수출규제"), ("제재", "제재"),
+            ("코로나", "코로나"), ("팬데믹", "팬데믹"), ("독감", "감염병"), ("감염", "감염병"),
+            ("수주", "수주"), ("공급계약", "수주"), ("공급 계약", "수주"), ("계약 체결", "수주"), ("납품", "수주"),
+            ("fda", "FDA승인"), ("임상", "임상"), ("기술이전", "기술이전"), ("기술수출", "기술이전"), ("허가", "인허가"), ("승인", "인허가"),
+            ("정책", "정책수혜"), ("정부", "정책수혜"), ("예산", "정책수혜"), ("규제 완화", "규제완화"), ("규제완화", "규제완화"),
+            ("밸류업", "밸류업"), ("자사주", "자사주"), ("배당", "배당"), ("액면분할", "액면분할"), ("무상증자", "무상증자"),
+            ("유상증자", "유상증자"), ("상장", "신규상장"), ("금리 인하", "금리인하"), ("금리인하", "금리인하"), ("금리", "금리"),
+            ("환율", "환율"), ("유가", "유가"), ("목표가", "목표가상향"), ("신고가", "신고가"), ("상한가", "상한가"),
+            ("특허", "특허"), ("출시", "신제품"), ("신제품", "신제품"), ("협력", "협력"), ("mou", "협력"), ("투자 유치", "투자유치"),
+            ("해킹", "해킹"), ("화재", "사고"), ("파업", "파업"), ("소송", "소송"),
+            ("엔비디아", "엔비디아"), ("hbm", "HBM"), ("데이터센터", "데이터센터"), ("원전", "원전"), ("smr", "원전"),
+            ("방산", "방산수출"), ("k9", "방산수출"), ("로봇", "로봇"), ("휴머노이드", "로봇"), ("ai", "AI"),
+        )
+
+        def _issueTxt(row):
+            try:
+                news = riseNewsTitle(row.get("stkCd"))
+            except Exception:
+                news = ""
+            if news:
+                row["newsTitle"] = news
+            out = []
+            for srcTxt in (news, str(row.get("indsNm") or "")):
+                low = str(srcTxt or "").lower()
+                if not low:
+                    continue
+                for key, word in _EVENT_MAP:
+                    if key in low and word not in out:
+                        out.append(word)
+                        if len(out) >= 2:
+                            break
+                if len(out) >= 2:
+                    break
+            return ",".join(out[:2]) if out else "-"
+
+        def _issueKey(row):
+            out = _issueList(row)
+            return _ISSUE_ORD.get(out[0], (99, 0)) if out else (100, 0)
+
+        def _scoreTxt(v):
+            try:
+                return f"{float(v) * 100:.1f}"
+            except (TypeError, ValueError):
+                return "-"
+
+        if kind not in ("inds", "rank20") and rows:
+            # 이슈 그룹별 강도(평균 등락률 → 종목수 → 거래대금 합) 순으로, 그룹 안은 등락률 순
+            def _num(v):
+                try:
+                    return float(str(v).replace("%", "").replace(",", "").replace("+", ""))
+                except (TypeError, ValueError):
+                    return 0.0
+
+            grpStat = {}
+            for r in rows:
+                g = _issueKey(r)[0]
+                r["_issueGrp"] = g
+                st = grpStat.setdefault(g, [0.0, 0, 0.0])
+                st[0] += _num(r.get("fluRt"))
+                st[1] += 1
+                st[2] += _num(r.get("amt"))
+
+            def _grpRank(g):
+                tot, cnt, amt = grpStat.get(g, (0.0, 0, 0.0))
+                # 이슈 미분류(100)는 항상 맨 아래
+                return (g >= 100, -(tot / cnt if cnt else 0.0), -cnt, -amt, g)
+
+            rows.sort(key=lambda r: _grpRank(r["_issueGrp"]) + (-_num(r.get("fluRt")),))
+        if not rows:
+            rows = [{"_empty": msg or snap.get("status") or "집계 중"}]
+        # ★추천 배너 비활성 (요청: 주도주 탭 상단 추천 행 제거)
+        n = len(rows)
+        try:
+            frz.clearSpans()
+        except Exception:
+            pass
         frz.setUpdatesEnabled(False)
         tbl.setUpdatesEnabled(False)
         try:
+            # 주도주는 순위 표시 전용: 실계좌 탭에서 남은 매매/해지 버튼 제거
+            for r in range(tbl.rowCount()):
+                if tbl.cellWidget(r, 0) is not None:
+                    tbl.removeCellWidget(r, 0)
             if hasattr(self, "_watchAlgHdr"):
                 self._watchAlgHdr.clearRowMeta()
             frz.setRowCount(n)
             tbl.setRowCount(n)
-            for i, row in enumerate(rows or []):
-                cd = normStkCd(row.get("STK_CD"))
-                tick = pxMap.get(cd) or {}
-                ev = dict(evalMap.get(cd) or {})
-                extra = extraSma.get(cd) or {}
-                prcRaw, fluRaw = _dispQuote(tick)
-                # RSI 는 0B/당일종가만 사용. SMA 전일종가로 당일 봉을 덮지 않는다.
-                rsiLivePx = _absPxNum(prcRaw) if _hasQuote(prcRaw) else None
-                if not _hasQuote(prcRaw) and extra.get("lastClose"):
-                    prcRaw = extra.get("lastClose")
-                if not _hasQuote(fluRaw) and extra.get("fluRt") is not None:
-                    fluRaw = extra.get("fluRt")
-                if extra and not ev.get("sma20"):
-                    sma5 = extra.get("sma5")
-                    sma10 = extra.get("sma10")
-                    sma20 = extra.get("sma20")
-                    try:
-                        from trading.maTouchLive import _priceOrderStatus
-
-                        pxOrd = _absPxNum(prcRaw)
-                        ev = {
-                            "sma5": sma5,
-                            "sma10": sma10,
-                            "sma20": sma20,
-                            "reason": _priceOrderStatus(pxOrd, sma5, sma10, sma20),
-                        }
-                    except Exception:
-                        ev = {
-                            "sma5": sma5,
-                            "sma10": sma10,
-                            "sma20": sma20,
-                            "reason": ev.get("reason") or "이평없음",
-                        }
-                netRec = netMap.get(cd) or {}
-                snap = self._watchSnapFor(cd, curPx=_absPxNum(prcRaw))
-                netTxt, netTip, netMeta = _watchNetCellParts(
-                    netRec if netRec else None, loaded=netLoaded, snap=snap
-                )
-                rsiTxt = ""
-                try:
-                    from utils.daySmaSnap import liveRsiFromPriorCloses
-
-                    rsiVal = liveRsiFromPriorCloses(
-                        (getattr(self, "_watchRsiCloses", None) or {}).get(cd),
-                        curPx=rsiLivePx,
-                        period=14,
-                    )
-                    rsiTxt = _fmtRsi(rsiVal)
-                except Exception:
-                    rsiTxt = ""
-                # 틀고정: 종목·등락률·RSI·순매수·배열
-                frzVals = [
-                    str(row.get("STK_NM") or ""),
-                    _fmtFlu(fluRaw),
-                    rsiTxt,
-                    netTxt,
-                    str(ev.get("reason") or "이평없음"),
-                ]
-                for col, val in enumerate(frzVals):
+            paintCds = []
+            for i, row in enumerate(rows):
+                if row.get("_banner"):
+                    paintCds.append("")
+                    item = QTableWidgetItem(str(row["_banner"]))
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    item.setBackground(QColor("#FFF8E1"))
+                    item.setForeground(QColor("#BF360C"))
+                    _f = item.font()
+                    _f.setBold(True)
+                    item.setFont(_f)
+                    item.setToolTip(str(row.get("_bannerTip") or ""))
+                    frz.setItem(i, 0, item)
+                    for _c in range(1, 5):
+                        frz.setItem(i, _c, QTableWidgetItem(""))
+                    frz.setSpan(i, 0, 1, 5)
+                    for _c in range(4):
+                        tbl.setItem(i, _c, QTableWidgetItem(""))
+                    if hasattr(self, "_watchAlgHdr"):
+                        self._watchAlgHdr.setRowMeta(i, "#FFE0B2", "추천")
+                    continue
+                if row.get("_empty"):
+                    vals = [str(row.get("_empty")), "", "", "", ""]
+                    scroll = ["", "", "", ""]
+                    cd = ""
+                elif kind == "inds":
+                    vals = [
+                        str(row.get("indsNm") or ""),
+                        _fmtFlu(row.get("fluRt")),
+                        str(row.get("mkt") or ""),
+                        "",
+                        "",
+                    ]
+                    scroll = ["", "", "", ""]
+                    cd = ""
+                elif kind == "rank20":
+                    cd = str(row.get("stkCd") or "")
+                    vals = [
+                        str(row.get("chg") or "-"),
+                        f"{row.get('rank') or ''}. {row.get('stkNm') or ''}",
+                        _fmtFlu(row.get("fluRt")),
+                        str(row.get("indsNm") or ""),
+                        _issueTxt(row),
+                    ]
+                    scroll = [
+                        _fmtPx(row.get("curPrc")),
+                        cd,
+                        str(row.get("mkt") or ""),
+                        _fmtFlu(row.get("dayFlu")) if row.get("dayFlu") is not None else "",
+                    ]
+                else:
+                    cd = str(row.get("stkCd") or "")
+                    vals = [
+                        str(row.get("stkNm") or ""),
+                        _fmtFlu(row.get("fluRt")),
+                        _amtTxt(row.get("amt")),
+                        str(row.get("indsNm") or ""),
+                        _issueTxt(row),
+                    ]
+                    scroll = [
+                        _fmtPx(row.get("curPrc")),
+                        cd,
+                        str(row.get("mkt") or ""),
+                        "",
+                    ]
+                paintCds.append(cd)
+                for col, val in enumerate(vals):
                     item = QTableWidgetItem(val)
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    if col == 0:
-                        item.setToolTip(netTip)
+                    _nmCol = 1 if kind == "rank20" else 0
+                    if col == _nmCol and cd:
                         item.setData(Qt.ItemDataRole.UserRole + 1, cd)
-                    if col in (1, 2):
+                    if (col == 2 if kind == "rank20" else col in (1, 2)) or (col == 4 and kind == "inds"):
                         item.setTextAlignment(
                             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
                         )
-                    if col == 2:
-                        item.setToolTip("RSI14 Wilder · 전체 일봉 + 실시간 현재가")
-                    if col == 3:
+                    if col == 3 and kind != "inds" and not row.get("_empty"):
+                        # 테마 칸: 테마 그룹 색 배경
+                        _il = _issueList(row)
+                        if _il:
+                            _bg = _ISSUE_CLR.get(_il[0]) or _hashClr(_il[0])
+                        else:
+                            _bg = _hashClr(row.get("indsNm") or row.get("stkNm") or "-")
+                        item.setBackground(QColor(_bg))
+                        item.setForeground(QColor("#222222"))
+                        item.setToolTip(f"테마: {row.get('indsNm') or '-'}")
+                    if col == 4 and kind != "inds" and not row.get("_empty"):
+                        # 이슈 칸: 배경 없이 짧은 이슈 단어만
+                        _tip = [f"테마: {row.get('indsNm') or '-'}"]
+                        if row.get("newsTitle"):
+                            _tip.append(f"뉴스: {row.get('newsTitle')}")
+                        item.setToolTip("\n".join(_tip))
+                    if col == 0 and kind == "rank20" and not row.get("_empty"):
+                        # 변동(맨 앞 좁은 칸): NEW 주황, ▲ 빨강, ▼ 파랑, 작은 글씨
+                        _cv = str(val)
+                        _sf = item.font()
+                        _sf.setPointSizeF(max(6.5, _sf.pointSizeF() - 1.5))
+                        item.setFont(_sf)
+                        if _cv == "NEW":
+                            item.setForeground(QColor("#E65100"))
+                            _f = item.font()
+                            _f.setBold(True)
+                            item.setFont(_f)
+                        elif _cv.startswith("▲"):
+                            item.setForeground(QColor("#D32F2F"))
+                        elif _cv.startswith("▼"):
+                            item.setForeground(QColor("#1565C0"))
                         item.setTextAlignment(
                             Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
                         )
-                        item.setToolTip(netTip)
-                        if netMeta:
-                            item.setData(Qt.ItemDataRole.UserRole, netMeta)
                     frz.setItem(i, col, item)
-                # 스크롤 영역: 현재가·5/10/20
-                scrollVals = [
-                    _fmtPx(prcRaw),
-                    _fmtPx(ev.get("sma5")),
-                    _fmtPx(ev.get("sma10")),
-                    _fmtPx(ev.get("sma20")),
-                ]
-                for col, val in enumerate(scrollVals):
+                for col, val in enumerate(scroll):
                     item = QTableWidgetItem(val)
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    item.setTextAlignment(
-                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-                    )
                     tbl.setItem(i, col, item)
-                # 행번호: 이 탭 보유만 알고리즘색. 선택 탭은 그리드 테두리로 표시
-                algs = list(boughtMap.get(cd) or [])
-                held = algCd in algs
-                rowBg = tabBg if held else "#E0E0E0"
-                tip = f"{tabNm} · 보유" if held else tabNm
                 if hasattr(self, "_watchAlgHdr"):
-                    self._watchAlgHdr.setRowMeta(i, rowBg, tip)
-            if hasattr(self, "_watchAlgHdr"):
-                self._watchAlgHdr.viewport().update()
-            try:
-                self._applyWatchGridBorder(tabBg)
-            except Exception:
-                pass
-            # 순매수·배열은 고정폭 — 글자 길이로 접히지 않게
+                    self._watchAlgHdr.setRowMeta(i, "#E0E0E0", title)
+            self._watchPaintCds = paintCds
+            if kind != "inds":
+                # 이슈 칸: 글자 길이에 맞춰 자동 폭 (최소 48, 최대 260)
+                try:
+                    _fm = frz.fontMetrics()
+                    _iw = _fm.horizontalAdvance("이슈")
+                    for _r in range(n):
+                        if rows[_r].get("_banner") or rows[_r].get("_empty"):
+                            continue
+                        _it = frz.item(_r, 4)
+                        if _it is not None:
+                            _iw = max(_iw, _fm.horizontalAdvance(_it.text()))
+                    _w = list(self._WATCH_FRZ_W)
+                    _w[4] = max(48, min(260, _iw + 16))
+                    self._WATCH_FRZ_W = tuple(_w)
+                except Exception:
+                    pass
             self._fitWatchFrozenWidth()
-            tbl.resizeColumnsToContents()
             for i in range(n):
                 frz.setRowHeight(i, 22)
                 tbl.setRowHeight(i, 22)
         finally:
             frz.setUpdatesEnabled(True)
             tbl.setUpdatesEnabled(True)
-        # 업데이트 재개 후 스크롤바·행 정렬 (비활성 중에 재면 뷰포트가 옛날 값)
         self._syncWatchScrollBars()
-        # 3초 갱신 뒤에도 선택 종목을 유지. 차트는 탭이 열려 있을 때만
-        wantRow = -1
-        if keepCd and keepCd in paintCds:
-            wantRow = paintCds.index(keepCd)
-        elif paintCds and getattr(self, "_sideKey", "") == "chart":
-            wantRow = 0
-        if wantRow >= 0:
-            self._chartSelBusy = True
+
+    def _onRamMgrBtn(self):
+        """관심 행의 매매/해지. 매매만 좌측 보유로 올린다."""
+        btn = self.sender()
+        if btn is None:
+            return
+        cd = str(btn.property("stkCd") or "")
+        tradeOn = bool(btn.property("tradeOn"))
+        from trading.realAcntMgr import isTradeOn, registerTrade, unregisterTrade
+        from utils.termLog import termLog
+
+        got = unregisterTrade(cd) if tradeOn else registerTrade(cd)
+        if not got.get("ok"):
+            termLog(f"[실계좌] 버튼 실패 {cd}: {got.get('errMsg')}")
+            return
+        tradeHolds = []
+        for row in getattr(self, "_acntAllHolds", None) or []:
+            if not isTradeOn(row.get("stkCd")):
+                continue
+            row["algCds"] = ["RAM01"]
+            row["algLabel"] = "실계좌"
+            tradeHolds.append(row)
+        self._holdRows = tradeHolds
+        self._paintHoldings()
+        self.refreshTradeWatch()
+
+    def _fillRealAcntWatch(self):
+        """계좌 보유를 관심에 그린다. 매매 등록 전은 모니터링만."""
+        from trading.realAcntMgr import isTradeOn
+
+        rows = list(getattr(self, "_acntAllHolds", None) or [])
+        tradeN = 0
+        for row in rows:
+            if isTradeOn(row.get("stkCd")):
+                tradeN += 1
+        self.tradeWatchTitle.setText(
+            self._titleText(
+                f"관심종목 실계좌 · {len(rows)}종 · 매매 {tradeN} · 나머지 모니터링"
+            )
+        )
+        try:
+            self._syncWatchAlgTabCounts()
+        except Exception:
+            pass
+
+        frz = self.tradeWatchFrozen
+        tbl = self.tradeWatchTbl
+        frzHeaders = ["종목", "수량", "평단", "현재가", "손익%"]
+        self._WATCH_FRZ_W = (96, 56, 72, 72, 64)
+        frz.setHorizontalHeaderLabels(frzHeaders)
+        tbl.setHorizontalHeaderLabels(["매매", "", "", ""])
+        plain = QStyledItemDelegate(frz)
+        for col in range(5):
+            frz.setItemDelegateForColumn(col, plain)
+        frz.setItemDelegateForColumn(4, SignedPnlDelegate(frz))
+
+        if not rows:
+            rows = [{"_empty": "계좌 보유 없음"}]
+        n = len(rows)
+        frz.setUpdatesEnabled(False)
+        tbl.setUpdatesEnabled(False)
+        try:
+            for r in range(tbl.rowCount()):
+                old = tbl.cellWidget(r, 0)
+                if old is not None:
+                    tbl.removeCellWidget(r, 0)
+            if hasattr(self, "_watchAlgHdr"):
+                self._watchAlgHdr.clearRowMeta()
+            frz.setRowCount(n)
+            tbl.setRowCount(n)
+            paintCds = []
+            for i, row in enumerate(rows):
+                if row.get("_empty"):
+                    vals = [str(row.get("_empty")), "", "", "", ""]
+                    cd = ""
+                    tradeOn = False
+                else:
+                    cd = str(row.get("stkCd") or "")
+                    tradeOn = isTradeOn(cd)
+                    rt = row.get("plRtNum")
+                    rtTxt = f"{float(rt):+.2f}" if rt is not None else "-"
+                    vals = [
+                        str(row.get("stkNm") or cd),
+                        str(row.get("qty") or ""),
+                        str(row.get("avgPrc") or ""),
+                        str(row.get("curPrc") or ""),
+                        rtTxt,
+                    ]
+                paintCds.append(cd)
+                for col, val in enumerate(vals):
+                    item = QTableWidgetItem(val)
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    if col == 0 and cd:
+                        item.setData(Qt.ItemDataRole.UserRole + 1, cd)
+                    if col in (1, 2, 3, 4):
+                        item.setTextAlignment(
+                            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                        )
+                    frz.setItem(i, col, item)
+                for col in range(4):
+                    item = QTableWidgetItem("")
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    tbl.setItem(i, col, item)
+                if cd:
+                    btn = QPushButton("해지" if tradeOn else "매매")
+                    btn.setProperty("stkCd", cd)
+                    btn.setProperty("tradeOn", tradeOn)
+                    btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+                    # 매매(미등록)=파랑, 해지(매매중)=주황. 같은 회색이면 상태가 안 보인다.
+                    if tradeOn:
+                        btn.setStyleSheet(
+                            "QPushButton { font-size: 11px; padding: 0 4px; "
+                            "background: #EF6C00; color: #FFFFFF; border: 1px solid #E65100; }"
+                            "QPushButton:hover { background: #F57C00; }"
+                        )
+                    else:
+                        btn.setStyleSheet(
+                            "QPushButton { font-size: 11px; padding: 0 4px; "
+                            "background: #1565C0; color: #FFFFFF; border: 1px solid #0D47A1; }"
+                            "QPushButton:hover { background: #1976D2; }"
+                        )
+                    btn.clicked.connect(self._onRamMgrBtn)
+                    tbl.setCellWidget(i, 0, btn)
+                if hasattr(self, "_watchAlgHdr"):
+                    bg = "#CE93D8" if tradeOn else "#E0E0E0"
+                    tip = "매매" if tradeOn else "모니터링"
+                    self._watchAlgHdr.setRowMeta(i, bg, tip)
+            self._watchPaintCds = paintCds
+            hdr = tbl.horizontalHeader()
+            hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+            tbl.setColumnWidth(0, 52)
+            self._fitWatchFrozenWidth()
+            for i in range(n):
+                frz.setRowHeight(i, 22)
+                tbl.setRowHeight(i, 22)
+        finally:
+            frz.setUpdatesEnabled(True)
+            tbl.setUpdatesEnabled(True)
+        self._syncWatchScrollBars()
+        self._tickRealAcntWatchPx()
+
+    def _tickRealAcntWatchPx(self):
+        """실계좌 탭: 계좌조회 스냅샷 대신 0B 실시간 현재가로 현재가·손익% 셀만 갱신."""
+        try:
+            if str(getattr(self, "_watchAlgCd", None) or "acnt") in ("leader", "rank20"):
+                return
+            frz = getattr(self, "tradeWatchFrozen", None)
+            if frz is None or not frz.isVisible():
+                return
+            from api.getAcntEvlt import heroHoldPnl
+            from trading.watchRtMonitor import getWatchLastPxMap
+            from utils.stkCdUtil import normStkCd
+
+            pxMap = getWatchLastPxMap() or {}
+            byCd = {}
+            for row in getattr(self, "_acntAllHolds", None) or []:
+                byCd[normStkCd(row.get("stkCd"))] = row
+            cds = list(getattr(self, "_watchPaintCds", None) or [])
+            for i in range(min(frz.rowCount(), len(cds))):
+                cd = normStkCd(cds[i]) if cds[i] else ""
+                row = byCd.get(cd)
+                if not cd or row is None:
+                    continue
+                apiCur = int(row.get("apiCurNum") or row.get("curNum") or 0)
+                live = _holdLivePx(pxMap.get(cd) or {}, apiCur) or apiCur
+                if not live:
+                    continue
+                qty = int(row.get("qtyNum") or 0)
+                _pnl, rt = heroHoldPnl(
+                    live,
+                    qty,
+                    int(row.get("purNum") or 0),
+                    int(row.get("avgNum") or 0),
+                    row.get("apiPnlNum", row.get("pnlNum")),
+                    row.get("apiPlRtNum", row.get("plRtNum")),
+                    apiCurPx=apiCur,
+                )
+                curTxt = f"{int(live):,}"
+                rtTxt = f"{float(rt):+.2f}" if rt is not None else "-"
+                for col, txt in ((3, curTxt), (4, rtTxt)):
+                    item = frz.item(i, col)
+                    if item is not None and item.text() != txt:
+                        item.setText(txt)
+        except Exception as err:
+            if not getattr(self, "_acntWatchPxErrLogged", False):
+                self._acntWatchPxErrLogged = True
+                from utils.termLog import termLog
+
+                termLog(f"[매매창] 실계좌탭 실시간 갱신 실패: {err}")
+
+    def _isLeaderWatchTab(self):
+        """관심종목 하위 탭이 주도주인지 (실계좌/기타와 구분)."""
+        return str(getattr(self, "_watchAlgCd", None) or "") in ("leader", "rank20")
+
+    def _updateLeaderRankStamp(self, r20Meta=None, snap=None):
+        """최종 업데이트 라벨: 스냅샷 savedAt(날짜+시각) 우선, 없으면 금일 updatedAt."""
+        lbl = getattr(self, "_leaderRankUpdatedLbl", None)
+        if lbl is None:
+            return
+        stamp = ""
+        try:
+            if r20Meta is None:
+                from utils.riseRankBoard import riseRank20Snapshot
+                r20Meta = (riseRank20Snapshot() or {}).get("meta") or {}
+            stamp = str((r20Meta or {}).get("savedAt") or "").strip()
+        except Exception:
+            stamp = ""
+        if not stamp:
             try:
-                frz.selectRow(wantRow)
-                tbl.selectRow(wantRow)
-            finally:
-                self._chartSelBusy = False
-            self._chartStkCd = paintCds[wantRow]
-            cell = frz.item(wantRow, 0)
-            self._chartStkNm = str(cell.text() or "") if cell else ""
-            if (
-                getattr(self, "_sideKey", "") == "chart"
-                and self._chartStkCd != keepCd
-            ):
-                self._reloadDeskChart()
-        if self._holdRows:
-            self._paintHoldings()
-        if not getattr(self, "_watchPrefetchQueued", False):
-            self._watchPrefetchQueued = True
-            QTimer.singleShot(80, self._prefetchWatchAlgs)
+                if snap is None:
+                    from utils.riseRankBoard import riseRankSnapshot
+                    snap = riseRankSnapshot() or {}
+                at = str((snap or {}).get("updatedAt") or "").strip()
+                if at:
+                    # 금일 스냅샷은 HH:MM만 올 수 있어 오늘 날짜를 붙인다
+                    if len(at) <= 5 and ":" in at:
+                        stamp = f"{datetime.now().strftime('%Y-%m-%d')} {at}"
+                    else:
+                        stamp = at
+            except Exception:
+                stamp = ""
+        lbl.setText(f"최종 업데이트: {stamp or '-'}")
+
+    def _syncLeaderRankTools(self):
+        """주도주 탭일 때만 업데이트 라벨·수동 버튼 표시."""
+        tools = getattr(self, "_leaderRankTools", None)
+        if tools is None:
+            return
+        show = self._isLeaderWatchTab()
+        tools.setVisible(show)
+        if not show:
+            # 수동 집계 폴링은 탭을 바꿔도 유지(완료 시 버튼·라벨 갱신)
+            return
+        self._updateLeaderRankStamp()
+        self._applyLeaderRankBtnState()
+        # 이미 집계 중이면 완료 감지용 폴링 시작
+        if self._leaderRankScanning():
+            poll = getattr(self, "_leaderRankPoll", None)
+            if poll is not None and not poll.isActive():
+                poll.start()
+
+    def _leaderRankScanning(self):
+        try:
+            from utils.riseRankBoard import riseRankSnapshot
+            st = str((riseRankSnapshot() or {}).get("status") or "")
+            return st in ("scan", "daybar")
+        except Exception:
+            return False
+
+    def _applyLeaderRankBtnState(self):
+        btn = getattr(self, "_leaderRankRefreshBtn", None)
+        if btn is None:
+            return
+        busy = self._leaderRankScanning() or bool(getattr(self, "_leaderRankManualBusy", False))
+        btn.setEnabled(not busy)
+        btn.setText("집계 중…" if busy else "수동 업데이트")
+
+    def _onLeaderRankRefresh(self):
+        """주도주 20일누적·금일 순위 강제 재조회. 진행 중이면 중복 시작 안 함."""
+        if not self._isLeaderWatchTab():
+            return
+        if self._leaderRankScanning():
+            self._applyLeaderRankBtnState()
+            return
+        from utils.riseRankBoard import restartRiseRankBoard
+        from utils.termLog import termLog
+
+        self._leaderRankManualBusy = True
+        self._applyLeaderRankBtnState()
+        try:
+            restartRiseRankBoard()
+            termLog("[매매창] 주도주 수동 업데이트 시작")
+        except Exception as err:
+            self._leaderRankManualBusy = False
+            self._applyLeaderRankBtnState()
+            termLog(f"[매매창] 주도주 수동 업데이트 실패: {err}")
+            return
+        poll = getattr(self, "_leaderRankPoll", None)
+        if poll is not None and not poll.isActive():
+            poll.start()
+        # 상태가 scan으로 잡힐 때까지 한 번 더
+        QTimer.singleShot(500, self._applyLeaderRankBtnState)
+
+    def _pollLeaderRankScan(self):
+        """수동/자동 집계 완료 시 버튼 복구 + 화면·일시 갱신."""
+        if self._leaderRankScanning():
+            self._applyLeaderRankBtnState()
+            return
+        self._leaderRankManualBusy = False
+        poll = getattr(self, "_leaderRankPoll", None)
+        if poll is not None:
+            poll.stop()
+        self._applyLeaderRankBtnState()
+        self._updateLeaderRankStamp()
+        if self._isLeaderWatchTab():
+            try:
+                self.refreshTradeWatch()
+            except Exception:
+                pass
+
+    def _fillTradeWatch(self):
+        """관심종목=계좌보유, 주도주=상승순위 보드."""
+        kind = str(getattr(self, "_watchAlgCd", None) or "acnt")
+        if kind in ("leader", "rank20"):
+            self._fillRiseRankWatch()
+        else:
+            self._fillRealAcntWatch()
+        try:
+            self._syncLeaderRankTools()
+        except Exception:
+            pass

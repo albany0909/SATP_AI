@@ -21,6 +21,13 @@ def _runnerDayInqRank():
     return runDayInqRankNow()
 
 
+def _runnerWatchDayPrc():
+    """실계좌·관심종목 일봉 증분 (DB maxDt 이후분만)."""
+    from utils.watchDayPrcLoad import loadDayPrcForWatchHolds
+
+    return loadDayPrcForWatchHolds(refetchLastDay=True)
+
+
 def _runnerRankDayPrc():
     """순위 대상 종목 1년 일봉만 보강 (순위 API 재호출 없음)."""
     from utils.rankDayPrcLoad import DEFAULT_MONTHS, loadDayPrcForRankStks
@@ -113,6 +120,7 @@ _RUNNERS = {
     "usMorningLoad": _runnerUsMorningLoad,
     "watchNewsDisc": _runnerWatchNewsDisc,
     "dayInqRank": _runnerDayInqRank,
+    "watchDayPrc": _runnerWatchDayPrc,
     "rankDayPrc": _runnerRankDayPrc,
     "ntlFirst": _runnerNtlFirst,
     "dayInvSr": _runnerDayInvSr,

@@ -1,19 +1,159 @@
 """login paper / login real / login renewal 명령 처리"""
 
+import os
 import re
+from pathlib import Path
 
 from api.getToken import issueAccToken
 from config.config import (
-    paper_app_key,
-    paper_app_secret,
     paper_host_url,
-    real_app_key,
-    real_app_secret,
     real_host_url,
 )
 from config import runtimeState
 from realtime.wsHub import isHubRunning, restartWsHub
 from utils.termLog import termLog
+
+
+def _modeAppKeys(mode: str):
+    """
+    모드별 앱키 — config 모듈 상수(최초 import 스냅샷) 대신
+    deskApiKeys.json / .env / 환경변수 / loginLocal 순으로 읽는다.
+    """
+    from config.loadEnv import ensureEnvLoaded, resolveEnvFilePaths
+    from utils.localApiKeyStore import loadApiKeysFromEnv, secretEnvPath
+
+    ensureEnvLoaded(force=True)
+    keys = loadApiKeysFromEnv()
+
+    def _pick(k):
+        return str((keys or {}).get(k) or "").strip()
+
+    def _fillFromDict(data: dict):
+        if not isinstance(data, dict):
+            return
+        for k in (
+            "realAppKey",
+            "realAppSecret",
+            "paperAppKey",
+            "paperAppSecret",
+        ):
+            if not _pick(k):
+                val = str(data.get(k) or "").strip()
+                if val:
+                    keys[k] = val
+
+    # 1) 런처가 tradeApp 에 남긴 deskApiKeys.json (최우선 폴백)
+    for path in _deskApiKeyPaths():
+        try:
+            if not path.is_file():
+                continue
+            import json
+
+            _fillFromDict(json.loads(path.read_text(encoding="utf-8")))
+        except Exception:
+            continue
+
+    # 2) 로그인 런처 loginLocal.json
+    if mode == "paper":
+        need = ("paperAppKey", "paperAppSecret")
+    else:
+        need = ("realAppKey", "realAppSecret")
+    if not all(_pick(k) for k in need):
+        for path in _loginLocalKeyPaths():
+            try:
+                if not path.is_file():
+                    continue
+                import json
+
+                _fillFromDict(json.loads(path.read_text(encoding="utf-8")))
+            except Exception:
+                continue
+
+    appKey = _pick("paperAppKey" if mode == "paper" else "realAppKey")
+    appSecret = _pick("paperAppSecret" if mode == "paper" else "realAppSecret")
+    # 진단(시크릿 미출력)
+    try:
+        envPaths = [str(p) for p in resolveEnvFilePaths()]
+        termLog(
+            f"[login] keys mode={mode} present={bool(appKey and appSecret)} "
+            f"secretEnv={secretEnvPath()} cands={envPaths}"
+        )
+    except Exception:
+        pass
+    if mode == "paper":
+        return paper_host_url, appKey, appSecret, "모의투자"
+    return real_host_url, appKey, appSecret, "실투자"
+
+
+def _deskApiKeyPaths():
+    """런처가 기록한 deskApiKeys.json 후보."""
+    from utils.appPaths import projectRoot
+
+    out = []
+    seen = set()
+
+    def _add(p: Path):
+        try:
+            key = str(p.resolve())
+        except Exception:
+            key = str(p)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(p)
+
+    root = projectRoot()
+    _add(root / "config" / "data" / "deskApiKeys.json")
+    if root.name.lower() == "tradeapp":
+        _add(root.parent / "config" / "data" / "deskApiKeys.json")
+    ir = str(os.environ.get("SATP_TRADE_APP_DIR") or "").strip()
+    if ir:
+        p = Path(ir)
+        _add(p / "config" / "data" / "deskApiKeys.json")
+        if p.name.lower() == "tradeapp":
+            _add(p.parent / "config" / "data" / "deskApiKeys.json")
+        else:
+            _add(p / "tradeApp" / "config" / "data" / "deskApiKeys.json")
+    return out
+
+
+def _loginLocalKeyPaths():
+    """앱키 폴백용 loginLocal.json 후보."""
+    from utils.appPaths import projectRoot
+    from utils.localApiKeyStore import secretEnvPath
+
+    out = []
+    seen = set()
+
+    def _add(p: Path):
+        try:
+            key = str(p.resolve())
+        except Exception:
+            key = str(p)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(p)
+
+    root = projectRoot()
+    _add(root / "config" / "data" / "loginLocal.json")
+    if root.name.lower() == "tradeapp":
+        _add(root.parent / "config" / "data" / "loginLocal.json")
+    try:
+        envParent = secretEnvPath().parent
+        _add(envParent / "config" / "data" / "loginLocal.json")
+    except Exception:
+        pass
+    ir = str(os.environ.get("SATP_TRADE_APP_DIR") or "").strip()
+    if ir:
+        p = Path(ir)
+        _add(p / "config" / "data" / "loginLocal.json")
+        if p.name.lower() == "tradeapp":
+            _add(p.parent / "config" / "data" / "loginLocal.json")
+        else:
+            _add(p / "tradeApp" / "config" / "data" / "loginLocal.json")
+    return out
+
 
 
 def _syncDeskTradeMode(mode):
@@ -67,23 +207,22 @@ def handleLogin(mode, force=False):
     mode = (mode or "").strip().lower()
 
     # 모드별 호스트·앱키 선택 — 잘못된 값이면 즉시 안내
-    if mode == "paper":
-        hostUrl = paper_host_url
-        appKey = paper_app_key
-        appSecret = paper_app_secret
-        modeLabel = "모의투자"
-        already = runtimeState.isPaperLoggedIn()
-    elif mode == "real":
-        hostUrl = real_host_url
-        appKey = real_app_key
-        appSecret = real_app_secret
-        modeLabel = "실투자"
-        already = runtimeState.isRealLoggedIn()
-    else:
+    if mode not in ("paper", "real"):
         return (
             "사용법:\n"
             "login paper / login real\n"
             "login renewal {HH:MM}"
+        )
+    hostUrl, appKey, appSecret, modeLabel = _modeAppKeys(mode)
+    already = (
+        runtimeState.isPaperLoggedIn()
+        if mode == "paper"
+        else runtimeState.isRealLoggedIn()
+    )
+    if not appKey or not appSecret:
+        return (
+            f"[{modeLabel}] 앱키가 없습니다. "
+            "로그인창에서 앱키를 저장한 뒤 다시 실행하세요."
         )
 
     # 만료 여유 5분 이상 남으면 재발급하지 않음 (기동·중복 login 시 429 방지)

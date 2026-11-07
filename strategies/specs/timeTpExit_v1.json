@@ -1,0 +1,99 @@
+{
+    "stratId":  "timeTpExit_v1",
+    "algCd":  "TPX01",
+    "name":  "시간별 분할익절·청산",
+    "status":  "draft",
+    "version":  4,
+    "enabled":  false,
+    "stratLive":  false,
+    "timeframe":  "intraday",
+    "docPath":  "strategies/docs/timeTpExit_v1.md",
+    "attachTo":  [
+
+                 ],
+    "universe":  {
+                     "type":  "tradeRegisteredHoldings",
+                     "note":  "매매등록(trade-on) 보유종목(qty\u003e0)만. 전체 보유/LDR01 스카우트 목록 아님"
+                 },
+    "params":  {
+                   "tpStartTm":  "151500",
+                   "maExitTm":  "151900",
+                   "tpLevels":  [
+                                    {
+                                        "step":  1,
+                                        "minPnlPct":  10.0,
+                                        "sellRatio":  0.1
+                                    },
+                                    {
+                                        "step":  2,
+                                        "minPnlPct":  20.0,
+                                        "sellRatio":  0.2
+                                    },
+                                    {
+                                        "step":  3,
+                                        "minPnlPct":  30.0,
+                                        "sellRatio":  0.3
+                                    }
+                                ],
+                   "sellRatioBase":  "remainingQtyAtCheck",
+                   "resetPnlPct":  0.0,
+                   "negAfterTpCutRatio":  0.5,
+                   "maPeriod":  20,
+                   "maExitMinPnlPct":  10.0,
+                   "maExitKeepQty":  1,
+                   "qtyRound":  "floor_min1_whenQtyGe2",
+                   "pnlBase":  "avgBuyPrice_feeExcluded",
+                   "onePerDayPerStep":  true,
+                   "paperOnly":  true,
+                   "tpWindowStartTm":  "151500",
+                   "tpWindowEndTm":  "152000",
+                   "tpWindowEndExclusive":  true,
+                   "maExitWindowStartTm":  "151900",
+                   "maExitWindowEndTm":  "152000",
+                   "pnlSource":  "currentInWindow_notIntradayPeak",
+                   "negAfterTpOrder":  "cutThenReset",
+                   "minHoldQty":  2,
+                   "excludeQtyEq1":  true
+               },
+    "rules":  {
+                  "tp":  "15:15~15:20 직전 창 안의 현재 수익률만 판단(장중 고점 무시). \u003e=10/20/30% 시 단계별 1회, 체크 시점 남은 수량의 10/20/30% 매도. 계산\u003c1주면 1주",
+                  "reset":  "창 안 수익률\u003c=0%면 1·2·3차 플래그 초기화",
+                  "negCut":  "1~3차 중 하나라도 익절 후 수익률\u003c0%면 남은 수량 50% 청산(\u003c1주면 1주) 먼저, 그 다음 플래그 초기화",
+                  "maExit":  "15:19~15:20 가격/수익률만 사용: 현재가\u003cSMA20 음봉 이탈 \u0026 수익률\u003e=10%면 1주만 남기고 매도",
+                  "exclude":  "보유수량==1이면 TPX01 전체 제외(1·2·3차 익절, 익절 후 50% 청산, 15:19 20일선 1주 남김 청산 모두 안 함). 1주 미만이면 1주 매도는 qty\u003e=2일 때만.",
+                  "lossGuard":  "모든 TPX01 매도(1~3차 익절, 익절 후 50% 청산, 20일선 청산)에서 예상 실현손익\u003c0이면 주문하지 않고 텔레그램으로 예상손실금+매도사유 푸쉬 후 진행 여부(예/아니오) 질문. 예일 때만 매도, 무응답/아니오는 보류."
+              },
+    "fill":  {
+                 "orderType":  "market",
+                 "feeRate":  0.0015
+             },
+    "notes":  "v4 draft. t212u: 손실 매도는 자동 주문 금지, 텔레그램 확인 후 진행. 라이브·주문/재시작 없음.",
+    "lossGuard":  {
+                      "enabled":  true,
+                      "appliesTo":  [
+                                        "tp",
+                                        "negCut",
+                                        "maExit"
+                                    ],
+                      "trigger":  "expectedRealizedPnl\u003c0",
+                      "expectedLossCalc":  "(현재가-평균매입가)*매도수량 - 매도수수료/세금(feeRate)",
+                      "action":  "holdOrder_pushTelegram_askConfirm",
+                      "telegramFields":  [
+                                             "종목",
+                                             "매도사유(rule)",
+                                             "매도수량",
+                                             "현재가",
+                                             "평균매입가",
+                                             "예상손실금",
+                                             "수익률"
+                                         ],
+                      "confirmReply":  [
+                                           "예",
+                                           "아니오"
+                                       ],
+                      "onYes":  "해당 매도 1회 실행(실행 직전 재계산, 손실 유지 시)",
+                      "onNo":  "매도 안 함, 당일 같은 rule 재질문 안 함",
+                      "onTimeout":  "매도 안 함 (기본 보류)",
+                      "flagsOnHold":  "negCut 보류 시 플래그 초기화도 보류(승인/거절 후 처리)"
+                  }
+}

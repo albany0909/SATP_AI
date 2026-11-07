@@ -19,7 +19,7 @@ from realtime.wsHub import (
 )
 from utils.stkCdUtil import normStkCd
 from utils.termLog import termLog
-from utils.watchStkStore import listTradeWatch
+from utils.deskDataApi import listTradeWatch
 
 _HANDLER_NAME = "watchRt0B"
 _LOGIN_HANDLER_NAME = "watchRt0BLogin"
@@ -28,6 +28,10 @@ _MAX_STK = 180
 _MAX_ITEM = 200
 _CHUNK = 40
 _STATE_PATH = Path(__file__).resolve().parents[1] / "config" / "data" / "watchRtState.json"
+# 재시작 후에도 마지막 0B 시세를 유지 (일봉 시드보다 우선)
+_PX_CACHE_PATH = Path(__file__).resolve().parents[1] / "config" / "data" / "watchLastPx.json"
+_PX_FLUSH_SEC = 2.0
+
 
 def _nzQuote(raw):
     """키움 FID 공백은 미수신으로 본다."""
@@ -56,6 +60,116 @@ _lastPx = {}
 # 시세구간 외 일봉 종가 시드 (0B 들어오면 덮어씀)
 _dayCloseSeeded = set()
 _dayCloseSeedYmd = ""
+_pxCacheLoaded = False
+_pxSavePending = False
+_lastPxFlushAt = 0.0
+
+
+def _hasLivePx(info):
+    """캐시에 표시 가능한 현재가가 있는지."""
+    info = info or {}
+    return bool(
+        _nzQuote(info.get("curPrc"))
+        or _nzQuote(info.get("krxPrc"))
+        or _nzQuote(info.get("nxtPrc"))
+    )
+
+
+def _isLiveQuoteSrc(info):
+    """0B(또는 복원된 실시간) 시세. dayClose 시드와 구분."""
+    src = str((info or {}).get("src") or "")
+    return src == "0B" or (src and src != "dayClose" and _hasLivePx(info))
+
+
+def _loadLastPxCache():
+    """
+    재기동 직후 메모리 시세가 비어 일봉(낡은 종가)으로 떨어지지 않게
+    직전 0B 스냅샷을 복원한다. dayClose 보다 최신 tickYmd 만 살린다.
+    """
+    global _pxCacheLoaded
+    if _pxCacheLoaded:
+        return
+    _pxCacheLoaded = True
+    try:
+        if not _PX_CACHE_PATH.is_file():
+            return
+        data = json.loads(_PX_CACHE_PATH.read_text(encoding="utf-8"))
+        quotes = data.get("quotes") if isinstance(data, dict) else None
+        if not isinstance(quotes, dict):
+            return
+        restored = 0
+        with _lock:
+            for rawCd, rawInfo in quotes.items():
+                cd = normStkCd(rawCd)
+                if not cd or not isinstance(rawInfo, dict):
+                    continue
+                # 이미 메모리에 실시간/시드가 있으면 덮지 않음
+                cur = _lastPx.get(cd) or {}
+                if _hasLivePx(cur):
+                    continue
+                info = dict(rawInfo)
+                if not _hasLivePx(info):
+                    continue
+                # 파일에 src 없으면 0B 복원으로 본다
+                if not info.get("src"):
+                    info["src"] = "0B"
+                _lastPx[cd] = info
+                restored += 1
+        if restored:
+            termLog(f"[watchRt] 시세캐시 복원 {restored}종 ({_PX_CACHE_PATH.name})")
+    except Exception as err:
+        termLog(f"[watchRt] 시세캐시 복원 실패: {err}")
+
+
+def _markPxDirty():
+    """0B 갱신 후 디스크 저장 예약."""
+    global _pxSavePending
+    _pxSavePending = True
+
+
+def _flushLastPxCache(force=False):
+    """
+    _lastPx 스냅샷을 watchLastPx.json 에 기록.
+    틱마다 IO 하지 않도록 기본 2초 디바운스.
+    """
+    global _pxSavePending, _lastPxFlushAt
+    if not _pxSavePending and not force:
+        return
+    now = time.time()
+    if not force and (now - _lastPxFlushAt) < _PX_FLUSH_SEC:
+        return
+    with _lock:
+        snap = {}
+        for cd, info in _lastPx.items():
+            if not isinstance(info, dict) or not _hasLivePx(info):
+                continue
+            # dayClose 만 있는 종목은 파일이 일봉보다 우선해 버리면 안 되므로
+            # 0B(실시간·복원) 위주로 저장한다.
+            if not _isLiveQuoteSrc(info):
+                continue
+            row = dict(info)
+            if not row.get("tickYmd"):
+                row["tickYmd"] = datetime.now().strftime("%Y%m%d")
+            snap[cd] = row
+        pending = _pxSavePending
+        _pxSavePending = False
+        _lastPxFlushAt = now
+    if not snap and not pending and not force:
+        return
+    try:
+        _PX_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "updatedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "quotes": snap,
+        }
+        _PX_CACHE_PATH.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as err:
+        termLog(f"[watchRt] 시세캐시 저장 실패: {err}")
+        with _lock:
+            _pxSavePending = True
 
 
 def _isMonSessionNow():
@@ -126,6 +240,16 @@ def _seedDayCloseQuotes(codes):
         cds.append(cd)
     if not cds:
         return 0
+
+    # client 등 로컬 DB 없으면 STP SMA/종가 API
+    try:
+        from utils.dbConn import isLocalDbEnabled
+
+        if not isLocalDbEnabled():
+            return _seedDayCloseFromSmaApi(cds)
+    except Exception:
+        pass
+
     filled = 0
     try:
         from utils.dbConn import openDbConn
@@ -136,13 +260,13 @@ def _seedDayCloseQuotes(codes):
                 for cd in cds:
                     with _lock:
                         curInfo = _lastPx.get(cd) or {}
-                        # 실시간(0B) 값이 있으면 유지
-                        if curInfo.get("src") != "dayClose" and (
-                            _nzQuote(curInfo.get("krxPrc"))
-                            or _nzQuote(curInfo.get("nxtPrc"))
-                        ):
-                            _dayCloseSeeded.add(cd)
-                            continue
+                        # 실시간(0B·복원) 값이 있으면 유지 — 일봉은 아래에서 날짜 비교
+                        if _isLiveQuoteSrc(curInfo):
+                            tickYmd = str(curInfo.get("tickYmd") or "")
+                            # tickYmd 없으면 최신 틱으로 보고 일봉으로 덮지 않음
+                            if not tickYmd:
+                                _dayCloseSeeded.add(cd)
+                                continue
                         # 오늘 이미 보강 시도(데이터 없음 포함)면 재조회하지 않는다
                         if cd in _dayCloseSeeded:
                             continue
@@ -187,12 +311,12 @@ def _seedDayCloseQuotes(codes):
                     with _lock:
                         # 시드 중에 0B 가 들어왔으면 덮지 않음
                         nowInfo = _lastPx.get(cd) or {}
-                        if nowInfo.get("src") != "dayClose" and (
-                            _nzQuote(nowInfo.get("krxPrc"))
-                            or _nzQuote(nowInfo.get("nxtPrc"))
-                        ):
-                            _dayCloseSeeded.add(cd)
-                            continue
+                        if _isLiveQuoteSrc(nowInfo):
+                            tickYmd = str(nowInfo.get("tickYmd") or "")
+                            # 일봉 종가일이 마지막 틱일 이하면 낡은 시드 — 0B 유지
+                            if (not tickYmd) or (tradeDt and tradeDt <= tickYmd):
+                                _dayCloseSeeded.add(cd)
+                                continue
                         _lastPx[cd] = {
                             "curPrc": prcTxt,
                             "fluRt": fluTxt,
@@ -212,6 +336,13 @@ def _seedDayCloseQuotes(codes):
             except Exception:
                 pass
     except Exception as err:
+        try:
+            from utils.dbConn import DbDisabledError, DbDownError
+
+            if isinstance(err, (DbDisabledError, DbDownError)):
+                return _seedDayCloseFromSmaApi(cds)
+        except Exception:
+            pass
         termLog(f"[watchRt] 일봉종가 시드 실패: {err}")
         return filled
     if filled:
@@ -219,15 +350,87 @@ def _seedDayCloseQuotes(codes):
     return filled
 
 
+def _seedDayCloseFromSmaApi(cds):
+    """STP listDaySma 로 종가·등락 시드 (client)."""
+    global _dayCloseSeeded
+    try:
+        from utils.deskDataApi import loadPriorSmaMap
+    except Exception as err:
+        termLog(f"[watchRt] SMA API import 실패: {err}")
+        return 0
+    need = []
+    with _lock:
+        for cd in cds:
+            if cd in _dayCloseSeeded:
+                continue
+            curInfo = _lastPx.get(cd) or {}
+            if _isLiveQuoteSrc(curInfo) and not str(curInfo.get("tickYmd") or ""):
+                _dayCloseSeeded.add(cd)
+                continue
+            need.append(cd)
+    if not need:
+        return 0
+    try:
+        mp = loadPriorSmaMap(need) or {}
+    except Exception as err:
+        termLog(f"[watchRt] 일봉종가 시드(API) 실패: {err}")
+        return 0
+    filled = 0
+    for cd in need:
+        rec = mp.get(cd) or {}
+        closePx = rec.get("lastClose")
+        try:
+            closePx = abs(float(closePx)) if closePx is not None else 0
+        except (TypeError, ValueError):
+            closePx = 0
+        with _lock:
+            if cd in _dayCloseSeeded and _isLiveQuoteSrc(_lastPx.get(cd) or {}):
+                continue
+            if closePx <= 0:
+                _dayCloseSeeded.add(cd)
+                continue
+            fluRt = rec.get("fluRt")
+            prcTxt = str(int(round(closePx)))
+            # 등락은 ka10001/0B 공식값만 쓴다. SMA fluRt 는 직전 거래일 수치라
+            # 장외·휴장에 +8%대 오표시가 난다 → 시드는 가격만.
+            fluTxt = ""
+            tradeDt = str(rec.get("lastDt") or "")[:8]
+            nowInfo = _lastPx.get(cd) or {}
+            if _isLiveQuoteSrc(nowInfo):
+                tickYmd = str(nowInfo.get("tickYmd") or "")
+                if (not tickYmd) or (tradeDt and tradeDt <= tickYmd):
+                    _dayCloseSeeded.add(cd)
+                    continue
+            _lastPx[cd] = {
+                "curPrc": prcTxt,
+                "fluRt": fluTxt,
+                "krxPrc": prcTxt,
+                "krxFlu": fluTxt,
+                "tm": "153000",
+                "krxTm": "153000",
+                "exch": "KRX",
+                "src": "dayClose",
+                "dayCloseDt": tradeDt,
+            }
+            _dayCloseSeeded.add(cd)
+        filled += 1
+    if filled:
+        termLog(f"[watchRt] 일봉종가 시드(API) {filled}종")
+    return filled
+
+
 # 전일종가가 없어 등락 보강을 포기한 (일자, 종목)
 _fluFillSkip = set()
 
 
-def fillMissingFluQuotes(codes, pxByCd=None):
+def fillMissingFluQuotes(codes, pxByCd=None, force=False):
     """
-    등락률이 비면 일봉 전일대비로만 채운다.
-    0B 가 가격 FID 만 보내고 등락(FID 12)을 비운 종목·보유 그리드 보강.
+    등락률이 비면 보강한다.
+    force=True(보유 dayClose 등): 키움 ka10001 flu_rt/기준가 우선.
+      DB 최신 일봉은 적재 공백 시 기준가와 달라 +8%대 오표시가 난다.
+    force=False: 등락 빈 칸만 전일종가 대비로 채움.
     pxByCd 는 0B 캐시에 현재가가 없을 때 쓰는 힌트(계좌평가 현재가).
+    client(로컬 DB 없음): STP SMA 전일종가 + 현재가로 계산.
     """
     hint = pxByCd or {}
     cds = []
@@ -242,82 +445,156 @@ def fillMissingFluQuotes(codes, pxByCd=None):
             continue
         with _lock:
             info = _lastPx.get(cd) or {}
-        flu = info.get("fluRt") or info.get("krxFlu") or info.get("nxtFlu")
-        if flu is not None and str(flu).strip() != "":
-            continue
+        if not force:
+            flu = info.get("fluRt") or info.get("krxFlu") or info.get("nxtFlu")
+            if flu is not None and str(flu).strip() != "":
+                continue
         cds.append(cd)
     if not cds:
         return 0
     filled = 0
-    try:
-        from utils.dbConn import openDbConn
 
-        conn = openDbConn()
+    def _applyFlu(cd, fluTxt):
+        nonlocal filled
+        with _lock:
+            info = dict(_lastPx.get(cd) or {})
+            if not force:
+                for key in ("fluRt", "krxFlu", "nxtFlu"):
+                    val = info.get(key)
+                    if val is not None and str(val).strip() != "":
+                        return
+            info["fluRt"] = fluTxt
+            info["krxFlu"] = fluTxt
+            _lastPx[cd] = info
+        filled += 1
+
+    def _curPxOf(cd):
+        with _lock:
+            info = dict(_lastPx.get(cd) or {})
+            curRaw = (
+                info.get("curPrc") or info.get("krxPrc") or info.get("nxtPrc")
+            )
         try:
-            with conn.cursor() as cur:
-                for cd in cds:
-                    cur.execute(
-                        """
-                        SELECT CLOSE_PRC
-                        FROM AI_DAY_STK_PRC
-                        WHERE STK_CD=%s AND INDC_TP='0'
-                          AND CLOSE_PRC IS NOT NULL
-                          AND TRADE_DT<%s
-                        ORDER BY TRADE_DT DESC
-                        LIMIT 1
-                        """,
-                        (cd, today),
-                    )
-                    row = cur.fetchone() or {}
-                    try:
-                        prevPx = abs(float(row.get("CLOSE_PRC") or 0))
-                    except (TypeError, ValueError):
-                        prevPx = 0
-                    if prevPx <= 0:
-                        _fluFillSkip.add((today, cd))
-                        continue
-                    with _lock:
-                        info = dict(_lastPx.get(cd) or {})
-                        curRaw = (
-                            info.get("curPrc")
-                            or info.get("krxPrc")
-                            or info.get("nxtPrc")
-                        )
-                    curPx = 0
-                    try:
-                        s = str(curRaw or "").replace(",", "").strip()
-                        if s[:1] in "+-":
-                            s = s[1:]
-                        curPx = abs(float(s)) if s else 0
-                    except (TypeError, ValueError):
-                        curPx = 0
-                    if curPx <= 0:
-                        try:
-                            curPx = abs(float(hint.get(cd) or 0))
-                        except (TypeError, ValueError):
-                            curPx = 0
-                    if curPx <= 0:
-                        continue
-                    fluTxt = f"{(curPx - prevPx) / prevPx * 100.0:+.2f}"
-                    with _lock:
-                        info = dict(_lastPx.get(cd) or {})
-                        hasFlu = False
-                        for key in ("fluRt", "krxFlu", "nxtFlu"):
-                            val = info.get(key)
-                            if val is not None and str(val).strip() != "":
-                                hasFlu = True
-                                break
-                        if not hasFlu:
-                            info["fluRt"] = fluTxt
-                            if not (info.get("krxFlu") and str(info.get("krxFlu")).strip()):
-                                info["krxFlu"] = fluTxt
-                            _lastPx[cd] = info
-                    filled += 1
-        finally:
-            conn.close()
+            s = str(curRaw or "").replace(",", "").strip()
+            if s[:1] in "+-":
+                s = s[1:]
+            curPx = abs(float(s)) if s else 0
+        except (TypeError, ValueError):
+            curPx = 0
+        if curPx <= 0:
+            try:
+                curPx = abs(float(hint.get(cd) or 0))
+            except (TypeError, ValueError):
+                curPx = 0
+        return curPx
+
+    def _stillNeed():
+        out = []
+        for cd in cds:
+            with _lock:
+                info = _lastPx.get(cd) or {}
+            flu = info.get("fluRt") or info.get("krxFlu") or info.get("nxtFlu")
+            if flu is not None and str(flu).strip() != "":
+                continue
+            out.append(cd)
+        return out
+
+    # 키움 공식 등락(ka10001 flu_rt / 기준가) — 항상 최우선
+    # force=True 뿐 아니라 빈 칸 보강도 공식값을 먼저 쓴다 (STP/DB +8%대 오표시 방지)
+    try:
+        from utils.liveOhlcSnap import fetchOfficialFlu
+
+        for cd in list(cds):
+            flu = fetchOfficialFlu(cd)
+            if flu is None:
+                continue
+            _applyFlu(cd, f"{float(flu):+.2f}")
+            # 공식값으로 채웠으면 dayClose 오등락 잔상을 끊는다
+            with _lock:
+                info = dict(_lastPx.get(cd) or {})
+                if str(info.get("src") or "") == "dayClose":
+                    info["fluSrc"] = "ka10001"
+                    _lastPx[cd] = info
     except Exception as err:
-        termLog(f"[watchRt] 등락률 보강 실패: {err}")
+        termLog(f"[watchRt] 공식등락 보강 실패: {err}")
+
+    need = _stillNeed()
+    if not need:
         return filled
+
+    # force(보유 dayClose 등): 공식 실패 시 DB/STP 로 억지 채우지 않음
+    if force:
+        return filled
+
+    # 로컬 DB 전일종가 (main, 비강제)
+    useLocalDb = True
+    try:
+        from utils.dbConn import isLocalDbEnabled
+
+        useLocalDb = bool(isLocalDbEnabled())
+    except Exception:
+        useLocalDb = False
+
+    if useLocalDb:
+        try:
+            from utils.dbConn import openDbConn
+
+            conn = openDbConn()
+            try:
+                with conn.cursor() as cur:
+                    for cd in list(need):
+                        cur.execute(
+                            """
+                            SELECT CLOSE_PRC
+                            FROM AI_DAY_STK_PRC
+                            WHERE STK_CD=%s AND INDC_TP='0'
+                              AND CLOSE_PRC IS NOT NULL
+                              AND TRADE_DT<%s
+                            ORDER BY TRADE_DT DESC
+                            LIMIT 1
+                            """,
+                            (cd, today),
+                        )
+                        row = cur.fetchone() or {}
+                        try:
+                            prevPx = abs(float(row.get("CLOSE_PRC") or 0))
+                        except (TypeError, ValueError):
+                            prevPx = 0
+                        if prevPx <= 0:
+                            continue
+                        curPx = _curPxOf(cd)
+                        if curPx <= 0:
+                            continue
+                        _applyFlu(
+                            cd, f"{(curPx - prevPx) / prevPx * 100.0:+.2f}"
+                        )
+            finally:
+                conn.close()
+        except Exception as err:
+            termLog(f"[watchRt] 등락률 DB 보강 실패: {err}")
+
+    need = _stillNeed()
+    if not need:
+        return filled
+
+    # client 등: STP 전일종가 대비 계산만 (fluRt 필드 직접 사용 금지)
+    try:
+        from utils.deskDataApi import loadPriorSmaMap
+
+        mp = loadPriorSmaMap(need) or {}
+        for cd in need:
+            rec = mp.get(cd) or {}
+            try:
+                prevPx = abs(float(rec.get("lastClose") or 0))
+            except (TypeError, ValueError):
+                prevPx = 0
+            curPx = _curPxOf(cd)
+            if prevPx > 0 and curPx > 0:
+                _applyFlu(cd, f"{(curPx - prevPx) / prevPx * 100.0:+.2f}")
+            elif prevPx <= 0:
+                _fluFillSkip.add((today, cd))
+    except Exception as err:
+        termLog(f"[watchRt] 등락률 STP 보강 실패: {err}")
     return filled
 
 
@@ -395,15 +672,42 @@ def readWatchRtState():
 
 
 def _monCodes():
-    """USE_TRADE=Y ∪ 원장 미청산. 장 시작 전 이어서 매매할 종목을 빠뜨리지 않는다."""
+    """USE_TRADE=Y ∪ 알고리즘 관리종목 ∪ 원장 미청산."""
     codes = []
     seen = set()
-    rows = listTradeWatch(limit=_MAX_STK)
+    # watchRt.subscribeScope: "realAcnt"=실계좌(RAM01)·전략탭·미청산 원장만, "all"=관심(USE_TRADE=Y) 포함
+    scope = "all"
+    try:
+        from config.settingsStore import loadSettings
+
+        scope = str(((loadSettings() or {}).get("watchRt") or {}).get("subscribeScope") or "all").strip()
+    except Exception:
+        scope = "all"
+    rows = [] if scope == "realAcnt" else listTradeWatch(limit=_MAX_STK)
     for r in rows:
         cd = normStkCd(r.get("STK_CD"))
         if cd and cd not in seen:
             seen.add(cd)
             codes.append(cd)
+    # client 매매창 탭(ALG) 종목도 0B 구독·시드 대상
+    try:
+        from trading.deskLiveAlgs import listDeskLiveAlgCds
+        from utils.deskDataApi import listAlgStk
+
+        algCds = list(listDeskLiveAlgCds(enabledOnly=False) or [])
+        if "RAM01" not in algCds:
+            # 실계좌 관심은 전략 탭과 별도로 시세를 받는다
+            algCds.append("RAM01")
+        for alg in algCds:
+            if len(codes) >= _MAX_STK:
+                break
+            for row in listAlgStk(alg) or []:
+                cd = normStkCd(row.get("stkCd") or row.get("STK_CD"))
+                if cd and cd not in seen and len(codes) < _MAX_STK:
+                    seen.add(cd)
+                    codes.append(cd)
+    except Exception as err:
+        termLog(f"[watchRt] 관리종목 병합 실패: {err}")
     try:
         from utils.stratOrdLedgerStore import listOpenLedgerStkCds
 
@@ -653,6 +957,11 @@ def _unregWatch(ws, reason):
             except Exception:
                 pass
     _writeState(False, [], reason)
+    # 시세 종료 시 마지막 0B 를 디스크에 남긴다 (재시작·장외 평가용)
+    try:
+        _flushLastPxCache(force=True)
+    except Exception as err:
+        termLog(f"[watchRt] 시세캐시 강제저장 실패: {err}")
     termLog(f"[watchRt] 0B 해지 ({reason}) {len(codes)}종")
 
 
@@ -722,12 +1031,20 @@ def _onWsMessage(msg):
                 info["tm"] = info.get("krxTm") or info.get("nxtTm")
                 info["exch"] = "KRX"
             info["src"] = "0B"
+            info["tickYmd"] = datetime.now().strftime("%Y%m%d")
             info.pop("dayCloseDt", None)
             _lastPx[stkCd] = info
-            _dayCloseSeeded.discard(stkCd)            # 매매 판단은 선택한 거래소 틱만. NXT 시세는 KRX 매매여도 캐시한다.
+            _dayCloseSeeded.discard(stkCd)
+            # 매매 판단은 선택한 거래소 틱만. NXT 시세는 KRX 매매여도 캐시한다.
             fireTick = (tradeNxt and venue == "NXT") or (
                 (not tradeNxt) and venue == "KRX"
             )
+        _markPxDirty()
+        # 디바운스 저장 (락 밖)
+        try:
+            _flushLastPxCache(force=False)
+        except Exception:
+            pass
         if not fireTick:
             continue
         # 락 밖에서 이평터치 판단 (주문 대기 시 0B 수신을 막지 않음)
@@ -769,12 +1086,18 @@ def _mktLoop():
             wasOpen = nowOpen
         except Exception as err:
             termLog(f"[watchRt] 장시간 감시 오류: {err}")
+        try:
+            _flushLastPxCache(force=False)
+        except Exception:
+            pass
         time.sleep(1)
 
 
 def startWatchRtMonitor():
     """관심종목 0B 감시 루프 기동. main.py 에서 WS 기동 전에 호출."""
     global _loopStarted
+    # 기동 직후 일봉 시드보다 먼저 직전 0B 를 복원해 평가손익이 뒤집히지 않게 한다
+    _loadLastPxCache()
     registerMsgHandler(_HANDLER_NAME, _onWsMessage)
     registerLoginHandler(_LOGIN_HANDLER_NAME, _onLogin)
     if not _loopStarted:
@@ -784,17 +1107,25 @@ def startWatchRtMonitor():
             target=_mktLoop, name="watchRtMkt", daemon=True
         ).start()
         try:
-            from trading.maTouchLive import startMaTouchLive
+            from config.settingsStore import isDeskMain
 
-            startMaTouchLive()
-        except Exception as err:
-            termLog(f"[watchRt] maTouch 기동 실패: {err}")
-        try:
-            from trading.maSupportEodLive import startMaSupportEodLive
+            if not isDeskMain():
+                termLog("[watchRt] client — 자동매매(이평터치·이평지지) 기동 생략")
+            else:
+                try:
+                    from trading.maTouchLive import startMaTouchLive
 
-            startMaSupportEodLive()
+                    startMaTouchLive()
+                except Exception as err:
+                    termLog(f"[watchRt] maTouch 기동 실패: {err}")
+                try:
+                    from trading.maSupportEodLive import startMaSupportEodLive
+
+                    startMaSupportEodLive()
+                except Exception as err:
+                    termLog(f"[watchRt] maSupportEod 기동 실패: {err}")
         except Exception as err:
-            termLog(f"[watchRt] maSupportEod 기동 실패: {err}")
+            termLog(f"[watchRt] deskRole 확인 실패 — 전략 기동 스킵: {err}")
         termLog(
             f"[watchRt] 감시 루프 시작 — 거래일 시세 {openHm}~{closeHm} "
             f"(NXT 장전·애프터 포함) USE_TRADE=Y · 다음 개장 {nextMktOpenLabel()}"

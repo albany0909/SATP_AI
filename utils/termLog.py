@@ -1,6 +1,7 @@
 """터미널 로그 유틸 — 좌측에 수행 시각을 붙여 출력한다."""
 
 import sys
+import time
 from datetime import datetime
 from io import TextIOWrapper
 
@@ -48,6 +49,20 @@ _ERR_KEYS = (
     "cannot be stopped from another thread",
 )
 
+# 동일 DB 실패 메시지 폭주 억제
+_rateLast = {}
+_RATE_SEC = 120
+_RATE_KEYS = (
+    "테이블 생성",
+    "local DB disabled",
+    "Can't connect",
+    "연결을 거부",
+    "DB cooldown",
+    "조회 실패",
+    "시드 실패",
+    "보강 실패",
+)
+
 
 def setDeskErrHook(fn):
     """매매창이 뜰 때 오류 한 줄을 받는 콜백. 닫히면 None."""
@@ -79,6 +94,20 @@ def emitDeskErr(msg):
         pass
 
 
+def _rateLimited(text: str) -> bool:
+    """반복 DB/테이블 실패 로그면 True(출력 생략). client DB 비활성은 완전 무시."""
+    if "local DB disabled" in text:
+        return True
+    if not any(k in text for k in _RATE_KEYS):
+        return False
+    now = time.monotonic()
+    prev = _rateLast.get(text, 0.0)
+    if now - prev < _RATE_SEC:
+        return True
+    _rateLast[text] = now
+    return False
+
+
 def termLog(msg):
     """
     메시지를 터미널에 출력한다.
@@ -88,9 +117,20 @@ def termLog(msg):
     """
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     text = "" if msg is None else str(msg)
+    if _rateLimited(text):
+        return
     # 빈 줄도 시각만 남기지 않도록 strip 하지 않고 줄 단위로 처리
     lines = text.splitlines() or [""]
     for line in lines:
         print(f"[{stamp}] {line}", flush=True)
     if looksLikeErr(text):
         emitDeskErr(text)
+    # 매매창 기동 중이면 로컬 일자별 파일에도 남김
+    try:
+        from utils.deskFileLog import appendDeskFileLog
+
+        for line in lines:
+            if line.strip():
+                appendDeskFileLog(line, tag="TERM")
+    except Exception:
+        pass

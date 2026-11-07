@@ -1,0 +1,13 @@
+{
+ "realized": 0.0,
+ "autoScouts": [],
+ "decided": true,
+ "executed": true,
+ "rescanned": true,
+ "screened": false,
+ "plan": [],
+ "log": [],
+ "regime": false,
+ "decidedAt": "151509",
+ "positions": {}
+}

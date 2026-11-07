@@ -679,6 +679,14 @@ def _placeOrd(cd, side, qty, refPx, meta, auction=True):
     """
     from utils.krxTick import ceilToKrxTick, floorToKrxTick
 
+    try:
+        from trading.realAcntMgr import acntOrderBlockReason
+
+        if acntOrderBlockReason(cd):
+            termLog(f"[MMG01] 실계좌 미등록 — {cd} {side} 생략")
+            return None
+    except Exception:
+        pass
     sess = _session()
     if sess is None:
         termLog(f"[MMG01] 주문 세션 없음 — {cd} {side} 생략")

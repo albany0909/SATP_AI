@@ -96,6 +96,16 @@ def _loadDayPrcBg(stkCds, tradeDt):
         if extraN:
             minSum += f"\n15분편입 추가: {extraN}종"
         _notify(minSum)
+
+        # 실계좌·관심: DB 마지막일 이후분만 증분 적재 (차트용)
+        try:
+            from utils.watchDayPrcLoad import loadDayPrcForWatchHolds
+
+            wres = loadDayPrcForWatchHolds(endDt=tradeDt, refetchLastDay=True)
+            if wres.get("summary"):
+                termLog(wres.get("summary"))
+        except Exception as err:
+            termLog(f"[inqRankSched] 관심일봉 증분 실패: {err}")
     except Exception as err:
         _notify(f"[순위일봉실패] {err}")
 

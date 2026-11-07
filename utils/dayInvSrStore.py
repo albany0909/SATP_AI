@@ -312,13 +312,40 @@ def _attachHalfWindow(rec, nDays):
     return rec
 
 
-def loadNetSumLastNDays(stkCds, days=20, amtQtyTp="2", trdeTp="0", unitTp="1"):
+def loadNetSumLastNDays(
+    stkCds, days=20, amtQtyTp="2", trdeTp="0", unitTp="1", _forceLocal=False
+):
     """
     최근 N거래일 개인·외인·기관 순매수 합(주) + 일별 시계열(days).
     달력이 아니라 AI_DAY_INV_SR 최근 N개 일자. 반분(N/2 vs N/2) 증감 포함.
     기관은 연기금(PENFND_ETC)·투신(INVTRT)·사모(SAMO_FUND)·기타(ORGN−셋)도 같이 둔다.
     반환: {stkCd: ind/frgn/orgn/pen/invt/samo/orgnEtc, days[최근→과거], *AmtChg/*AmtDiff}
+    client/서버모드: deskDataApi(STP SATPAIIQ042).
     """
+    if not _forceLocal:
+        try:
+            from config.settingsStore import getDeskDataViaServer, isDeskClient
+            from utils.dbConn import isLocalDbEnabled
+
+            if isDeskClient() or getDeskDataViaServer() or (not isLocalDbEnabled()):
+                from utils.deskDataApi import loadNetSumLastNDays as _via
+
+                return _via(
+                    stkCds,
+                    days=days,
+                    amtQtyTp=amtQtyTp,
+                    trdeTp=trdeTp,
+                    unitTp=unitTp,
+                )
+        except Exception:
+            try:
+                from utils.dbConn import isLocalDbEnabled
+
+                if not isLocalDbEnabled():
+                    return {}
+            except Exception:
+                pass
+
     out = {}
     codes = []
     seen = set()

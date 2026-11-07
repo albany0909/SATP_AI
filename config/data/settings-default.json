@@ -14,6 +14,9 @@
   },
   "deskTradeExch": "KRX",
   "deskTradeMode": "real",
+  "deskRole": "main",
+  "deskDataViaServer": false,
+  "stpServerUrl": "http://satp1.iptime.org:8080/STP/tran",
   "deskAlgTabs": [
     "MTS01",
     "MSE01"

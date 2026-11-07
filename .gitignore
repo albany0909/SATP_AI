@@ -3,6 +3,12 @@
 .env.*
 !.env.example
 !.env*.example
+config/data/loginLocal.json
+config/data/deskLoginSession.json
+config/data/deskApiKeys.json
+config/data/lastBootLogin.txt
+config/data/_update_download.zip
+tradeApp/
 
 # API key folder
 key/

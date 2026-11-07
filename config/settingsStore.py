@@ -7,10 +7,23 @@ import json
 import re
 from pathlib import Path
 
-# config/data — 이 모듈 기준 상대 경로
-_DATA_DIR = Path(__file__).resolve().parent / "data"
-_DEFAULT_PATH = _DATA_DIR / "settings-default.json"
+from utils.appPaths import configDataDir, resourceRoot
+
+# config/data — 쓰기: exe/프로젝트 옆, 디폴트 JSON 은 리소스에서도 탐색
+_DATA_DIR = configDataDir()
 _SETTINGS_PATH = _DATA_DIR / "settings.json"
+
+
+def _defaultPath():
+    """settings-default.json (리소스 우선, 없으면 쓰기 폴더)."""
+    for base in (resourceRoot() / "config" / "data", _DATA_DIR):
+        p = base / "settings-default.json"
+        if p.is_file():
+            return p
+    return _DATA_DIR / "settings-default.json"
+
+
+_DEFAULT_PATH = _defaultPath()
 
 # 코드에 내장한 최후 폴백 (디폴트 JSON도 없을 때)
 _FALLBACK = {
@@ -31,6 +44,11 @@ _FALLBACK = {
     "deskTradeExch": "KRX",
     # 매매창·자동매매 세션. paper | real
     "deskTradeMode": "real",
+    # 프로세스 역할. main=배치·전략본체 | client=매매창(조회·주문 UI)
+    "deskRole": "main",
+    # 관심·설정·로그 조회를 톰캣 경유할지 (3단계에서 사용)
+    "deskDataViaServer": False,
+    "stpServerUrl": "http://satp1.iptime.org:8080/STP/tran",
     # 매매창 전략 탭·하단 운영알고리즘 표시 순서
     "deskAlgTabs": ["MTS01", "MSE01"],
     "stratLive": {
@@ -192,6 +210,14 @@ def loadSettings():
 def saveSettings(data):
     """현재 설정을 settings.json에 저장한다."""
     _writeJson(_SETTINGS_PATH, data)
+    # 톰캣 조회용 DB 동기
+    try:
+        from utils.deskCfgStore import upsertDeskSettings
+
+        if isinstance(data, dict):
+            upsertDeskSettings(data)
+    except Exception:
+        pass
 
 
 def patchSettings(updates: dict):
@@ -213,6 +239,12 @@ def patchSettings(updates: dict):
         else:
             cur[key] = val
     _writeJson(_SETTINGS_PATH, cur)
+    try:
+        from utils.deskCfgStore import upsertDeskSettings
+
+        upsertDeskSettings(cur)
+    except Exception:
+        pass
     return cur
 
 
@@ -409,6 +441,64 @@ def setMaTouchHalfTpFromStat(pct, tradeDt=None, sampleN=0, fromYmd=None):
     settings["maTouchLive"] = raw
     saveSettings(settings)
     return val
+
+
+def getDeskRole():
+    """
+    프로세스 역할. main | client.
+    환경변수 SATP_DESK_ROLE 이 있으면 설정보다 우선 (배포·기동 편의).
+    """
+    import os
+
+    envRaw = str(os.environ.get("SATP_DESK_ROLE") or "").strip().lower()
+    if envRaw in ("client", "cli", "ui"):
+        return "client"
+    if envRaw in ("main", "server", "host"):
+        return "main"
+    settings = loadSettings()
+    raw = str(settings.get("deskRole") or "main").strip().lower()
+    if raw in ("client", "cli", "ui"):
+        return "client"
+    return "main"
+
+
+def setDeskRole(role):
+    """deskRole 저장. main | client. client 면 서버 조회 모드 강제."""
+    raw = str(role or "").strip().lower()
+    val = "client" if raw in ("client", "cli", "ui") else "main"
+    updates = {"deskRole": val}
+    # client 는 로컬 DB 없이 STP 로 관심·설정 조회
+    if val == "client":
+        updates["deskDataViaServer"] = True
+    patchSettings(updates)
+    return val
+
+
+def isDeskMain():
+    """배치·관심선정·자동매매 본체인지."""
+    return getDeskRole() == "main"
+
+
+def isDeskClient():
+    """매매창 전용(스케줄·배치 없음)인지."""
+    return getDeskRole() == "client"
+
+
+def getDeskDataViaServer():
+    """관심·설정·로그 조회를 톰캣 API 로 할지. client 는 항상 True."""
+    if isDeskClient():
+        return True
+    settings = loadSettings()
+    return bool(settings.get("deskDataViaServer"))
+
+
+def getStpServerUrl():
+    """톰캣 /STP/tran URL."""
+    settings = loadSettings()
+    url = str(settings.get("stpServerUrl") or "").strip()
+    if url:
+        return url
+    return "http://127.0.0.1:8080/STP/tran"
 
 
 def getDeskTradeMode():

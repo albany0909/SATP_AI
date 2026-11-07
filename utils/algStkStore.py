@@ -22,7 +22,14 @@ def _resolveAlg(raw):
 
 
 def listAlgStk(algCd, limit=300):
-    """활성 관리종목. 없으면 []."""
+    """활성 관리종목. 없으면 []. (로컬 DB — 서버 조회는 deskDataApi.listAlgStk)"""
+    try:
+        from utils.dbConn import isLocalDbEnabled
+
+        if not isLocalDbEnabled():
+            return []
+    except Exception:
+        pass
     if not ensureAlgStkTable():
         return []
     alg = _resolveAlg(algCd)
@@ -46,6 +53,13 @@ def listAlgStk(algCd, limit=300):
             )
             rows = cur.fetchall() or []
     except Exception as err:
+        try:
+            from utils.dbConn import DbDisabledError, DbDownError
+
+            if isinstance(err, (DbDisabledError, DbDownError)):
+                return []
+        except Exception:
+            pass
         termLog(f"[algStk] 조회 실패: {err}")
         return []
     finally:
@@ -101,6 +115,49 @@ def upsertAlgStk(algCd, stkCd, stkNm="", src="", note=""):
             except Exception:
                 pass
         termLog(f"[algStk] 저장 실패: {err}")
+        return {"ok": False, "errMsg": str(err)}
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def setAlgStkNote(algCd, stkCd, note, stkNm="", src=""):
+    """NOTE 를 그대로 덮어쓴다. upsertAlgStk 는 빈 메모로 기존 NOTE 를 지우지 않는다."""
+    if not ensureAlgStkTable():
+        return {"ok": False, "errMsg": "AI_ALG_STK 없음"}
+    alg = _resolveAlg(algCd)
+    cd = normStkCd(stkCd)
+    noteTxt = str(note or "").strip()
+    if not alg or not cd or not noteTxt:
+        return {"ok": False, "errMsg": "알고리즘코드/종목코드/메모 필수"}
+    conn = None
+    try:
+        conn = openDbConn()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO AI_ALG_STK (ALG_CD, STK_CD, STK_NM, STATUS, SRC, NOTE)
+                VALUES (%s, %s, %s, 'Y', %s, %s)
+                ON DUPLICATE KEY UPDATE
+                  STK_NM = COALESCE(NULLIF(VALUES(STK_NM), ''), STK_NM),
+                  STATUS = 'Y',
+                  SRC = COALESCE(NULLIF(VALUES(SRC), ''), SRC),
+                  NOTE = VALUES(NOTE)
+                """,
+                (alg, cd, stkNm or None, src or None, noteTxt),
+            )
+        conn.commit()
+        return {"ok": True, "algCd": alg, "stkCd": cd, "note": noteTxt}
+    except Exception as err:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        termLog(f"[algStk] 메모 저장 실패: {err}")
         return {"ok": False, "errMsg": str(err)}
     finally:
         if conn is not None:

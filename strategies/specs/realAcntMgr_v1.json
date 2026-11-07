@@ -1,0 +1,29 @@
+{
+  "stratId": "realAcntMgr_v1",
+  "algCd": "RAM01",
+  "name": "실계좌관리",
+  "status": "live",
+  "version": 1,
+  "enabled": true,
+  "timeframe": "intraday",
+  "docPath": "strategies/docs/realAcntMgr_v1.md",
+  "universe": {
+    "source": "kt00004",
+    "note": "잔량>0 은 관심(WATCH). 매매 버튼 종목만 TRADE."
+  },
+  "params": {
+    "paperOnly": false,
+    "autoEntry": false,
+    "tradeNote": "TRADE",
+    "watchNote": "WATCH"
+  },
+  "rules": {
+    "watch": "계좌 보유는 관심종목에만 두고 주문하지 않는다",
+    "arm": "매매 버튼을 누르면 좌측 보유에 나오고 그때부터 주문 가능",
+    "disarm": "해지하면 좌측에서 빠지고 관심 모니터링만 한다",
+    "flat": "잔량 0(전략 매도·전량 청산)이면 관심에서도 제외",
+    "add": "추가·신규 보유는 다음 계좌 동기화 때 관심에 WATCH 로 추가"
+  },
+  "fill": {},
+  "notes": "자동 진입 신호는 없다. 매매 등록된 보유만 이후 규칙의 주문 대상이다."
+}

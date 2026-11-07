@@ -16,6 +16,7 @@ DEFAULT_BATCH_SCHED = {
     "algDayReview": True,
     # 순위 종목 1년 일봉 — 자동은 dayInqRank 뒤에 붙어 돌고, 별도 수동 실행용
     "rankDayPrc": True,
+    "watchDayPrc": True,
     # 장중값으로 굳은 일봉 정정 — 수동 실행 전용 (SMA 오염 복구)
     "prcRefix": True,
 }

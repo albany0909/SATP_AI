@@ -57,10 +57,17 @@ def _migrateFromWatchTrade(cur):
 
 
 def ensureAlgStkTable():
-    """프로세스당 1회 생성·이관."""
+    """프로세스당 1회 생성·이관. client 는 시도하지 않음."""
     global _ensured
     if _ensured:
         return True
+    try:
+        from utils.dbConn import isLocalDbEnabled
+
+        if not isLocalDbEnabled():
+            return False
+    except Exception:
+        pass
     try:
         _runSqlFile(_SQL_DIR / "algStk.sql")
         conn = openDbConn()
@@ -73,5 +80,12 @@ def ensureAlgStkTable():
         _ensured = True
         return True
     except Exception as err:
+        try:
+            from utils.dbConn import DbDisabledError, DbDownError
+
+            if isinstance(err, (DbDisabledError, DbDownError)):
+                return False
+        except Exception:
+            pass
         termLog(f"[algStk] 테이블 생성/이관 실패: {err}")
         return False
