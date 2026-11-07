@@ -30,7 +30,15 @@
     "MSE01": {
       "enabled": false,
       "buyAmtWon": 2000000
+    },
+    "RCS01": {
+      "enabled": false,
+      "paperOnly": true
     }
+  },
+  "deskFeatureFlags": {
+    "RAM01": false,
+    "LDR01": false
   },
   "batchSched": {
     "usMorningLoad": true,

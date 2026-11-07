@@ -961,7 +961,13 @@ class TradeDeskWin(QMainWindow):
         # 실계좌 탭 현재가/손익% 0B 캐시 반영 (2초 스로틀)
         self._acntWatchPxTimer = QTimer(self)
         self._acntWatchPxTimer.timeout.connect(self._tickRealAcntWatchPx)
-        self._acntWatchPxTimer.start(2000)
+        try:
+            from config.deskFeatureFlags import isDeskTabEnabled
+
+            if isDeskTabEnabled("RAM01"):
+                self._acntWatchPxTimer.start(2000)
+        except Exception:
+            self._acntWatchPxTimer.start(2000)
         # 거래일 08:00 에 전날 로그/거래를 비우고 당일 분으로 바꾼다.
         self._deskDayTimer = QTimer(self)
         self._deskDayTimer.timeout.connect(self._rollDeskIfNewDay)
@@ -975,9 +981,12 @@ class TradeDeskWin(QMainWindow):
         self._acntSoon.timeout.connect(self.refreshAcnt)
         QTimer.singleShot(800, self.refreshAcnt)
         try:
-            from utils.riseRankBoard import startRiseRankBoard
+            from config.deskFeatureFlags import isDeskTabEnabled
 
-            startRiseRankBoard()
+            if isDeskTabEnabled("LDR01"):
+                from utils.riseRankBoard import startRiseRankBoard
+
+                startRiseRankBoard()
         except Exception as err:
             try:
                 from utils.termLog import termLog
@@ -2900,7 +2909,9 @@ class TradeDeskWin(QMainWindow):
         try:
             from trading.deskLiveAlgs import algBgColor, listDeskLiveAlgs
 
-            algs = listDeskLiveAlgs()
+            from config.deskFeatureFlags import isDeskTabEnabled
+
+            algs = [r for r in listDeskLiveAlgs() if isDeskTabEnabled(r.get("algCd"))]
         except Exception:
             algs = []
             algBgColor = None
@@ -2964,10 +2975,9 @@ class TradeDeskWin(QMainWindow):
 
     def _rebuildWatchAlgTabs(self):
         """관심종목 — 실계좌 보유만. 상승순위 탭은 쓰지 않는다."""
-        tabs = (
-            ("acnt", "실계좌", "#CE93D8"),
-            ("leader", "주도주", "#FFCC80"),
-        )
+        from config.deskFeatureFlags import watchTabSpecs
+
+        tabs = tuple(watchTabSpecs())
         cds = [k for k, _n, _c in tabs]
         bar = self.watchAlgTabBar
         if cds == getattr(self, "_watchAlgTabCds", None) and bar.count() == len(cds):
@@ -2987,8 +2997,12 @@ class TradeDeskWin(QMainWindow):
                 except Exception:
                     pass
                 self._watchAlgTabCds.append(key)
-            cur = self._watchAlgCd if self._watchAlgCd in self._watchAlgTabCds else "acnt"
-            self._watchAlgCd = cur
+            if not self._watchAlgTabCds:
+                self._watchAlgCd = ""
+                cur = ""
+            else:
+                cur = self._watchAlgCd if self._watchAlgCd in self._watchAlgTabCds else self._watchAlgTabCds[0]
+                self._watchAlgCd = cur
             if cur in self._watchAlgTabCds:
                 bar.setCurrentIndex(self._watchAlgTabCds.index(cur))
         finally:
@@ -4836,7 +4850,11 @@ class TradeDeskWin(QMainWindow):
     def _tickRealAcntWatchPx(self):
         """실계좌 탭: 계좌조회 스냅샷 대신 0B 실시간 현재가로 현재가·손익% 셀만 갱신."""
         try:
-            if str(getattr(self, "_watchAlgCd", None) or "acnt") in ("leader", "rank20"):
+            from config.deskFeatureFlags import isDeskTabEnabled
+
+            if not isDeskTabEnabled("RAM01"):
+                return
+            if str(getattr(self, "_watchAlgCd", None) or "acnt") in ("leader", "rank20", ""):
                 return
             frz = getattr(self, "tradeWatchFrozen", None)
             if frz is None or not frz.isVisible():
@@ -4951,7 +4969,9 @@ class TradeDeskWin(QMainWindow):
 
     def _onLeaderRankRefresh(self):
         """주도주 20일누적·금일 순위 강제 재조회. 진행 중이면 중복 시작 안 함."""
-        if not self._isLeaderWatchTab():
+        from config.deskFeatureFlags import isDeskTabEnabled
+
+        if not isDeskTabEnabled("LDR01") or not self._isLeaderWatchTab():
             return
         if self._leaderRankScanning():
             self._applyLeaderRankBtnState()
@@ -4992,13 +5012,30 @@ class TradeDeskWin(QMainWindow):
             except Exception:
                 pass
 
+    def _fillWatchDisabled(self):
+        """실계좌·주도주 탭이 꺼진 상태. 저장된 순위·관심 데이터는 지우지 않는다."""
+        try:
+            self.tradeWatchTitle.setText(self._titleText("관심종목 (실계좌·주도주 탭 꺼짐)"))
+        except Exception:
+            pass
+        for widget in (
+            getattr(self, "tradeWatchFrozen", None),
+            getattr(self, "tradeWatchTbl", None),
+        ):
+            if widget is not None:
+                widget.setRowCount(0)
+
     def _fillTradeWatch(self):
-        """관심종목=계좌보유, 주도주=상승순위 보드."""
-        kind = str(getattr(self, "_watchAlgCd", None) or "acnt")
-        if kind in ("leader", "rank20"):
+        """관심종목=계좌보유, 주도주=상승순위 보드. 플래그가 꺼지면 그 탭 내용은 그리지 않는다."""
+        from config.deskFeatureFlags import isDeskTabEnabled
+
+        kind = str(getattr(self, "_watchAlgCd", None) or "")
+        if kind in ("leader", "rank20") and isDeskTabEnabled("LDR01"):
             self._fillRiseRankWatch()
-        else:
+        elif kind == "acnt" and isDeskTabEnabled("RAM01"):
             self._fillRealAcntWatch()
+        else:
+            self._fillWatchDisabled()
         try:
             self._syncLeaderRankTools()
         except Exception:

@@ -156,7 +156,7 @@ def listAlgVerHistRows(algCd=None, limit=500):
 def syncAlgVerHistFromDoc(algCd=None):
     """문서 변경 이력 → DB upsert. 반환 {ok, upserted, algs}."""
     from strategies.specLoader import listStratSpecs, loadStratSpec, normAlgCd
-    from utils.stratVerHist import _mdPath, parseDocVerHist
+    from utils.stratVerHist import _mdPath, gitHashFromVerNote, parseDocVerHist
 
     ensureAlgVerHistTable()
     want = normAlgCd(algCd) if algCd else ""
@@ -188,6 +188,7 @@ def syncAlgVerHistFromDoc(algCd=None):
                 row.get("ymd"),
                 row.get("note"),
                 stratId=sid,
+                gitHash=gitHashFromVerNote(row.get("note")) or None,
                 src="doc_sync",
             )
             if got.get("ok"):

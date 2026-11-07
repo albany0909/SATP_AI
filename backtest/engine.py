@@ -352,6 +352,29 @@ def buildTradeRounds(trades):
 
 
 
+def _riseConfirmReplayResult(fixturePath, startDt, endDt):
+    """RCS01 은 단일종목 분봉 백테스트가 아니다. 공식 픽스처가 없으면 숫자를 만들지 않는다."""
+    from strategies.impl.riseConfirmReplay import pending_without_fixture, replay_official_fixture
+
+    if not fixturePath:
+        return pending_without_fixture(startDt, endDt)
+    if str(startDt or "") not in ("", "20261001") or str(endDt or "") not in ("", "20261106"):
+        return pending_without_fixture(startDt, endDt)
+    report = replay_official_fixture(fixturePath)
+    return {
+        "ok": bool(report.get("passed")),
+        "status": report.get("status"),
+        "passed": bool(report.get("passed")),
+        "summary": None,
+        "stratId": "riseConfirmScale_v1",
+        "diffs": report.get("diffs") or [],
+        "causality": report.get("causality") or [],
+        "errMsg": "" if report.get("passed") else "RCS01 격리 리플레이가 공식 golden 과 같지 않다.",
+        "research_replay_auto_exit": True,
+        "live_loss_auto_exec": False,
+    }
+
+
 def runBacktest(
     stratId,
     stkCd,
@@ -361,14 +384,18 @@ def runBacktest(
     ticScope="1",
     initCash=100_000_000.0,
     barSource="min",
+    fixturePath=None,
 ):
     """
     스펙 로드 → 분봉/틱 로드 → 전략 시뮬.
     barSource: 'min' | 'tic'
+    RCS01 은 분봉 엔진이 아니다. fixturePath 가 있을 때만 격리 리플레이.
     """
     spec = loadStratSpec(stratId)
     if spec is None:
         return {"ok": False, "errMsg": f"스펙 없음: {stratId}"}
+    if str(stratId or "").startswith("riseConfirmScale"):
+        return _riseConfirmReplayResult(fixturePath, startDt, endDt)
 
     warm = warmupStartDt or startDt
     src = (barSource or "min").lower()

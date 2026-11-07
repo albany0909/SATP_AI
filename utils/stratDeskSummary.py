@@ -612,9 +612,41 @@ def buildStratRunnerNote(algCd, stratId):
     return ""
 
 
+def buildRiseConfirmDeskText(algCd, stratId):
+    """RCS01 탭. 기본 손절 30만원. 10만원 실험 수치는 여기 적지 않는다."""
+    spec = loadStratSpec(stratId) or {}
+    p = dict(spec.get("params") or {})
+    loss = int(p.get("lossKrw") or 300000)
+    return "\n".join(
+        [
+            stratTitle(spec, "상승확인분할매매"),
+            f"코드  {algCd}  v{spec.get('version') or 1}",
+            f"상태  {_statusLabel(spec)} · 모의만 · {_resolveOnOff(algCd, spec)}",
+            "기본 꺼짐. 이 화면이 주문을 내지 않는다.",
+            "",
+            "[연구 리플레이]",
+            "  종가 신호 → 다음 세션 시가. 초기 진입은 +3% 갭으로 취소하지 않음",
+            "  추가는 평균·직전매수 +5%, 모형체결 +3% 갭이면 취소",
+            f"  손절 예산 {loss:,}원 (추가 후 올리지 않음, 보장 상한 아님)",
+            "  이익 청산 신호도 연구 경로에서는 다음 시가에 자동 체결될 수 있음",
+            "",
+            "[라이브]",
+            "  손실이 되는 매도는 예상손실·사유를 확인하고 나서만 집행",
+            "  자동 주문·텔레그램·실계좌 전환 없음",
+            "",
+            "[10월 검증]",
+            "  20261001~20261106, 새 현금 1천만원, 9/30 신호 없음",
+            "  30만원 기본 픽스처와 10만원 파라미터 픽스처는 테스트가 따로 비교",
+            "  맞지 않으면 통과로 적지 않음. 수익률 보장 없음",
+        ]
+    )
+
+
 def buildStratDeskText(algCd, stratId):
     """알고리즘·스펙에 맞는 전략 탭 본문."""
     sid = str(stratId or "")
+    if sid.startswith("riseConfirmScale") or str(algCd) == "RCS01":
+        return buildRiseConfirmDeskText(algCd, stratId)
     if sid.startswith("maSupportEod"):
         return buildMaSupportDeskText(algCd, stratId)
     if sid.startswith("maTouchScale") or str(algCd) == "MTS01":

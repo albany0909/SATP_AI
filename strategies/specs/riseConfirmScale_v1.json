@@ -1,0 +1,54 @@
+{
+  "stratId": "riseConfirmScale_v1",
+  "algCd": "RCS01",
+  "name": "상승확인분할매매",
+  "status": "test",
+  "version": 1,
+  "enabled": false,
+  "timeframe": "D",
+  "docPath": "strategies/docs/riseConfirmScale_v1.md",
+  "universe": {
+    "type": "pitKospi200",
+    "minBars": 80,
+    "turnoverSessions": 20,
+    "minAvgTurnoverKrw": 10000000000,
+    "turnover": "regular_actual_krw_including_signal_day",
+    "note": "시점 KOSPI200. 거래정지·관리·매수불가 제외. 종목당 캠페인 하나, 동시에 한 종목. 기본 꺼짐."
+  },
+  "params": {
+    "allocations": [4000000, 3000000, 2000000, 1000000],
+    "lossKrw": 300000,
+    "buyFee": 0.00015,
+    "sellFee": 0.00015,
+    "sellTax": 0.002,
+    "slippageTicks": 1,
+    "addCloseMultiple": 1.05,
+    "addGapCancel": 1.03,
+    "gapCancelScope": "adds_only",
+    "stopMode": "intraday",
+    "exitMode": "bearish_cross",
+    "paperOnly": true,
+    "liveLossAutoExec": false,
+    "researchAutoExit": true
+  },
+  "rules": {
+    "entry": "종가 신호 다음 세션 시가. 종가>MA60, MA60>20세션 전 MA60, 60일수익>지수60일, 종가>직전20일 고가(당일 제외). 20일 정규 거래대금 평균(신호일 포함)>=100억. 순위는 60일수익, 거래대금, 코드. 초기 진입은 +3% 갭으로 취소하지 않고 상태·편입·현금·매매가능만 본다.",
+    "add": "종가/원시매수평균>=1.05 이고 종가>=직전체결*1.05. 다음 시가에 같은 조건과 +3% 갭을 모형체결가로 재확인. 추가만 취소. 하루 한 번. 4백/3백/2백/1백만원, 수수료 포함 정수 주, 캠페인 1천만원.",
+    "stop": "캠페인 30만원 손실 예산. 추가 후 손절가를 내리지 않는다. 시가가 손절 이하면 시가, 아니면 저가 터치 근사. 장중 손절은 추가 체결 이후에도 본다. 미래 저가로 시가 추가를 취소하지 않는다.",
+    "exit": "연구 리플레이는 순청산이익>0, 음봉, 전일종가>=전일 MA20, 종가<MA20 이면 다음 시가에 자동 청산(갭 손실 포함). 라이브의 모든 손실 매도는 예상손실·사유 확인 전 자동체결하지 않는다."
+  },
+  "fill": {
+    "entryPrice": "next_open_plus_adverse_tick",
+    "exitPrice": "next_open_or_stop_minus_adverse_tick",
+    "feeRate": 0.00015,
+    "btNote": "수수료·세금 원미만 버림. 불리한 1틱은 당일 고저 안. 연구 자동청산과 라이브 손실확인은 별개."
+  },
+  "acceptance": {
+    "window": {"start": "20261001", "end": "20261106"},
+    "freshCapitalKrw": 10000000,
+    "warmup": "pre_oct_bars_retained_no_sep30_signal",
+    "fixtureSchema": "rcs01.research-parity.v1",
+    "parity": "isolated_replay_vs_fixture_golden"
+  },
+  "notes": "v1 기본 꺼짐. 손절예산 기본값 300000. 100000 은 같은 10월 창의 격리 파라미터 실험일 뿐이며 기본 스펙·실전 설정을 바꾸지 않는다. 주문·알림·배포를 하지 않는다."
+}
