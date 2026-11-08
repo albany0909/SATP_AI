@@ -9,7 +9,7 @@
 - YMD: `2026-11-08`
 - SRC: `manual`
 - NOTE: `v1 급등주매매(Surge Trade) 모의 전용 초안. 기본 비활성. 실주문 없음.`
-- GIT_HASH: `PENDING_COMMIT`
+- GIT_HASH: `f5093a17fda8`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -17,7 +17,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 1, '2026-11-08',
    'v1 급등주매매(Surge Trade) 모의 전용 초안. 기본 비활성. 실주문 없음.',
-   'PENDING_COMMIT', 'manual')
+   'f5093a17fda8', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
