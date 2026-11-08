@@ -119,6 +119,67 @@ def runDecisionCycle(
     }
 
 
+def paperRankTransport(session):
+    """모의 호스트의 ka00198 당일누적만 호출하는 함수. 실호스트는 만들지 않는다."""
+    from trading.surgeTradeGate import evaluateMarketRead
+
+    read = evaluateMarketRead(dict(session or {}, purpose="market_read"))
+    if not read.get("ok"):
+        def _blocked():
+            raise RuntimeError(read.get("reason") or "PAPER_SESSION_REQUIRED")
+
+        return _blocked
+
+    def _call():
+        from api.getInqRank import QRY_TP_DAY, fetchInqRank
+        from config.config import paper_host_url
+        from config import runtimeState
+
+        if str(session.get("host") or "") != str(paper_host_url):
+            raise RuntimeError("HOST_NOT_PAPER")
+        token = runtimeState.getToken("paper")
+        if not token:
+            raise RuntimeError("TOKEN_MISSING")
+        fetched = fetchInqRank(
+            paper_host_url,
+            token,
+            qryTp=QRY_TP_DAY,
+            tokenType=runtimeState.paperTokenType or "bearer",
+        )
+        if not fetched.get("ok"):
+            raise RuntimeError(fetched.get("errMsg") or "RANK_FAIL")
+        return {"item_inq_rank": fetched.get("rows") or [], "return_code": 0}
+
+    return _call
+
+
+def pullPaperRank(session, now, store, isTrading, transport=None):
+    """슬롯이 도래했을 때만 조회한다. 실패 시 순위를 만들지 않는다."""
+    from trading.surgeTradeData import dueSlot, parseKa00198Body
+    from trading.surgeTradeGate import evaluateMarketRead
+
+    read = evaluateMarketRead(dict(session or {}, purpose="market_read"))
+    if not read.get("ok"):
+        return {"ok": False, "reason": read.get("reason"), "called": False}
+    slot = dueSlot(now, isTrading)
+    if slot is None:
+        return {"ok": True, "reason": "NOT_DUE", "called": False}
+    ymd = now.strftime("%Y%m%d")
+    if store.slot(ymd, slot) is not None:
+        return {"ok": True, "reason": "ALREADY", "called": False}
+    if transport is None:
+        return {"ok": False, "reason": "NO_TRANSPORT", "called": False}
+    try:
+        body = transport()
+    except Exception as err:
+        return {"ok": False, "reason": str(err), "called": True}
+    snap = parseKa00198Body(body, now.strftime("%Y-%m-%dT%H:%M:%S"), slot, "paper_read")
+    if not snap.get("ok"):
+        return {"ok": False, "reason": snap.get("errMsg") or "PARSE", "called": True}
+    store.save(snap)
+    return {"ok": True, "reason": "SAVED", "called": True, "slot": slot}
+
+
 def enqueueManualRefresh(session=None, transport=None, nowText=""):
     """
     수동 갱신. 모의 조회 세션이 없으면 네트워크를 열지 않는다.
@@ -257,6 +318,22 @@ def _loop():
             if session is None:
                 time.sleep(5)
                 continue
+            try:
+                from config.krHoliday import isTradingDay
+                from trading.surgeTradeData import SnapStore
+                from utils.appPaths import configDataDir
+
+                now = datetime.now()
+                pullPaperRank(
+                    session,
+                    now,
+                    SnapStore(configDataDir() / "surgeTrade"),
+                    isTradingDay(now),
+                    transport=paperRankTransport(session),
+                )
+            except Exception:
+                pass
+            # 검증된 시세·구성·이슈가 없으면 후보를 넘기지 않는다. 빈 시세로 주문하지 않는다.
             liveTick(
                 book,
                 datetime.now(),

@@ -56,7 +56,14 @@ from trading.surgeTradeGate import (
     lossSellRequiresTelegramApproval,
     submitSurgeOrder,
 )
-from trading.surgeTradeLive import enqueueManualRefresh, isSurgeEnabled, loadBook, runDecisionCycle, saveBook
+from trading.surgeTradeLive import (
+    enqueueManualRefresh,
+    isSurgeEnabled,
+    loadBook,
+    pullPaperRank,
+    runDecisionCycle,
+    saveBook,
+)
 
 
 class Cal:
@@ -604,6 +611,22 @@ class SurgeTradeTest(unittest.TestCase):
         missing = enqueueManualRefresh(None, transport=lambda: {"no": True})
         self.assertEqual(missing["state"], "BLOCKED")
         self.assertEqual(missing["orders"], 0)
+        calls = []
+
+        def transport():
+            calls.append("net")
+            return {"item_inq_rank": []}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            blockedRank = pullPaperRank(
+                paperSession(mode="real"),
+                self.now,
+                SnapStore(tmp),
+                True,
+                transport=transport,
+            )
+        self.assertFalse(blockedRank["called"])
+        self.assertEqual(calls, [])
 
     def test_rank_flow_rsi_year_poll_tab(self):
         snap = parseKa00198Body(SPEC_EXAMPLE, "2025-08-27T08:59:00", "0900", "spec_example")
