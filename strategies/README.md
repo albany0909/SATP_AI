@@ -66,3 +66,4 @@
 | maSupportEod_v1 | 이평선지지 (ka10016 52주신고가 관심, SMA5 돌파→약음봉/십자 지지 15:18~15:30) | test | [docs](docs/maSupportEod_v1.md) / [spec](specs/maSupportEod_v1.json) |
 | leaderScale_v1 | 주도주매매 (장대양봉·테마동반·1주 초병·눌림 증감) | draft | [docs](docs/leaderScale_v1.md) / [spec](specs/leaderScale_v1.json) |
 | realAcntMgr_v1 | 실계좌관리 (보유는 관심만, 매매 버튼 종목만 주문) | live | [docs](docs/realAcntMgr_v1.md) / [spec](specs/realAcntMgr_v1.json) |
+| surgeTrade_v1 | 급등주매매 (Surge Trade, SRG01, ka00198 당일누적, 모의·기본 비활성) | draft | [docs](docs/surgeTrade_v1.md) / [spec](specs/surgeTrade_v1.json) |

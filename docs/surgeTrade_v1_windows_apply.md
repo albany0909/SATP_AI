@@ -1,0 +1,57 @@
+# SRG01 급등주매매 — Windows 로컬 적용·검증
+
+이 문서는 검토용이다. 원격 실행에서는 FTP, 배포, 병합, 앱 재시작, 실계좌 조회, 주문, `.env` 변경, 런타임 설정 활성화를 하지 않는다. 적용 시점을 날짜로 약속하지 않는다. 아래 전제가 로컬에서 확인되기 전에는 전략을 켜지 않는다.
+
+식별자: `SRG01` / `surgeTrade_v1` / Surge Trade / 스펙 version `1`.
+
+## 적용 전에 유지할 것
+
+1. 작업 트리에서 `git status --short` 를 남긴다.
+2. 다음을 작업 폴더 밖 백업으로 복사한다. 커밋하지 않는다.
+   - `.env`
+   - `config/data/settings.json`
+   - `config/data/*State.json`
+   - `config/data/surgeTrade/` 가 이미 있으면 그 폴더
+   - 추적되지 않은 로컬 파일 전부 (이전에 유지하라고 한 5개 포함). 백업 목록에 경로를 적는다.
+3. `deskTradeMode` 는 `paper` 로 둔다. `paperOnly` 를 실전으로 바꾸지 않는다.
+4. `stratLive` 의 MTS01, MSE01, LDR01, MMG01, RAM01 `enabled` 를 이 작업 때문에 바꾸지 않는다.
+5. RCS01 이 로컬에 있더라도 활성화하거나 병합하지 않는다.
+6. 운영 DB 에 `sql/surgeTrade.sql` 과 `docs/surgeTrade_v1_db_hist.md` 의 INSERT 를 실행하지 않는다. 검토 후에만 별도로 한다.
+
+## 코드를 받는 방법
+
+검토가 끝난 뒤에만, 로컬 저장소에서 이 브랜치를 받아 적용한다. `scripts/deployTradeApp.py` 와 FTP 는 쓰지 않는다. 서버 재시작은 하지 않는다.
+
+```text
+git fetch origin cursor/surge-trade-srg01-3ba4
+git checkout cursor/surge-trade-srg01-3ba4
+```
+
+백업한 `.env` 와 `settings.json` 이 덮였으면 백업으로 되돌린다.
+
+## 로컬에서 돌릴 테스트
+
+Windows 의 프로젝트 루트에서:
+
+```text
+python tests\testSurgeTrade.py
+python tests\testMmg01.py
+python scripts\verifyClientLaunch.py
+```
+
+`verifyClientLaunch.py` 는 `dist\tradeFull\runtime\python.exe` 가 있어야 한다. 그 런타임이 없는 환경의 실패는 Windows 기동 성공이 아니다.
+
+## 전략을 켜기 전에 필요한 확인
+
+순서대로 로컬에서 확인한다. 하나라도 안 되면 `enabled` 를 올리지 않는다.
+
+1. 모의 로그인만 되어 있고, 주문 호스트가 `https://mockapi.kiwoom.com` 이다. 실전 토큰으로 이 전략 주문을 내지 않는다.
+2. 모의 호스트에서 `ka00198` `qry_tp=4` 를 직접 호출해 순위 건수, 연속조회, 등락율 단위를 기록한다. 명세의 mock 도메인만으로는 확인이 끝나지 않았다.
+3. 날짜 유효기간이 있는 KOSPI200·KOSDAQ150 명부를 준비한다. 없는 종목을 채우지 않는다.
+4. 전일 정규 종가(수정주가 기준을 현재가와 같게)를 갖고 일간 등락을 계산한다. 기준가만 있는 행은 매수하지 않는다.
+5. 이슈는 공시 URL 과 발표시각이 있는 확인 기록으로만 최초 급등이 된다. 첫 관측이나 테마 이름은 매수 사유가 아니다.
+6. 15:18 판단은 15:18 이후 스냅을 쓴다. 16:00 스냅으로 15:18 을 소급하지 않는다.
+7. paper 모드에서 소액이 아닌 **주문 미전송** 경로로 게이트가 실전 호스트를 거부하는지 위 테스트로 다시 본다.
+8. 그 다음에만 스펙 `enabled` 와 `settings.stratLive.SRG01.enabled` 를 함께 true 로 바꾼다. 둘 중 하나만으로는 켜지지 않는다. 앱 재시작 여부는 그때 따로 결정한다.
+
+급등주 탭은 전략이 꺼져 있어도 조회용으로 보인다. 수동 갱신은 모의 조회 세션이 없으면 네트워크를 열지 않고 `BLOCKED` 로 남는다.

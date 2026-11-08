@@ -47,6 +47,7 @@ Thumbs.db
 config/data/algDayReview/
 config/data/stratValRun/
 config/data/*State.json
+config/data/surgeTrade/
 # --- extra secrets / local ops (GitHub safety) ---
 *.pem
 *.p12

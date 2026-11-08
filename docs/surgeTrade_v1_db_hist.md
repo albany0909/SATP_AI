@@ -1,0 +1,29 @@
+# SRG01 v1 버전 이력 — 운영 DB 에 넣지 말 것
+
+`AI_ALG_VER_HIST` 에 아래를 넣을 수 있다. 이 작업에서는 실행하지 않았다.
+`GIT_HASH` 는 이 기능 커밋의 짧은 해시다. 커밋 뒤에 이 문서의 해시를 맞춘다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `1`
+- YMD: `2026-11-08`
+- SRC: `manual`
+- NOTE: `v1 급등주매매(Surge Trade) 모의 전용 초안. 기본 비활성. 실주문 없음.`
+- GIT_HASH: `PENDING_COMMIT`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 1, '2026-11-08',
+   'v1 급등주매매(Surge Trade) 모의 전용 초안. 기본 비활성. 실주문 없음.',
+   'PENDING_COMMIT', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+이벤트 행을 남길 때는 `ALG_VER=1` 이다. 헬퍼는 `strategies.impl.surgeTrade.buildAlgVerEvent` 이며 DB 를 열지 않는다.
+
+순위 스냅샷과 이슈 확인 표는 `sql/surgeTrade.sql` 이다. 같은 이유로 운영 DB 에 실행하지 않는다.

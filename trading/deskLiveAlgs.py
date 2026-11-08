@@ -12,6 +12,7 @@ _ALG_BG = {
     "MMG01": "#FFCC80",
     "LDR01": "#FFAB91",  # 수동정찰 피라미딩 — 주황
     "RAM01": "#CE93D8",  # 실계좌관리 — 보라
+    "SRG01": "#80DEEA",  # 급등주매매 — 청록
 }
 # 거래로그 글자색 — 탭 파스텔과 같은 계열, 흰 배경에서 읽히게 진하게
 _ALG_FG = {
@@ -20,6 +21,7 @@ _ALG_FG = {
     "MMG01": "#E65100",
     "LDR01": "#BF360C",
     "RAM01": "#6A1B9A",
+    "SRG01": "#006064",
 }
 _ALG_BG_FALLBACK = ("#FFCC80", "#CE93D8", "#80DEEA", "#EF9A9A", "#B0BEC5")
 _UNK_BG = "#E0E0E0"
@@ -249,6 +251,161 @@ def algFgColor(algCd):
     if want in _ALG_FG:
         return _ALG_FG[want]
     return _darkenHex(algBgColor(want))
+
+
+def standaloneMonitorTabs():
+    """
+    공유·조회 탭. 알고리즘 비활성과 무관하게 유지한다.
+    급등주는 조회 탭이다. SRG01 관리 탭(전략 서브탭)과는 따로 둔다.
+    """
+    return (
+        {"key": "acnt", "name": "실계좌", "bg": "#CE93D8", "kind": "shared"},
+        {"key": "leader", "name": "주도주", "bg": "#FFCC80", "kind": "shared"},
+        {"key": "surge", "name": "급등주", "bg": "#80DEEA", "kind": "monitor", "algCd": "SRG01"},
+    )
+
+
+def algWatchSubtabVisible(enabled, evidence=None):
+    """
+    알고리즘 전용 관심 서브탭.
+    비활성이고 잔고·미체결이 없다고 확인된 경우에만 숨긴다.
+    확인이 안 되면 숨기지 않는다. 탭 목록 자체를 삭제하지는 않는다.
+    """
+    if enabled:
+        return True
+    if not isinstance(evidence, dict) or evidence.get("known") is not True:
+        return True
+    try:
+        openPos = int(evidence.get("openPos") or 0)
+        openOrders = int(evidence.get("openOrders") or 0)
+    except (TypeError, ValueError):
+        return True
+    if openPos > 0 or openOrders > 0:
+        return True
+    return False
+
+
+def filterVisibleAlgTabs(rows, evidenceByAlg=None):
+    """전략 탭 표시용. 공유 조회 탭에는 적용하지 않는다."""
+    evidenceByAlg = evidenceByAlg or {}
+    out = []
+    for row in rows or []:
+        alg = row.get("algCd")
+        if algWatchSubtabVisible(bool(row.get("enabled")), evidenceByAlg.get(alg)):
+            out.append(row)
+    return out
+
+
+def _walkOpenState(node):
+    if isinstance(node, dict):
+        try:
+            if int(node.get("qty") or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            pass
+        pending = node.get("pending")
+        if pending not in (None, "", [], {}):
+            return True
+        return any(_walkOpenState(v) for v in node.values())
+    if isinstance(node, list):
+        return any(_walkOpenState(v) for v in node)
+    return False
+
+
+def _defaultStatePath(algCd):
+    names = {
+        "MMG01": "manualMgrState.json",
+        "MTS01": "maTouchState.json",
+        "MSE01": "maSupportEodState.json",
+        "SRG01": "surgeTradeState.json",
+    }
+    name = names.get(normAlgCd(algCd))
+    if not name:
+        return None
+    try:
+        from utils.appPaths import configDataDir
+
+        return configDataDir() / name
+    except Exception:
+        return None
+
+
+def _stateFileEvidence(path):
+    filePath = path if hasattr(path, "is_file") else None
+    if filePath is None or not filePath.is_file():
+        return {"known": True, "openPos": 0, "openOrders": 0}
+    try:
+        import json
+
+        data = json.loads(filePath.read_text(encoding="utf-8"))
+    except Exception:
+        return {"known": False, "reason": "state_unreadable"}
+    if _walkOpenState(data):
+        return {"known": True, "openPos": 1, "openOrders": 0}
+    return {"known": True, "openPos": 0, "openOrders": 0}
+
+
+def collectWatchEvidence(algCd, ledgerCount=None, statePath=None):
+    """
+    ledgerCount 를 넘기면 DB 를 열지 않는다 (테스트).
+    넘기지 않으면 원장 COUNT 가 성공할 때만 known 이다.
+    """
+    alg = normAlgCd(algCd)
+    if ledgerCount is None:
+        ledger = _ledgerOpenCount(alg)
+    else:
+        try:
+            ledger = {"known": True, "openPos": int(ledgerCount), "openOrders": 0}
+        except (TypeError, ValueError):
+            ledger = {"known": False, "reason": "bad_count"}
+    if not ledger.get("known"):
+        return ledger
+    if statePath is None:
+        statePath = _defaultStatePath(alg)
+    state = (
+        _stateFileEvidence(statePath)
+        if statePath is not None
+        else {"known": True, "openPos": 0, "openOrders": 0}
+    )
+    if not state.get("known"):
+        return state
+    return {
+        "known": True,
+        "openPos": int(ledger.get("openPos") or 0) + int(state.get("openPos") or 0),
+        "openOrders": int(ledger.get("openOrders") or 0) + int(state.get("openOrders") or 0),
+    }
+
+
+def _ledgerOpenCount(algCd):
+    conn = None
+    try:
+        from config.dbConfig import openDbConn
+
+        conn = openDbConn()
+        if conn is None:
+            return {"known": False, "reason": "no_conn"}
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS N FROM AI_STRAT_ORD_LEDGER "
+                "WHERE ALG_CD=%s AND STK_STS_CD=%s",
+                (algCd, "3"),
+            )
+            row = cur.fetchone()
+        if isinstance(row, dict):
+            n = int(row.get("N") or 0)
+        elif isinstance(row, (list, tuple)):
+            n = int(row[0] or 0)
+        else:
+            return {"known": False, "reason": "bad_row"}
+        return {"known": True, "openPos": n, "openOrders": 0}
+    except Exception:
+        return {"known": False, "reason": "query"}
+    finally:
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
 
 
 def isKnownAlgCd(algCd):
