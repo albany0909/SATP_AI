@@ -55,7 +55,7 @@ v3 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-09`
 - SRC: `manual`
 - NOTE: `v3 매수는 구성·확인이슈·신선시세가 있을 때만. 보유 청산은 시세. 주문 기본 비활성.`
-- GIT_HASH: `PENDING_V3`
+- GIT_HASH: `4d089a399fca`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -63,7 +63,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 3, '2026-11-09',
    'v3 매수는 구성·확인이슈·신선시세가 있을 때만. 보유 청산은 시세. 주문 기본 비활성.',
-   'PENDING_V3', 'manual')
+   '4d089a399fca', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
