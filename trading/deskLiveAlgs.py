@@ -253,16 +253,181 @@ def algFgColor(algCd):
     return _darkenHex(algBgColor(want))
 
 
+# 조회 탭 정의는 유지한다. 숨김은 이 목록을 지우지 않는다.
+_MONITOR_CATALOG = (
+    {"key": "acnt", "name": "실계좌", "bg": "#CE93D8", "kind": "shared"},
+    {"key": "leader", "name": "주도주", "bg": "#FFCC80", "kind": "shared"},
+    {"key": "surge", "name": "급등주", "bg": "#80DEEA", "kind": "monitor", "algCd": "SRG01"},
+)
+# deskMonitorTabs 키가 없을 때의 표시. 실계좌·주도주는 코드만 남기고 숨긴다.
+_DEFAULT_MONITOR_KEYS = ("surge",)
+
+
+def monitorTabCatalog():
+    """등록된 조회 탭 전체. 숨겨도 정의는 남는다."""
+    return tuple(dict(row) for row in _MONITOR_CATALOG)
+
+
 def standaloneMonitorTabs():
+    """조회 탭 정의 전체. 화면에 그릴 목록은 visibleMonitorTabs."""
+    return monitorTabCatalog()
+
+
+def visibleMonitorTabs(settings=None):
     """
-    공유·조회 탭. 알고리즘 비활성과 무관하게 유지한다.
-    급등주는 조회 탭이다. SRG01 관리 탭(전략 서브탭)과는 따로 둔다.
+    화면에 그릴 조회 탭.
+    settings.deskMonitorTabs 가 없으면 급등주만.
+    리스트가 있으면 그 순서대로 알려진 키만. 빈 리스트는 아무 탭도 안 그린다.
     """
-    return (
-        {"key": "acnt", "name": "실계좌", "bg": "#CE93D8", "kind": "shared"},
-        {"key": "leader", "name": "주도주", "bg": "#FFCC80", "kind": "shared"},
-        {"key": "surge", "name": "급등주", "bg": "#80DEEA", "kind": "monitor", "algCd": "SRG01"},
+    if settings is None:
+        try:
+            from config.settingsStore import loadSettings
+
+            settings = loadSettings() or {}
+        except Exception:
+            settings = {}
+    if not isinstance(settings, dict) or "deskMonitorTabs" not in settings:
+        wanted = list(_DEFAULT_MONITOR_KEYS)
+    else:
+        raw = settings.get("deskMonitorTabs")
+        if not isinstance(raw, list):
+            wanted = list(_DEFAULT_MONITOR_KEYS)
+        else:
+            wanted = []
+            for item in raw:
+                key = str(item or "").strip()
+                if key and key not in wanted:
+                    wanted.append(key)
+    byKey = {row["key"]: row for row in _MONITOR_CATALOG}
+    out = []
+    for key in wanted:
+        row = byKey.get(key)
+        if row:
+            out.append(dict(row))
+    return tuple(out)
+
+
+def resolveMonitorSelection(current, visibleKeys):
+    """숨긴 탭이 선택돼 있으면 남아 있는 첫 탭. 없으면 빈 문자열."""
+    keys = []
+    for item in visibleKeys or []:
+        key = str(item or "").strip()
+        if key and key not in keys:
+            keys.append(key)
+    cur = str(current or "").strip()
+    if cur in keys:
+        return cur
+    return keys[0] if keys else ""
+
+
+def _specForAlg(algCd):
+    code = normAlgCd(algCd)
+    if not code:
+        return None
+    for row in listStratSpecs() or []:
+        if normAlgCd(row.get("algCd")) == code:
+            return loadStratSpec(row.get("stratId") or "") or None
+    return None
+
+
+def effectiveAlgEnabled(algCd, spec=None, settings=None):
+    """
+    화면용 유효 가동.
+    스펙에 없는 코드는 켜진 것으로 보지 않는다. 보유 수량은 보지 않는다.
+    MTS01 은 maTouchLive.enabled, SRG01 은 스펙·paperOnly·stratLive 가 모두 맞을 때만.
+    그 외는 stratLive.enabled 가 있으면 그 값, 없으면 스펙 enabled.
+    런타임 스레드 생존 여부는 알고리즘 공통으로 노출되지 않아 여기서 구분하지 않는다.
+    """
+    code = normAlgCd(algCd)
+    if not code or not isinstance(spec, dict):
+        return False
+    if normAlgCd(spec.get("algCd")) != code:
+        return False
+    settings = settings if isinstance(settings, dict) else {}
+    if code == "MTS01":
+        mt = settings.get("maTouchLive")
+        if isinstance(mt, dict) and "enabled" in mt:
+            return bool(mt.get("enabled"))
+        if "enabled" in spec:
+            return bool(spec.get("enabled"))
+        return False
+    if code == "SRG01":
+        if spec.get("enabled") is not True:
+            return False
+        if (spec.get("params") or {}).get("paperOnly") is not True:
+            return False
+        row = (settings.get("stratLive") or {}).get(code)
+        return isinstance(row, dict) and row.get("enabled") is True
+    live = settings.get("stratLive")
+    row = live.get(code) if isinstance(live, dict) else None
+    if isinstance(row, dict) and "enabled" in row:
+        return bool(row.get("enabled"))
+    if "enabled" in spec:
+        return bool(spec.get("enabled"))
+    return False
+
+
+def operatingDeskRows(rows, settings=None, specsByAlg=None):
+    """desk 목록 중 유효 가동만. 행의 enabled 플래그만으로 켜지 않는다."""
+    if settings is None:
+        try:
+            from config.settingsStore import loadSettings
+
+            settings = loadSettings() or {}
+        except Exception:
+            settings = {}
+    out = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        alg = normAlgCd(row.get("algCd"))
+        if not alg:
+            continue
+        if specsByAlg is None:
+            spec = _specForAlg(alg)
+        else:
+            spec = specsByAlg.get(alg)
+        if not effectiveAlgEnabled(alg, spec, settings):
+            continue
+        item = dict(row)
+        item["algCd"] = alg
+        item["operating"] = True
+        item["configuredEnabled"] = True
+        out.append(item)
+    return out
+
+
+def formatOpsAlgBar(rows):
+    """하단 문구. 꺼진 알고리즘은 넣지 않고, 하나도 없으면 빈 표시."""
+    import html
+
+    operating = [r for r in rows or [] if isinstance(r, dict) and r.get("operating") is True]
+    algs = []
+    chips = []
+    for row in operating:
+        alg = normAlgCd(row.get("algCd"))
+        if not alg:
+            continue
+        algs.append(alg)
+        name = html.escape(stripAlgTradeSuffix(row.get("name") or alg))
+        bg = algBgColor(alg)
+        chips.append(
+            f'<span style="background-color:{bg};color:#000;'
+            f'padding:2px 8px;border-radius:3px;margin-right:4px;">'
+            f"{name}({html.escape(alg)})</span>"
+        )
+    if not chips:
+        return {"visible": False, "text": "", "algs": []}
+    text = (
+        '<span style="color:#424242;">운영알고리즘 </span>'
+        + "&nbsp;".join(chips)
     )
+    return {"visible": True, "text": text, "algs": algs}
+
+
+def resolveInfoSelection(current, operatingCds):
+    """전략 설명에 남길 코드. 꺼진 선택이면 가동 중 첫 코드, 없으면 빈 문자열."""
+    return resolveMonitorSelection(current, operatingCds)
 
 
 def algWatchSubtabVisible(enabled, evidence=None):

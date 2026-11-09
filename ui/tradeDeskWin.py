@@ -908,7 +908,7 @@ class TradeDeskWin(QMainWindow):
         self._stratAlgCd = "MTS01"
         self._stratAlgTabCds = []
         self._stratAlgTabsBusy = False
-        self._watchAlgCd = "acnt"
+        self._watchAlgCd = "surge"
         self._watchAlgTabCds = []
         self._watchAlgTabsBusy = False
         self._watchNetCache = {}
@@ -2903,30 +2903,20 @@ class TradeDeskWin(QMainWindow):
         termLog(f"[매매창] 매매 설정 저장: {saved}")
 
     def refreshOpsAlgBar(self):
-        """하단: 운영 중 알고리즘 — 보유 행번호와 동일 바탕색 칩."""
+        """하단: 유효 가동 알고리즘만. 꺼진 알고리즘 이름·설명은 두지 않는다."""
         try:
-            from trading.deskLiveAlgs import algBgColor, listDeskLiveAlgs
+            from trading.deskLiveAlgs import formatOpsAlgBar, listDeskLiveAlgs, operatingDeskRows
 
-            chips = []
-            for r in listDeskLiveAlgs():
-                alg = r.get("algCd") or ""
-                nm = r.get("name") or alg
-                on = "ON" if r.get("enabled") else "OFF"
-                bg = algBgColor(alg)
-                chips.append(
-                    f'<span style="background-color:{bg};color:#000;'
-                    f'padding:2px 8px;border-radius:3px;margin-right:4px;">'
-                    f"{nm}({alg}) {on}</span>"
-                )
-            if chips:
-                self.opsAlgLbl.setText(
-                    '<span style="color:#424242;">운영알고리즘 </span>'
-                    + "&nbsp;".join(chips)
-                )
+            shown = formatOpsAlgBar(operatingDeskRows(listDeskLiveAlgs()))
+            if shown.get("visible") and shown.get("text"):
+                self.opsAlgLbl.setText(shown["text"])
+                self.opsAlgLbl.setVisible(True)
             else:
-                self.opsAlgLbl.setText("운영알고리즘: -")
+                self.opsAlgLbl.clear()
+                self.opsAlgLbl.setVisible(False)
         except Exception:
-            self.opsAlgLbl.setText("운영알고리즘: -")
+            self.opsAlgLbl.clear()
+            self.opsAlgLbl.setVisible(False)
         # 설정이 바뀌었으면 전략 탭도 맞춤
         try:
             if hasattr(self, "stratAlgTabBar"):
@@ -2939,26 +2929,11 @@ class TradeDeskWin(QMainWindow):
             pass
 
     def _rebuildStratAlgTabs(self):
-        """전략 탭 상단 — deskAlgTabs 기준, 탭색=algBgColor."""
+        """전략 설명 탭 — 유효 가동 알고리즘만. 보유로 켜짐 여부를 판단하지 않는다."""
         try:
-            from trading.deskLiveAlgs import (
-                algBgColor,
-                collectWatchEvidence,
-                filterVisibleAlgTabs,
-                listDeskLiveAlgs,
-            )
+            from trading.deskLiveAlgs import algBgColor, listDeskLiveAlgs, operatingDeskRows
 
-            algs = listDeskLiveAlgs()
-            evidence = {}
-            for row in algs:
-                alg = row.get("algCd")
-                if not alg:
-                    continue
-                try:
-                    evidence[alg] = collectWatchEvidence(alg)
-                except Exception:
-                    evidence[alg] = {"known": False}
-            algs = filterVisibleAlgTabs(algs, evidence)
+            algs = operatingDeskRows(listDeskLiveAlgs())
         except Exception:
             algs = []
             algBgColor = None
@@ -2973,7 +2948,7 @@ class TradeDeskWin(QMainWindow):
             if hasattr(bar, "setTabBg"):
                 bar.setTabBg(idx, bg)
 
-        # 동일하면 이름·색만 갱신
+        # 동일하면 이름·색만 갱신. 가동이 없으면 이전 설명을 지운다.
         if cds == getattr(self, "_stratAlgTabCds", None):
             for i, r in enumerate(algs):
                 if i < bar.count():
@@ -2981,6 +2956,9 @@ class TradeDeskWin(QMainWindow):
                     bar.setTabText(i, r.get("name") or alg)
                     bar.setTabToolTip(i, str(alg))
                     _paintTabBg(i, alg)
+            if not cds or self._stratAlgCd not in cds:
+                self._stratAlgCd = cds[0] if cds else ""
+                self._syncStratInfoVisibility()
             if hasattr(bar, "update"):
                 bar.update()
             return
@@ -3000,11 +2978,12 @@ class TradeDeskWin(QMainWindow):
                 _paintTabBg(idx, alg)
                 self._stratAlgTabCds.append(alg)
             cur = self._stratAlgCd if self._stratAlgCd in self._stratAlgTabCds else (
-                self._stratAlgTabCds[0] if self._stratAlgTabCds else "MTS01"
+                self._stratAlgTabCds[0] if self._stratAlgTabCds else ""
             )
             self._stratAlgCd = cur
             if cur in self._stratAlgTabCds:
                 bar.setCurrentIndex(self._stratAlgTabCds.index(cur))
+            self._syncStratInfoVisibility()
         finally:
             self._stratAlgTabsBusy = False
             bar.update()
@@ -3017,23 +2996,27 @@ class TradeDeskWin(QMainWindow):
         alg = self.stratAlgTabBar.tabData(idx)
         if not alg and 0 <= idx < len(getattr(self, "_stratAlgTabCds", [])):
             alg = self._stratAlgTabCds[idx]
-        self._stratAlgCd = str(alg or "MTS01")
+        self._stratAlgCd = str(alg or "")
+        if self._stratAlgCd not in (getattr(self, "_stratAlgTabCds", None) or []):
+            cds = getattr(self, "_stratAlgTabCds", None) or []
+            self._stratAlgCd = cds[0] if cds else ""
         self.refreshStratInfo()
 
     def _rebuildWatchAlgTabs(self):
-        """공유 관심(실계좌·주도주)과 급등주 조회 탭. 비활성 알고리즘 서브탭은 여기 두지 않는다."""
+        """조회 탭. 기본은 급등주만. 실계좌·주도주 코드는 남기고 설정으로 되돌린다."""
         try:
-            from trading.deskLiveAlgs import standaloneMonitorTabs
+            from trading.deskLiveAlgs import resolveMonitorSelection, visibleMonitorTabs
 
             tabs = tuple(
-                (row["key"], row["name"], row["bg"]) for row in standaloneMonitorTabs()
+                (row["key"], row["name"], row["bg"]) for row in visibleMonitorTabs()
             )
         except Exception:
-            tabs = (
-                ("acnt", "실계좌", "#CE93D8"),
-                ("leader", "주도주", "#FFCC80"),
-                ("surge", "급등주", "#80DEEA"),
-            )
+            tabs = (("surge", "급등주", "#80DEEA"),)
+
+            def resolveMonitorSelection(current, visibleKeys):
+                keys = [str(k) for k in (visibleKeys or []) if str(k)]
+                cur = str(current or "")
+                return cur if cur in keys else (keys[0] if keys else "")
         cds = [k for k, _n, _c in tabs]
         bar = self.watchAlgTabBar
         if cds == getattr(self, "_watchAlgTabCds", None) and bar.count() == len(cds):
@@ -3053,7 +3036,7 @@ class TradeDeskWin(QMainWindow):
                 except Exception:
                     pass
                 self._watchAlgTabCds.append(key)
-            cur = self._watchAlgCd if self._watchAlgCd in self._watchAlgTabCds else "acnt"
+            cur = resolveMonitorSelection(self._watchAlgCd, self._watchAlgTabCds)
             self._watchAlgCd = cur
             if cur in self._watchAlgTabCds:
                 bar.setCurrentIndex(self._watchAlgTabCds.index(cur))
@@ -3070,7 +3053,10 @@ class TradeDeskWin(QMainWindow):
         alg = self.watchAlgTabBar.tabData(idx)
         if not alg and 0 <= idx < len(getattr(self, "_watchAlgTabCds", [])):
             alg = self._watchAlgTabCds[idx]
-        self._watchAlgCd = str(alg or "acnt")
+        self._watchAlgCd = str(alg or "")
+        cds = getattr(self, "_watchAlgTabCds", None) or []
+        if self._watchAlgCd not in cds:
+            self._watchAlgCd = cds[0] if cds else ""
         try:
             _f = self.tradeWatchFrozen
             _f.setItemDelegateForColumn(1, SignedPnlDelegate(_f))
@@ -3151,18 +3137,37 @@ class TradeDeskWin(QMainWindow):
             bar.setTabText(i, labels.get(key, key))
         bar.update()
 
+    def _syncStratInfoVisibility(self):
+        """가동 알고리즘이 없으면 설명 칸을 비우고 숨긴다."""
+        box = getattr(self, "stratBox", None)
+        if box is None:
+            return
+        cds = getattr(self, "_stratAlgTabCds", None) or []
+        if cds and self._stratAlgCd in cds:
+            box.setVisible(True)
+            return
+        self._stratAlgCd = cds[0] if cds else ""
+        box.clear()
+        box.setVisible(bool(cds))
+
     def refreshStratInfo(self):
-        """선택된 알고리즘 명세를 전략 탭에 표시. 스크롤 위치는 유지."""
+        """선택된 가동 알고리즘 명세만. 꺼진 알고리즘 설명은 남기지 않는다."""
+        cds = getattr(self, "_stratAlgTabCds", None) or []
+        algCd = str(getattr(self, "_stratAlgCd", "") or "")
+        if algCd not in cds:
+            self._syncStratInfoVisibility()
+            return
         try:
             from trading.deskLiveAlgs import stratIdForAlg
 
-            algCd = self._stratAlgCd or "MTS01"
             stratId = stratIdForAlg(algCd) or (
-                "maTouchScale_v1" if algCd == "MTS01" else "maSupportEod_v1"
+                "maTouchScale_v1" if algCd == "MTS01" else ""
             )
         except Exception:
-            algCd = getattr(self, "_stratAlgCd", None) or "MTS01"
-            stratId = "maTouchScale_v1" if algCd == "MTS01" else "maSupportEod_v1"
+            stratId = "maTouchScale_v1" if algCd == "MTS01" else ""
+        if not stratId:
+            self.stratBox.clear()
+            return
         # 탭 선택 동기
         cds = getattr(self, "_stratAlgTabCds", []) or []
         if algCd in cds:
@@ -5061,10 +5066,24 @@ class TradeDeskWin(QMainWindow):
 
     def _fillTradeWatch(self):
         """관심종목=계좌보유, 주도주=상승순위, 급등주=조회순위."""
-        kind = str(getattr(self, "_watchAlgCd", None) or "acnt")
-        surge = kind == "surge"
+        allowed = list(getattr(self, "_watchAlgTabCds", None) or [])
+        kind = str(getattr(self, "_watchAlgCd", None) or "")
         frame = getattr(self, "watchGridFrame", None)
         table = getattr(self, "surgeRankTbl", None)
+        if not allowed or kind not in allowed:
+            if allowed:
+                kind = allowed[0]
+                self._watchAlgCd = kind
+            else:
+                self._watchAlgCd = ""
+                if frame is not None:
+                    frame.setVisible(False)
+                if table is not None:
+                    table.setVisible(False)
+                self._syncLeaderRankTools()
+                self._syncSurgeTools()
+                return
+        surge = kind == "surge"
         if frame is not None:
             frame.setVisible(not surge)
         if table is not None:

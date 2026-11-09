@@ -32,7 +32,18 @@ from strategies.impl.surgeTrade import (
 )
 from strategies.indicators import calcRsiSeries
 from strategies.specLoader import loadStratSpec
-from trading.deskLiveAlgs import algWatchSubtabVisible, filterVisibleAlgTabs, standaloneMonitorTabs
+from trading.deskLiveAlgs import (
+    algWatchSubtabVisible,
+    effectiveAlgEnabled,
+    filterVisibleAlgTabs,
+    formatOpsAlgBar,
+    monitorTabCatalog,
+    operatingDeskRows,
+    resolveInfoSelection,
+    resolveMonitorSelection,
+    standaloneMonitorTabs,
+    visibleMonitorTabs,
+)
 from trading.surgeTradeData import (
     SnapStore,
     buildTabRows,
@@ -729,8 +740,13 @@ class SurgeTradeTest(unittest.TestCase):
         empty = buildTabRows(notCollectedSnapshot("20261106", "1600", "2026-11-06T18:00:00"), "20261106", {}, {})
         self.assertEqual(empty["state"], "NOT_COLLECTED")
         self.assertEqual(empty["rows"], [])
-        names = [row["key"] for row in standaloneMonitorTabs()]
+        names = [row["key"] for row in monitorTabCatalog()]
         self.assertEqual(names, ["acnt", "leader", "surge"])
+        self.assertEqual(names, [row["key"] for row in standaloneMonitorTabs()])
+        shownTabs = [row["key"] for row in visibleMonitorTabs(settings={})]
+        self.assertEqual(shownTabs, ["surge"])
+        self.assertNotIn("acnt", shownTabs)
+        self.assertNotIn("leader", shownTabs)
         rowsAlg = [
             {"algCd": "LDR01", "enabled": False},
             {"algCd": "RAM01", "enabled": False},
@@ -765,6 +781,105 @@ class SurgeTradeTest(unittest.TestCase):
         missingQuote.pop("brokerQty")
         noBroker = unknown.decide(datetime(2026, 11, 9, 10, 0), {"005930": missingQuote}, [], 0, {})
         self.assertTrue(any(a.get("reason") == "BROKER_QTY_UNKNOWN" for a in noBroker["actions"]))
+
+    def test_monitor_tabs_reversible_and_operating_bar(self):
+        catalog = [row["key"] for row in monitorTabCatalog()]
+        self.assertEqual(catalog, ["acnt", "leader", "surge"])
+        hidden = [row["key"] for row in visibleMonitorTabs(settings={})]
+        self.assertEqual(hidden, ["surge"])
+        restored = [
+            row["key"]
+            for row in visibleMonitorTabs(
+                settings={"deskMonitorTabs": ["acnt", "leader", "surge"]}
+            )
+        ]
+        self.assertEqual(restored, ["acnt", "leader", "surge"])
+        partial = [
+            row["key"]
+            for row in visibleMonitorTabs(
+                settings={"deskMonitorTabs": ["nope", "surge", "acnt"]}
+            )
+        ]
+        self.assertEqual(partial, ["surge", "acnt"])
+        self.assertNotIn("leader", partial)
+        self.assertEqual(resolveMonitorSelection("acnt", ["surge"]), "surge")
+        self.assertEqual(resolveMonitorSelection("surge", ["surge"]), "surge")
+        self.assertEqual(resolveMonitorSelection("leader", ["acnt", "surge"]), "acnt")
+        self.assertEqual(resolveMonitorSelection("acnt", []), "")
+
+        specs = {
+            "MTS01": {"algCd": "MTS01", "enabled": True, "name": "이평선터치"},
+            "LDR01": {"algCd": "LDR01", "enabled": True, "name": "주도주"},
+            "MMG01": {"algCd": "MMG01", "enabled": True, "name": "수동정찰"},
+            "SRG01": {
+                "algCd": "SRG01",
+                "enabled": False,
+                "name": "급등주",
+                "params": {"paperOnly": True},
+            },
+        }
+        rows = [
+            {"algCd": "MTS01", "name": "이평선터치", "enabled": True, "qty": 10},
+            {"algCd": "LDR01", "name": "주도주", "enabled": True, "qty": 3},
+            {"algCd": "MMG01", "name": "수동정찰", "enabled": True},
+            {"algCd": "SRG01", "name": "급등주", "enabled": True},
+            {"algCd": "NOPE1", "name": "미등록", "enabled": True, "qty": 9},
+        ]
+        allOff = {
+            "maTouchLive": {"enabled": False},
+            "stratLive": {
+                "LDR01": {"enabled": False},
+                "MMG01": {"enabled": False},
+                "SRG01": {"enabled": True},
+            },
+        }
+        none = operatingDeskRows(rows, allOff, specs)
+        self.assertEqual(none, [])
+        emptyBar = formatOpsAlgBar(none)
+        self.assertFalse(emptyBar["visible"])
+        self.assertEqual(emptyBar["text"], "")
+        self.assertEqual(emptyBar["algs"], [])
+        self.assertFalse(effectiveAlgEnabled("NOPE1", None, {"stratLive": {"NOPE1": {"enabled": True}}}))
+        self.assertFalse(
+            effectiveAlgEnabled("SRG01", specs["SRG01"], allOff)
+        )
+
+        mixedSettings = {
+            "maTouchLive": {"enabled": False},
+            "stratLive": {
+                "LDR01": {"enabled": True},
+                "MMG01": {"enabled": False},
+                "SRG01": {"enabled": True},
+            },
+        }
+        mixed = operatingDeskRows(rows, mixedSettings, specs)
+        self.assertEqual([r["algCd"] for r in mixed], ["LDR01"])
+        bar = formatOpsAlgBar(mixed)
+        self.assertTrue(bar["visible"])
+        self.assertIn("LDR01", bar["text"])
+        self.assertNotIn("MMG01", bar["text"])
+        self.assertNotIn("MTS01", bar["text"])
+        self.assertNotIn("OFF", bar["text"])
+        self.assertNotIn("NOPE1", bar["text"])
+        self.assertEqual(resolveInfoSelection("MMG01", bar["algs"]), "LDR01")
+        self.assertEqual(resolveInfoSelection("LDR01", bar["algs"]), "LDR01")
+
+        surged = dict(specs["SRG01"], enabled=True)
+        specsOn = dict(specs, SRG01=surged)
+        both = operatingDeskRows(rows, mixedSettings, specsOn)
+        self.assertEqual([r["algCd"] for r in both], ["LDR01", "SRG01"])
+        toggledOff = {
+            "maTouchLive": {"enabled": False},
+            "stratLive": {
+                "LDR01": {"enabled": False},
+                "MMG01": {"enabled": False},
+                "SRG01": {"enabled": False},
+            },
+        }
+        backOff = operatingDeskRows(rows, toggledOff, specsOn)
+        self.assertEqual([r["algCd"] for r in backOff], [])
+        self.assertEqual(resolveInfoSelection("SRG01", []), "")
+        self.assertEqual(resolveInfoSelection("LDR01", ["SRG01"]), "SRG01")
 
     def test_offscreen_yellow_cell(self):
         try:
