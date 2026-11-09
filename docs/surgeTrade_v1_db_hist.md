@@ -147,7 +147,7 @@ v7 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-10`
 - SRC: `manual`
 - NOTE: `v7 장 시작 전 탭은 전일 최종 목록. 조회일시를 상단에 표시. 매수 조건은 그대로. 주문 비활성.`
-- GIT_HASH: `PENDING_V7`
+- GIT_HASH: `67fe98c2e0ee`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -155,7 +155,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 7, '2026-11-10',
    'v7 장 시작 전 탭은 전일 최종 목록. 조회일시를 상단에 표시. 매수 조건은 그대로. 주문 비활성.',
-   'PENDING_V7', 'manual')
+   '67fe98c2e0ee', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
