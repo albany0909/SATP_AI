@@ -208,7 +208,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 2)
+        self.assertEqual(int(spec["version"]), 3)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -221,7 +221,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 2)
+        self.assertEqual(payload["algVer"], 3)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -1000,6 +1000,161 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(blocked["orders"], 0)
         self.assertFalse(blocked["called"])
         self.assertTrue(blocked["label"].startswith("실패"))
+
+    def test_entry_inputs_fail_closed_exits_use_quote(self):
+        from trading.surgeTradeInputs import (
+            entryGate,
+            firstSurgeRecord,
+            issueFromDartBody,
+            issueFromNews,
+            membershipFromKa20002,
+            membershipLookupBook,
+            membershipRefreshDue,
+            quoteFromSources,
+            readinessChecks,
+            rebalanceAnchor,
+        )
+
+        self.assertEqual(rebalanceAnchor("20261109"), "20260601")
+        freshBook = membershipFromKa20002(
+            {"inds_stkpc": [{"stk_cd": "005930"}, {"stk_cd": "000660"}]},
+            "20260615",
+            "20260601",
+            "20261130",
+            truncated=False,
+        )
+        self.assertFalse(membershipRefreshDue(freshBook, "20261109"))
+        self.assertTrue(membershipRefreshDue(freshBook, "20261202"))
+        self.assertEqual(membershipLookupBook(freshBook)["005930"]["index"], "KOSPI200")
+        partial = membershipFromKa20002(
+            {"inds_stkpc": [{"stk_cd": "005930"}]},
+            "20260615",
+            "20260601",
+            "20261130",
+            truncated=True,
+        )
+        self.assertEqual(membershipLookupBook(partial), {})
+        dartBody = {
+            "status": "000",
+            "list": [
+                {
+                    "stock_code": "005930",
+                    "report_nm": "지분분쟁 관련 주요사항보고서",
+                    "rcept_no": "20261106000111",
+                    "rcept_dt": "20261106",
+                }
+            ],
+        }
+        issues = issueFromDartBody(dartBody, "005930")
+        self.assertEqual(issues[0]["tag"], "지분분쟁")
+        self.assertTrue(issues[0]["confirmed"])
+        vague = issueFromDartBody(
+            {
+                "status": "000",
+                "list": [
+                    {
+                        "stock_code": "005930",
+                        "report_nm": "주주총회소집공고",
+                        "rcept_no": "20261106000999",
+                        "rcept_dt": "20261106",
+                    }
+                ],
+            },
+            "005930",
+        )
+        self.assertFalse(vague[0]["confirmed"])
+        news = issueFromNews(
+            {
+                "stkCd": "005930",
+                "title": "관세 영향",
+                "newsUrl": "https://news.example/a",
+                "publishedAt": "20261106",
+                "newsId": "n1",
+            }
+        )
+        self.assertTrue(news["confirmed"])
+        self.assertEqual(news["tag"], "관세")
+        self.assertTrue(firstSurgeRecord(issues, "005930", "20261106", 12)["ok"])
+        self.assertEqual(
+            firstSurgeRecord(issues, "005930", "20261109", 12)["reason"],
+            "NOT_FIRST_SURGE_DAY",
+        )
+        now = datetime(2026, 11, 6, 15, 18, 10)
+        live = quoteFromSources(
+            "005930",
+            now,
+            {"src": "0B", "curPrc": 11000, "asof": datetime(2026, 11, 6, 15, 18, 5)},
+        )
+        self.assertTrue(live["ok"])
+        self.assertEqual(live["source"], "0B")
+        old = quoteFromSources(
+            "005930",
+            now,
+            {"src": "0B", "curPrc": 11000, "asof": datetime(2026, 11, 6, 15, 10, 0)},
+        )
+        self.assertTrue(old["stale"])
+        gate = entryGate("005930", "20261106", 12, freshBook, issues, True)
+        self.assertTrue(gate["ok"])
+        blocked = entryGate("000660", "20261106", 12, freshBook, issues, True)
+        self.assertIn("ISSUE_UNCONFIRMED", blocked["reasons"])
+        held = SurgeBook(self.cal)
+        held.position("005930").update(
+            {
+                "phase": "OPEN",
+                "qty": 10,
+                "avgPx": 10000,
+                "costPxQty": 100000,
+                "entryYmd": "20261106",
+                "entryKind": "INITIAL",
+                "stage": 0,
+            }
+        )
+        stopNow = datetime(2026, 11, 9, 10, 0)
+        stopped = held.decide(
+            stopNow,
+            {"005930": q(9000, stopNow, broker=10)},
+            [],
+            0,
+            {"005930": True},
+            entryOk={"005930": False},
+        )
+        self.assertEqual(sells(stopped["actions"])[0]["reason"], "FULL_STOP")
+        adding = SurgeBook(self.cal)
+        adding.position("005930").update(
+            {
+                "phase": "OPEN",
+                "qty": 10,
+                "avgPx": 10000,
+                "costPxQty": 100000,
+                "entryYmd": "20261106",
+                "entryKind": "INITIAL",
+                "stage": 0,
+            }
+        )
+        blockedAdd = adding.decide(
+            stopNow,
+            {"005930": q(11000, stopNow, broker=10)},
+            [],
+            5_000_000,
+            {"005930": True},
+            entryOk={"005930": False},
+        )
+        self.assertEqual(buys(blockedAdd["actions"]), [])
+        self.assertTrue(any(a.get("reason") == "ENTRY_INPUT" for a in blockedAdd["actions"]))
+        report = readinessChecks(
+            env={"DART_API_KEY": "do-not-print"},
+            membership=freshBook,
+            issueCount=1,
+            deskMode="paper",
+            quoteSeen=True,
+        )
+        text = " ".join(row["detail"] for row in report["checks"])
+        self.assertNotIn("do-not-print", text)
+        byName = {row["name"]: row["status"] for row in report["checks"]}
+        self.assertEqual(byName["kospi200Membership"], "PASS")
+        self.assertEqual(byName["kosdaq150Membership"], "FAIL")
+        self.assertEqual(byName["dartApiKey"], "PASS")
+        self.assertEqual(byName["srg01TradingEnabled"], "FAIL")
 
     def test_offscreen_yellow_cell(self):
         try:

@@ -11,7 +11,7 @@ import threading
 from datetime import datetime, timedelta
 
 ALG_CD = "SRG01"
-ALG_VER = 2
+ALG_VER = 3
 STRAT_ID = "surgeTrade_v1"
 ENGLISH_NAME = "Surge Trade"
 NAME_KR = "급등주매매"
@@ -258,22 +258,31 @@ class SurgeBook:
             except RuntimeError:
                 pass
 
-    def decide(self, now, quotes, candidates, cash, ownOk=None):
+    def decide(self, now, quotes, candidates, cash, ownOk=None, entryOk=None):
         """
         한 사이클 판단. 종목당 주문은 최대 1건.
         quotes: {stkCd: quote}
         candidates: 최초·폴백 후보 목록
         cash: 사용 가능 현금(원). 레버리지 없음.
         ownOk: {stkCd: True} 일 때만 신규·재매수. 없으면 매수 거부.
+        entryOk: None 이면 기존과 같다. dict 이면 True 가 아닌 종목의 매수는 막는다.
+                 매도는 막지 않는다.
         """
         if not self.tryBegin():
             return {"ok": False, "reason": "DUPLICATE_CYCLE", "actions": []}
         try:
-            return self._decide(now, quotes or {}, candidates or [], cash, ownOk or {})
+            return self._decide(
+                now, quotes or {}, candidates or [], cash, ownOk or {}, entryOk
+            )
         finally:
             self.end()
 
-    def _decide(self, now, quotes, candidates, cash, ownOk):
+    def _entryOpen(self, stkCd, entryOk):
+        if entryOk is None:
+            return True
+        return entryOk.get(str(stkCd)) is True
+
+    def _decide(self, now, quotes, candidates, cash, ownOk, entryOk=None):
         cur = _asDt(now)
         ymd = _ymd(cur)
         hms = _hms(cur)
@@ -285,7 +294,9 @@ class SurgeBook:
         for cd, pos in list(self.pos.items()):
             if int(pos.get("qty") or 0) > 0 or pos.get("phase") not in (PHASE_FLAT, PHASE_CLOSED):
                 seen.add(cd)
-                act, left = self._decideHeld(pos, cur, quotes.get(cd), left, ownOk.get(cd))
+                act, left = self._decideHeld(
+                    pos, cur, quotes.get(cd), left, ownOk.get(cd), entryOk
+                )
                 if act:
                     actions.append(act)
         for row in candidates:
@@ -295,7 +306,9 @@ class SurgeBook:
             pos = self.position(cd)
             if int(pos.get("qty") or 0) > 0 or pos.get("phase") not in (PHASE_FLAT, PHASE_CLOSED, ""):
                 continue
-            act, left = self._decideFlat(pos, row, cur, quotes.get(cd), left, ownOk.get(cd))
+            act, left = self._decideFlat(
+                pos, row, cur, quotes.get(cd), left, ownOk.get(cd), entryOk
+            )
             if act:
                 actions.append(act)
         return {"ok": True, "actions": actions, "cash": left, "ymd": ymd, "hms": hms}
@@ -387,13 +400,13 @@ class SurgeBook:
                 return None, self._hold(pos, "RECONCILE_MISMATCH")
         return quote, None
 
-    def _decideHeld(self, pos, now, quote, cash, owned):
+    def _decideHeld(self, pos, now, quote, cash, owned, entryOk=None):
         ymd = _ymd(now)
         hms = _hms(now)
         if pos.get("phase") == PHASE_PENDING and int(pos.get("qty") or 0) == 0:
-            return self._decidePendingEntry(pos, now, quote, cash, owned)
+            return self._decidePendingEntry(pos, now, quote, cash, owned, entryOk)
         if pos.get("phase") == PHASE_FALLBACK and int(pos.get("qty") or 0) == 0:
-            return self._decideFallback(pos, now, quote, cash, owned)
+            return self._decideFallback(pos, now, quote, cash, owned, entryOk)
         quote, held = self._gateQuote(pos, quote, now, needBroker=True)
         if held:
             return held, cash
@@ -402,7 +415,7 @@ class SurgeBook:
         exitAct = self._exit(pos, quote, now, cash)
         if exitAct is not None:
             return exitAct, cash
-        return self._buyMore(pos, quote, now, cash, owned, ymd, hms)
+        return self._buyMore(pos, quote, now, cash, owned, ymd, hms, entryOk)
 
     def _exit(self, pos, quote, now, cash):
         hms = _hms(now)
@@ -474,7 +487,9 @@ class SurgeBook:
             return False
         return previous >= priorMa and px < currentMa
 
-    def _buyMore(self, pos, quote, now, cash, owned, ymd, hms):
+    def _buyMore(self, pos, quote, now, cash, owned, ymd, hms, entryOk=None):
+        if not self._entryOpen(pos["stkCd"], entryOk):
+            return self._hold(pos, "ENTRY_INPUT"), cash
         if pos.get("phase") == PHASE_STOP1 and pos.get("needPosCross"):
             return self._reentry(pos, quote, now, cash, owned)
         if pos.get("phase") != PHASE_OPEN:
@@ -540,7 +555,9 @@ class SurgeBook:
             return act, cash
         return act, cash - need
 
-    def _decideFlat(self, pos, row, now, quote, cash, owned):
+    def _decideFlat(self, pos, row, now, quote, cash, owned, entryOk=None):
+        if not self._entryOpen(pos["stkCd"], entryOk):
+            return self._hold(pos, "ENTRY_INPUT"), cash
         if pos.get("frozen"):
             return self._hold(pos, pos["frozen"]), cash
         if pos.get("pending"):
@@ -570,7 +587,7 @@ class SurgeBook:
             pos["entryKind"] = "INITIAL"
         return act, left
 
-    def _decidePendingEntry(self, pos, now, quote, cash, owned):
+    def _decidePendingEntry(self, pos, now, quote, cash, owned, entryOk=None):
         """미체결 초기 주문. 체결 0·미체결 없음이 확인되기 전에는 폴백을 걸지 않는다."""
         if pos.get("pending"):
             if _hms(now) >= "153000":
@@ -598,6 +615,7 @@ class SurgeBook:
                 quote,
                 cash,
                 owned,
+                entryOk,
             )
         nxt = self._nextTrading(_ymd(now))
         if not nxt:
@@ -607,7 +625,9 @@ class SurgeBook:
         pos["fallbackYmd"] = nxt
         return self._hold(pos, "ARM_FALLBACK"), cash
 
-    def _decideFallback(self, pos, now, quote, cash, owned):
+    def _decideFallback(self, pos, now, quote, cash, owned, entryOk=None):
+        if not self._entryOpen(pos["stkCd"], entryOk):
+            return self._hold(pos, "ENTRY_INPUT"), cash
         ymd = _ymd(now)
         hms = _hms(now)
         due = str(pos.get("fallbackYmd") or "")
@@ -875,8 +895,8 @@ def buildAlgVerEvent(evtTp, stkCd, reason, tradeDt, evtTm, px=None):
 def algVerHistPayload(gitHash="", ymd="2026-11-09"):
     """AI_ALG_VER_HIST 적재용 값. 이 함수는 DB 를 열지 않는다."""
     note = (
-        "v2 급등주 탭 ka00198 당일누적 조회는 전략이 꺼져 있어도 "
-        "15분·16:00 수집. 주문은 기본 비활성."
+        "v3 구성·이슈·시세가 없거나 오래되면 신규·추가 매수는 하지 않는다. "
+        "보유 청산은 시세만으로 판단. 주문은 기본 비활성."
     )
     return {
         "algCd": ALG_CD,

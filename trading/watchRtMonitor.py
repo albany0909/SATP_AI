@@ -709,6 +709,15 @@ def _monCodes():
     except Exception as err:
         termLog(f"[watchRt] 관리종목 병합 실패: {err}")
     try:
+        from trading.surgeTradeInputs import srgQuoteCodes
+
+        for cd in srgQuoteCodes():
+            if cd and cd not in seen and len(codes) < _MAX_STK:
+                seen.add(cd)
+                codes.append(cd)
+    except Exception:
+        pass
+    try:
         from utils.stratOrdLedgerStore import listOpenLedgerStkCds
 
         for cd in listOpenLedgerStkCds():
