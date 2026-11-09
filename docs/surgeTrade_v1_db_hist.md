@@ -32,7 +32,7 @@ v2 는 별도 행이다. 이 작업에서는 실행하지 않았다. `GIT_HASH` 
 - YMD: `2026-11-09`
 - SRC: `manual`
 - NOTE: `v2 급등주 탭 ka00198 당일누적 조회는 전략이 꺼져 있어도 15분·16:00 수집. 수동 갱신은 ADHOC. 주문은 기본 비활성.`
-- GIT_HASH: `PENDING_V2`
+- GIT_HASH: `89c51d20b3d4`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -40,7 +40,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 2, '2026-11-09',
    'v2 급등주 탭 ka00198 당일누적 조회는 전략이 꺼져 있어도 15분·16:00 수집. 수동 갱신은 ADHOC. 주문은 기본 비활성.',
-   'PENDING_V2', 'manual')
+   '89c51d20b3d4', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
