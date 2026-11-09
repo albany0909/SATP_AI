@@ -52,7 +52,7 @@ python scripts\verifyClientLaunch.py
 5. 이슈는 공시 URL 과 발표시각이 있는 확인 기록으로만 최초 급등이 된다. 첫 관측이나 테마 이름은 매수 사유가 아니다.
 6. 15:18 판단은 15:18 이후 스냅을 쓴다. 16:00 스냅으로 15:18 을 소급하지 않는다.
 7. paper 모드에서 소액이 아닌 **주문 미전송** 경로로 게이트가 실전 호스트를 거부하는지 위 테스트로 다시 본다.
-8. 그 전에 `python scripts/srgReadiness.py` 로 입력별 PASS/FAIL 을 본다. 이 스크립트는 주문을 내지 않는다. KOSDAQ150 은 키움 ka20002 명세에 업종코드가 없어 FAIL 로 남는다. DART 는 환경변수 `DART_API_KEY` 가 있을 때만 공시를 읽으며, 값은 출력하지 않는다. 명부 파일은 `config/data/indexMembership.json` 이고 이번 변경은 그 파일을 만들지 않는다.
+8. 그 전에 `python scripts/srgReadiness.py` 로 건수와 PASS/FAIL 을 본다. `--fetch` 를 붙이면 모의 ka20002 와 KRX 구성조회만 하고 주문은 내지 않는다. 모의 호스트가 ka20002 를 주지 않으면 실호스트로 넘어가지 않고 KOSPI200 은 불완전으로 남는다. KOSDAQ150 은 KRX `MDCSTAT00601` 에서 지수명이 정확히 `코스닥 150` 일 때만 저장한다. DART 는 `config.config.dart_api_key` (`.env` 의 `DART_API_KEY`) 를 쓰며 값은 출력하지 않는다. 명부 파일은 `config/data/indexMembership.json` 이다.
 9. 그 다음에만 스펙 `enabled` 와 `settings.stratLive.SRG01.enabled` 를 함께 true 로 바꾼다. 둘 중 하나만으로는 켜지지 않는다. 앱 재시작 여부는 그때 따로 결정한다. 이 커밋은 둘 다 켜지 않는다.
 
 급등주 탭은 전략이 꺼져 있어도 조회용으로 보인다. 탭이 보이는 메인 창은 거래일에 모의 호스트의 ka00198 당일누적만 15분·16:00 에 저장한다. SRG01 을 켜지 않는다. 주문은 만들지 않는다. 수동 갱신은 같은 조회를 백그라운드에서 한 번 더 받아 ADHOC 으로 저장하고, 화면은 관측 시각이 가장 늦은 스냅샷을 보여 준다. 16:00 실측보다 늦은 수동 조회만 그 최종분을 앞선다. 모의 로그인이 없으면 수동 갱신은 `실패` 로 남고 네트워크를 열지 않는다.

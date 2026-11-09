@@ -208,7 +208,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 3)
+        self.assertEqual(int(spec["version"]), 4)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -221,7 +221,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 3)
+        self.assertEqual(payload["algVer"], 4)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -1151,10 +1151,40 @@ class SurgeTradeTest(unittest.TestCase):
         text = " ".join(row["detail"] for row in report["checks"])
         self.assertNotIn("do-not-print", text)
         byName = {row["name"]: row["status"] for row in report["checks"]}
-        self.assertEqual(byName["kospi200Membership"], "PASS")
+        self.assertEqual(byName["kospi200Membership"], "FAIL")
         self.assertEqual(byName["kosdaq150Membership"], "FAIL")
         self.assertEqual(byName["dartApiKey"], "PASS")
         self.assertEqual(byName["srg01TradingEnabled"], "FAIL")
+        from trading.surgeTradeInputs import (
+            applyKospiPages,
+            emptyMembership,
+            indexCodesFromFinder,
+            pagesToCodes,
+            tagFromTitle,
+        )
+
+        rows = [{"stk_cd": f"{i:06d}"} for i in range(1, 201)]
+        codes, truncated = pagesToCodes([{"rows": rows, "contYn": "N"}])
+        self.assertEqual(len(codes), 200)
+        self.assertFalse(truncated)
+        built = applyKospiPages(emptyMembership("20261109"), [{"rows": rows, "contYn": "N"}], "20261109", "20260601", "20261130")
+        self.assertTrue(built["indexes"]["KOSPI200"]["complete"])
+        short = pagesToCodes([{"rows": rows, "contYn": "Y"}])
+        self.assertTrue(short[1])
+        self.assertEqual(
+            indexCodesFromFinder(
+                [{"codeName": "코스닥 150", "short_code": "203", "full_code": "2"}],
+                "코스닥 150",
+            )["indIdx2"],
+            "203",
+        )
+        self.assertIsNone(
+            indexCodesFromFinder(
+                [{"codeName": "코스닥 150 레버리지", "short_code": "1", "full_code": "9"}],
+                "코스닥 150",
+            )
+        )
+        self.assertEqual(tagFromTitle("깜짝실적 공시"), "어닝서프라이즈")
 
     def test_offscreen_yellow_cell(self):
         try:

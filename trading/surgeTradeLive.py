@@ -483,6 +483,12 @@ def _rankLoop():
             if not isTradingDay(now):
                 time.sleep(RANK_POLL_SEC)
                 continue
+            try:
+                from scripts.srgMembershipRefresh import refreshIfDue
+
+                refreshIfDue(now)
+            except Exception:
+                pass
             session = loadPaperOrderSession()
             if session is None:
                 time.sleep(RANK_POLL_SEC)

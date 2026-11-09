@@ -28,18 +28,24 @@ KOSPI200_SPEC = {
     "stexTp": "1",
     "limit": "연속조회가 남아 있으면 전수라고 보지 않는다. 잘린 명부는 매수에 쓰지 않는다.",
 }
-# 같은 명세의 업종코드 목록에 KOSDAQ150 은 없다.
+# ka20002·ka10101 시장구분에 KOSDAQ150 은 없다. 구성은 KRX MDCSTAT00601 로만 받는다.
 KOSDAQ150_GAP = (
-    "ka20002 inds_cd 설명은 001/002/003/004/101/201/701 만 적는다. "
-    "KOSDAQ150 코드는 이 명세에 없다. 코드를 추정해 종목을 만들지 않는다."
+    "ka20002/ka10101 명세에 KOSDAQ150 업종코드가 없다. "
+    "구성은 KRX MDCSTAT00601 에서 지수명 '코스닥 150' 을 찾은 뒤에만 저장한다."
 )
+KRX_CONSTITUENT_BLD = "dbms/MDC/STAT/standard/MDCSTAT00601"
+KRX_FINDER_BLD = "dbms/comm/finder/finder_equidx"
+KRX_URL = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
+KOSPI200_COUNT = (190, 210)
+KOSDAQ150_COUNT = (140, 160)
 
+# 제목에 이 문구가 있을 때만 태그. 비슷한 일반 단어는 넣지 않는다.
 _TAG_RULES = (
-    ("지분분쟁", ("지분분쟁", "경영권분쟁", "경영권 분쟁")),
-    ("어닝서프라이즈", ("어닝서프라이즈", "어닝 서프라이즈", "실적서프라이즈")),
-    ("전쟁", ("전쟁", "무력충돌")),
-    ("코로나", ("코로나", "코로나19")),
-    ("관세", ("관세",)),
+    ("지분분쟁", ("지분분쟁", "경영권분쟁", "경영권 분쟁", "지분경쟁", "지분 경쟁")),
+    ("어닝서프라이즈", ("어닝서프라이즈", "어닝 서프라이즈", "실적서프라이즈", "실적 서프라이즈", "깜짝실적", "깜짝 실적")),
+    ("전쟁", ("전쟁", "무력충돌", "무력 충돌")),
+    ("코로나", ("코로나", "코로나19", "팬데믹")),
+    ("관세", ("관세", "관세폭탄", "관세 폭탄")),
 )
 
 _QUOTE_CODES = set()
@@ -353,9 +359,71 @@ def entryGate(code, tradeYmd, dailyPct, book, records, quoteOk):
     }
 
 
-def readinessChecks(env=None, membership=None, issueCount=0, deskMode="paper", quoteSeen=False):
+def countInRange(n, bounds):
+    lo, hi = bounds
+    return lo <= int(n) <= hi
+
+
+def pagesToCodes(pages):
+    """ka20002 페이지 목록. 마지막 장이 연속이면 잘린 것으로 본다."""
+    codes = []
+    for page in pages or []:
+        for row in (page or {}).get("rows") or []:
+            raw = row.get("stk_cd") if isinstance(row, dict) else row
+            code = str(raw or "").split("_")[0].strip()
+            if len(code) == 6 and code.isdigit() and code not in codes:
+                codes.append(code)
+    truncated = bool(pages) and str((pages[-1] or {}).get("contYn") or "").upper() == "Y"
+    return codes, truncated
+
+
+def codesFromKrxOutput(output):
+    codes = []
+    for row in output or []:
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("ISU_SRT_CD") or row.get("ISU_CD") or "").strip()
+        if len(code) == 6 and code.isdigit() and code not in codes:
+            codes.append(code)
+    return codes
+
+
+def dartKeyConfigured():
+    """config.config.dart_api_key. 값은 반환하지 않는다."""
+    try:
+        from config.config import dart_api_key
+
+        return bool(str(dart_api_key or "").strip())
+    except Exception:
+        return False
+
+
+def mergeIssueRecords(existing, incoming):
+    """eventId 또는 URL 기준으로 확인 이슈만 누적한다."""
+    out = []
+    seen = set()
+    for row in list(existing or []) + list(incoming or []):
+        if not isinstance(row, dict) or row.get("confirmed") is not True:
+            continue
+        key = str(row.get("eventId") or row.get("sourceUrl") or "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+    return out
+
+
+def readinessChecks(
+    env=None,
+    membership=None,
+    issueCount=0,
+    deskMode="paper",
+    quoteSeen=False,
+    quoteAgeSec=None,
+    dartConfigured=None,
+):
     """주문 없이 입력 상태만 적는다. 비밀값은 출력하지 않는다."""
-    env = env or {}
+    env = env if isinstance(env, dict) else None
     checks = []
 
     def add(name, ok, detail):
@@ -363,25 +431,42 @@ def readinessChecks(env=None, membership=None, issueCount=0, deskMode="paper", q
 
     book = membership if isinstance(membership, dict) else emptyMembership()
     kospi = (book.get("indexes") or {}).get("KOSPI200") or {}
+    kosdaq = (book.get("indexes") or {}).get("KOSDAQ150") or {}
+    kCount = len(kospi.get("codes") or [])
+    qCount = len(kosdaq.get("codes") or [])
     add(
         "kospi200Membership",
-        kospi.get("complete") is True and bool(kospi.get("codes")),
-        "ka20002 mrkt_tp=2 inds_cd=201"
+        kospi.get("complete") is True and countInRange(kCount, KOSPI200_COUNT),
+        f"count={kCount} ka20002 mrkt_tp=2 inds_cd=201"
         if kospi.get("complete")
-        else (kospi.get("reason") or "명부 없음"),
+        else f"count={kCount} {kospi.get('reason') or 'NOT_FETCHED'}",
     )
-    add("kosdaq150Membership", False, KOSDAQ150_GAP)
-    dartSet = bool(str(env.get("DART_API_KEY") or "").strip())
-    add("dartApiKey", dartSet, "present" if dartSet else "absent")
+    add(
+        "kosdaq150Membership",
+        kosdaq.get("complete") is True and countInRange(qCount, KOSDAQ150_COUNT),
+        f"count={qCount} {KRX_CONSTITUENT_BLD}"
+        if kosdaq.get("complete")
+        else f"count={qCount} {kosdaq.get('reason') or KOSDAQ150_GAP}",
+    )
+    if dartConfigured is None:
+        if env is not None and "DART_API_KEY" in env:
+            dartConfigured = bool(str(env.get("DART_API_KEY") or "").strip())
+        else:
+            dartConfigured = dartKeyConfigured()
+    add("dartApiKey", bool(dartConfigured), "present" if dartConfigured else "absent")
     add(
         "issueRecords",
         int(issueCount or 0) > 0,
         f"confirmedRecords={int(issueCount or 0)}",
     )
+    if quoteAgeSec is None:
+        quoteDetail = "0B or fresh ka10001" if quoteSeen else "no fresh quote observed"
+    else:
+        quoteDetail = f"ageSec={quoteAgeSec}"
     add(
         "quoteFeed",
         bool(quoteSeen),
-        "0B or fresh ka10001" if quoteSeen else "no fresh quote observed",
+        quoteDetail,
     )
     add("flowUnit", True, "ka10059 acc_trde_prica 백만원; flow provisional before 20:00")
     add("deskTradeModePaper", str(deskMode or "") == "paper", str(deskMode or ""))
@@ -404,3 +489,108 @@ def flowColumn(row, requested, capturedHm):
     if hm and hm < "200000":
         parsed["flowStatusNote"] = "16:00 포함, 20:00 전 값은 잠정. 키움이 확정을 보장하지 않는다."
     return parsed
+
+
+def applyKospiPages(book, pages, as_of, effectiveFrom, effectiveTo):
+    """모의 ka20002 페이지만 반영한다. 실호스트로는 넘어가지 않는다."""
+    codes, truncated = pagesToCodes(pages)
+    slot = book["indexes"]["KOSPI200"]
+    slot["codes"] = codes
+    slot["truncated"] = truncated
+    slot["asOf"] = str(as_of or "")[:8]
+    slot["effectiveFrom"] = str(effectiveFrom or "")[:8]
+    slot["effectiveTo"] = str(effectiveTo or "")[:8]
+    slot["complete"] = (not truncated) and countInRange(len(codes), KOSPI200_COUNT)
+    slot["reason"] = "" if slot["complete"] else "INCOMPLETE_OR_COUNT"
+    slot["host"] = "paper"
+    book["asOf"] = slot["asOf"]
+    return book
+
+
+def applyKosdaqOutput(book, output, as_of, effectiveFrom, effectiveTo, indexCodes):
+    """KRX output 만 반영한다. 지수코드는 이름 조회 결과여야 한다."""
+    codes = codesFromKrxOutput(output)
+    slot = book["indexes"]["KOSDAQ150"]
+    slot["codes"] = codes
+    slot["api"] = KRX_CONSTITUENT_BLD
+    slot["indIdx"] = (indexCodes or {}).get("indIdx") or ""
+    slot["indIdx2"] = (indexCodes or {}).get("indIdx2") or ""
+    slot["asOf"] = str(as_of or "")[:8]
+    slot["effectiveFrom"] = str(effectiveFrom or "")[:8]
+    slot["effectiveTo"] = str(effectiveTo or "")[:8]
+    slot["complete"] = bool(slot["indIdx"] and slot["indIdx2"]) and countInRange(
+        len(codes), KOSDAQ150_COUNT
+    )
+    slot["reason"] = "" if slot["complete"] else KOSDAQ150_GAP
+    return book
+
+
+def indexCodesFromFinder(block, name):
+    """finder_equidx block1 에서 지수명이 정확히 같은 행만 고른다."""
+    want = str(name or "").strip()
+    for row in block or []:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("codeName") or "").strip() != want:
+            continue
+        indIdx2 = str(row.get("short_code") or "").strip()
+        indIdx = str(row.get("full_code") or "").strip()
+        if indIdx and indIdx2:
+            return {"indIdx": indIdx, "indIdx2": indIdx2, "name": want}
+    return None
+
+
+def fetchKospi200Pages(fetchPage, maxPages=30):
+    """
+    fetchPage(contYn, nextKey) -> {ok, rows, contYn, nextKey, errMsg}.
+    모의 호스트 전용으로 호출부가 세션을 고른다. 실호스트 폴백은 없다.
+    """
+    pages = []
+    contYn = "N"
+    nextKey = ""
+    for _ in range(max(1, int(maxPages))):
+        got = fetchPage(contYn, nextKey)
+        if not isinstance(got, dict) or not got.get("ok"):
+            return {"ok": False, "reason": (got or {}).get("errMsg") or "KA20002_FAIL", "pages": pages}
+        pages.append({"rows": got.get("rows") or [], "contYn": got.get("contYn") or "N"})
+        more = str(got.get("contYn") or "").upper() == "Y" and str(got.get("nextKey") or "")
+        if not more:
+            return {"ok": True, "pages": pages, "reason": ""}
+        contYn = "Y"
+        nextKey = str(got.get("nextKey") or "")
+    return {"ok": False, "reason": "PAGE_CAP", "pages": pages}
+
+
+def pullIssues(codes, dartFetch=None, newsFetch=None):
+    """종목별 공시·뉴스에서 확인 이슈만 모은다. 조회 함수가 없으면 빈 목록."""
+    found = []
+    for code in codes or []:
+        if dartFetch is not None:
+            got = dartFetch(code) or {}
+            for item in got.get("items") or []:
+                if not isinstance(item, dict):
+                    continue
+                title = item.get("reportNm") or item.get("title") or ""
+                url = item.get("viewUrl") or item.get("sourceUrl") or ""
+                day = str(item.get("rceptDt") or item.get("publishedAt") or "")[:8]
+                tag = tagFromTitle(title)
+                if tag and url.startswith("http") and len(day) == 8:
+                    found.append(
+                        {
+                            "stkCd": str(code),
+                            "tag": tag,
+                            "confirmed": True,
+                            "eventId": item.get("rceptNo") or "",
+                            "eventDate": day,
+                            "title": title,
+                            "sourceUrl": url,
+                            "publishedAt": day,
+                            "provenance": "opendart_list",
+                        }
+                    )
+        if newsFetch is not None:
+            for item in newsFetch(code) or []:
+                row = issueFromNews(dict(item, stkCd=code))
+                if row and row.get("confirmed"):
+                    found.append(row)
+    return mergeIssueRecords([], found)
