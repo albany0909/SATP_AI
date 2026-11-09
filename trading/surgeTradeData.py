@@ -30,7 +30,7 @@ FIRST_SURGE_FILE = "firstSurge.json"
 TAB_COLUMNS = (
     ("code", "코드"),
     ("name", "종목명"),
-    ("index", "지수"),
+    ("index", "시장"),
     ("price", "현재가"),
     ("dailyPct", "일간%"),
     ("turnoverEok", "거래대금(억)"),
@@ -612,7 +612,7 @@ def formatFirstSurgeVs(current, refPrice):
         return f"+{pct:.2f}", "up"
     if pct < 0:
         return f"{pct:.2f}", "down"
-    return f"{pct:.2f}", ""
+    return "+0.00", ""
 
 
 def turnoverEok(amount, unit):
@@ -871,7 +871,7 @@ def buildTabRows(snap, asof, extras=None):
         item = {
             "code": code,
             "name": row.get("name") or "",
-            "index": row.get("index") or "",
+            "index": extra.get("market") or row.get("index") or "",
             "price": row.get("price"),
             "dailyPct": daily,
             "turnoverEok": flow.get("turnoverEok"),

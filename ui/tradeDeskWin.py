@@ -5116,18 +5116,19 @@ class TradeDeskWin(QMainWindow):
             SnapStore,
             TAB_COLUMNS,
             buildTabRows,
-            loadFirstSurgeBook,
             selectTabDisplay,
         )
+        from trading.surgeTradeEnrich import displayExtras
 
         try:
             from utils.appPaths import configDataDir
 
             store = SnapStore(configDataDir() / "surgeTrade")
             picked = selectTabDisplay(store, datetime.now())
-            book = loadFirstSurgeBook(store.dir)
+            asof = picked.get("asof") or ""
+            extras = displayExtras(store.dir, asof)
             snap = picked.get("snap")
-            view = buildTabRows(snap, picked.get("asof") or "", {"firstSurge": book})
+            view = buildTabRows(snap, asof, extras)
             view["slot"] = (snap or {}).get("slot") or ""
             view["observedAt"] = (snap or {}).get("observedAt") or (snap or {}).get("notedAt") or ""
             view["queryLabel"] = picked.get("queryLabel") or "조회일시 -"

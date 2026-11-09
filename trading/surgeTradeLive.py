@@ -286,6 +286,12 @@ def beginManualRankRefresh(session, store, now, transport):
         global _refresh
         try:
             result = runManualRankSave(session, store, now, transport)
+            try:
+                from trading.surgeTradeEnrich import enrichDisplayed
+
+                enrichDisplayed(now, store)
+            except Exception:
+                pass
         except Exception as err:
             result = {
                 "ok": False,
@@ -571,21 +577,23 @@ def _rankLoop():
             from config.krHoliday import isTradingDay
 
             now = datetime.now()
-            if not isTradingDay(now):
-                time.sleep(RANK_POLL_SEC)
-                continue
             got = ensurePaperReadSession()
             session = got.get("session")
-            if not got.get("ok") or not session:
-                time.sleep(RANK_POLL_SEC)
-                continue
-            collectRankTick(
-                now,
-                _rankStore(),
-                True,
-                session,
-                paperRankTransport(session),
-            )
+            store = _rankStore()
+            if got.get("ok") and session and isTradingDay(now):
+                collectRankTick(
+                    now,
+                    store,
+                    True,
+                    session,
+                    paperRankTransport(session),
+                )
+            try:
+                from trading.surgeTradeEnrich import enrichDisplayed
+
+                enrichDisplayed(now, store)
+            except Exception:
+                pass
         except Exception:
             pass
         time.sleep(RANK_POLL_SEC)

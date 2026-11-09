@@ -216,7 +216,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 7)
+        self.assertEqual(int(spec["version"]), 8)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -229,7 +229,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 7)
+        self.assertEqual(payload["algVer"], 8)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -1348,6 +1348,89 @@ class SurgeTradeTest(unittest.TestCase):
             self.assertTrue(sat["fallback"])
             self.assertEqual(sat["snap"]["tradeYmd"], "20261112")
             self.assertEqual(queryStampLabel("2026-11-10T09:15:00", False), "조회일시 2026-11-10 09:15")
+
+    def test_column_cache_fills_and_failure_stays_blank(self):
+        import json
+
+        from trading.surgeTradeEnrich import displayExtras, enrichDisplayed
+
+        now = datetime(2026, 11, 10, 10, 0)
+        row = {
+            "stkCd": "180640",
+            "name": "한진칼",
+            "price": 10000,
+            "baseCompChgr": 6.0,
+            "originalRank": 1,
+        }
+        snap = {
+            "ok": True,
+            "tradeYmd": "20261110",
+            "slot": "1000",
+            "state": "COLLECTED",
+            "observedAt": "2026-11-10T10:00:00",
+            "rows": [row],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SnapStore(tmp)
+            (store.dir / "firstSurge.json").write_text(
+                json.dumps(
+                    {"180640": {"ymd": "20261109", "price": 10000, "source": "snapshot_intraday"}},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            store.save(snap)
+            wired = buildTabRows(store.latestForDay("20261110"), "20261110", displayExtras(store.dir, "20261110"))
+            self.assertEqual(wired["rows"][0]["firstSurgeVs"], "+0.00")
+            self.assertEqual(entryUniverseRows(snap["rows"])["rows"], [])
+
+            def flow(_code):
+                return {"dt": "20261110", "orgn": "10", "frgnr_invsr": "-3", "acc_trde_prica": "100"}
+
+            def bars(_code):
+                return [float(100 + i) for i in range(15)]
+
+            result = enrichDisplayed(
+                now,
+                store,
+                {
+                    "flow": flow,
+                    "bars": bars,
+                    "market": lambda _code: "KOSDAQ",
+                    "news": lambda _code: [
+                        {"title": "관세 영향", "url": "https://news.example/a", "publishedAt": "20261110"}
+                    ],
+                },
+            )
+            self.assertEqual(result["orders"], 0)
+            self.assertEqual(result["calls"]["ka10059"], 1)
+            self.assertEqual(result["calls"]["ka10081"], 1)
+            filled = buildTabRows(
+                store.latestForDay("20261110"), "20261110", displayExtras(store.dir, "20261110")
+            )["rows"][0]
+            self.assertEqual(filled["index"], "코스닥")
+            self.assertEqual(filled["turnoverEok"], 1.0)
+            self.assertEqual(filled["orgnNetMillionKrw"], 10)
+            self.assertEqual(filled["frgnNetMillionKrw"], -3)
+            self.assertIsNotNone(filled["rsi14"])
+            self.assertEqual(filled["issues"], "관세")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SnapStore(tmp)
+            store.save(dict(snap, rows=[{"stkCd": "000001", "price": 10, "baseCompChgr": 5.0, "originalRank": 1}]))
+
+            def boom(_code):
+                raise RuntimeError("no token")
+
+            failed = enrichDisplayed(
+                now, store, {"flow": boom, "bars": boom, "market": boom, "news": boom}
+            )
+            self.assertEqual(failed["orders"], 0)
+            blank = displayExtras(store.dir, "20261110")["byCode"]["000001"]
+            self.assertIsNone(blank["flow"]["turnoverEok"])
+            self.assertIsNone(blank["rsi14"])
+            self.assertEqual(blank["issue"]["tag"], "")
+            self.assertEqual(blank["market"], "")
 
     def test_offscreen_yellow_cell(self):
         try:
