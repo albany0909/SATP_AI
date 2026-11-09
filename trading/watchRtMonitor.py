@@ -1125,6 +1125,12 @@ def startWatchRtMonitor():
                 except Exception as err:
                     termLog(f"[watchRt] maSupportEod 기동 실패: {err}")
                 try:
+                    from trading.surgeTradeLive import startSurgeRankCollector
+
+                    startSurgeRankCollector()
+                except Exception as err:
+                    termLog(f"[watchRt] 급등주 조회 수집 실패: {err}")
+                try:
                     from trading.surgeTradeLive import startSurgeTradeLive
 
                     startSurgeTradeLive()

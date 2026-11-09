@@ -1161,6 +1161,10 @@ class TradeDeskWin(QMainWindow):
         self._surgePoll = QTimer(self)
         self._surgePoll.setInterval(400)
         self._surgePoll.timeout.connect(self._pollSurgeRefresh)
+        self._surgeSnapTimer = QTimer(self)
+        self._surgeSnapTimer.setInterval(45000)
+        self._surgeSnapTimer.timeout.connect(self._fillSurgeWatch)
+        self._surgeStatusWord = ""
         self._leaderRankPoll = QTimer(self)
         self._leaderRankPoll.setInterval(2000)
         self._leaderRankPoll.timeout.connect(self._pollLeaderRankScan)
@@ -5107,7 +5111,15 @@ class TradeDeskWin(QMainWindow):
         tools = getattr(self, "_surgeTools", None)
         if tools is None:
             return
-        tools.setVisible(self._isSurgeWatchTab())
+        show = self._isSurgeWatchTab()
+        tools.setVisible(show)
+        timer = getattr(self, "_surgeSnapTimer", None)
+        if timer is None:
+            return
+        if show and not timer.isActive():
+            timer.start()
+        if not show and timer.isActive():
+            timer.stop()
 
     def _fillSurgeWatch(self):
         """저장된 스냅샷만 그린다. 여기서 주문을 내지 않는다."""
@@ -5121,8 +5133,10 @@ class TradeDeskWin(QMainWindow):
 
             store = SnapStore(configDataDir() / "surgeTrade")
             ymd = datetime.now().strftime("%Y%m%d")
-            snap = store.slot(ymd, "1518") or store.slot(ymd, "1600") or store.slot(ymd, "ADHOC")
+            snap = store.latestForDay(ymd)
             view = buildTabRows(snap, ymd, {}, {})
+            view["slot"] = (snap or {}).get("slot") or ""
+            view["observedAt"] = (snap or {}).get("observedAt") or (snap or {}).get("notedAt") or ""
         except Exception as err:
             view = {"state": "ERROR", "lastUpdated": "", "rows": [], "note": str(err)}
         rows = view.get("rows") or []
@@ -5158,49 +5172,75 @@ class TradeDeskWin(QMainWindow):
                 table.setItem(r, c, item)
         label = getattr(self, "_surgeStateLbl", None)
         if label is not None:
-            label.setText(
-                f"급등주 {view.get('state') or '-'} · {view.get('lastUpdated') or '-'} "
-                f"· 전략 기본 비활성 · {view.get('note') or ''}"
-            )
+            stamp = view.get("observedAt") or view.get("lastUpdated") or "-"
+            word = str(getattr(self, "_surgeStatusWord", "") or "")
+            if word:
+                label.setText(f"{word} · 최종 갱신: {stamp}")
+            else:
+                label.setText(f"최종 갱신: {stamp}")
 
     def _onSurgeRefresh(self):
-        """수동 갱신. 모의 조회 세션이 없으면 네트워크를 열지 않는다."""
+        """수동 갱신. 백그라운드에서 ka00198 만 읽고 ADHOC 으로 저장한다."""
         if not self._isSurgeWatchTab():
             return
-        from trading.surgeTradeLive import enqueueManualRefresh, loadPaperOrderSession
+        from trading.surgeTradeData import SnapStore
+        from trading.surgeTradeLive import (
+            beginManualRankRefresh,
+            loadPaperOrderSession,
+            paperRankTransport,
+        )
+        from utils.appPaths import configDataDir
 
         btn = getattr(self, "_surgeRefreshBtn", None)
         if btn is not None:
             btn.setEnabled(False)
+        self._surgeStatusWord = "조회중"
+        label = getattr(self, "_surgeStateLbl", None)
+        if label is not None:
+            label.setText("조회중")
         session = None
         try:
             session = loadPaperOrderSession()
         except Exception:
             session = None
-        if session:
-            session = dict(session)
-            session["purpose"] = "market_read"
-        state = enqueueManualRefresh(session, transport=None)
-        self._applySurgeRefreshState(state)
+        if not session:
+            self._surgeStatusWord = "실패 모의 조회 세션 없음"
+            if label is not None:
+                label.setText(self._surgeStatusWord)
+            if btn is not None:
+                btn.setEnabled(True)
+            return
+        session = dict(session)
+        session["purpose"] = "market_read"
+        beginManualRankRefresh(
+            session,
+            SnapStore(configDataDir() / "surgeTrade"),
+            datetime.now(),
+            paperRankTransport(session),
+        )
         poll = getattr(self, "_surgePoll", None)
-        if poll is not None and state.get("state") not in ("BLOCKED", "ERROR", "READY"):
+        if poll is not None and not poll.isActive():
             poll.start()
 
     def _applySurgeRefreshState(self, state):
         btn = getattr(self, "_surgeRefreshBtn", None)
+        busy = str(state.get("state") or "") == "BUSY"
         if btn is not None:
-            btn.setEnabled(True)
+            btn.setEnabled(not busy)
+        word = str(state.get("label") or "")
+        if word:
+            self._surgeStatusWord = word
         label = getattr(self, "_surgeStateLbl", None)
-        if label is not None:
-            label.setText(
-                f"급등주 {state.get('state') or '-'} · {state.get('reason') or ''} · 주문 없음"
-            )
+        if label is not None and word:
+            label.setText(word)
 
     def _pollSurgeRefresh(self):
         from trading.surgeTradeLive import refreshStatus
 
         state = refreshStatus()
-        if state.get("state") in ("", "IDLE"):
+        if str(state.get("state") or "") in ("", "IDLE", "BUSY"):
+            if str(state.get("state") or "") == "BUSY":
+                self._applySurgeRefreshState(state)
             return
         poll = getattr(self, "_surgePoll", None)
         if poll is not None:

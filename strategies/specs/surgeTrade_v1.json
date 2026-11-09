@@ -4,7 +4,7 @@
   "englishName": "Surge Trade",
   "name": "급등주매매",
   "status": "draft",
-  "version": 1,
+  "version": 2,
   "enabled": false,
   "timeframe": "D",
   "docPath": "strategies/docs/surgeTrade_v1.md",
@@ -65,5 +65,5 @@
     "closingAuctionTrdeTp": "0",
     "closingAuctionNote": "kt10000 documents no dedicated closing-auction code. 15:20-15:30 uses ordinary limit 0. Market 3 and after-hours 81 are not used in that window."
   },
-  "notes": "v1 draft. Default disabled. Paper only. Do not enable RAM01, LDR01, or RCS01 from this spec. Live DB is not updated by this file."
+  "notes": "v2. Rank inquiry for the 급등주 tab runs while trading stays disabled. Paper only. Do not enable RAM01, LDR01, or RCS01 from this spec. Live DB is not updated by this file."
 }

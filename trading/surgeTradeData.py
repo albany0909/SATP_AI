@@ -39,8 +39,8 @@ def fifteenMinuteSlots():
 
 def dueSlot(now, isTradingDay):
     """
-    거래일 정규장 15분, 15:18 판단 캡처, 16:00 최종 캡처.
-    거래일이 아니면 None.
+    거래일 정규장 15분, 15:18 판단 캡처, 16:00 정각 1분.
+    거래일이 아니면 None. 16:00 을 놓친 보정은 rankCollectSlot.
     """
     if not isTradingDay:
         return None
@@ -53,6 +53,47 @@ def dueSlot(now, isTradingDay):
     if "160000" <= hms < "160100":
         return "1600"
     return None
+
+
+def rankCollectSlot(now, isTrading, hasFinalCollected=False):
+    """
+    조회 수집 슬롯.
+    16:00 실측이 있으면 그날은 더 수집하지 않는다.
+    16:00:00~16:10:59 에 아직 1600 이 없으면, 실제 시각으로 1600 을 받는다.
+    거래일이 아니면 None.
+    """
+    if not isTrading or hasFinalCollected:
+        return None
+    hms = now.strftime("%H%M%S")
+    if "160000" <= hms < "161100":
+        return "1600"
+    if hms >= "160000":
+        return None
+    return dueSlot(now, True)
+
+
+def latestDisplaySnapshot(snaps):
+    """
+    화면에 쓸 그날 스냅샷.
+    관측 시각이 가장 늦은 수집분을 쓴다.
+    같은 시각이면 1600 을 남긴다. 더 늦은 수동(ADHOC)이면 수동을 보여 준다.
+    """
+    rows = [s for s in snaps or [] if isinstance(s, dict)]
+    collected = [
+        s for s in rows if s.get("state") == "COLLECTED" and s.get("observedAt")
+    ]
+    if collected:
+        return max(
+            collected,
+            key=lambda s: (
+                str(s.get("observedAt")),
+                1 if str(s.get("slot")) == "1600" else 0,
+            ),
+        )
+    missed = [
+        s for s in rows if str(s.get("slot")) == "1600" and s.get("state") == "NOT_COLLECTED"
+    ]
+    return missed[-1] if missed else None
 
 
 def _num(raw):
@@ -185,11 +226,22 @@ class SnapStore:
         self._path(ymd).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         return snap
 
+    def snaps(self, tradeYmd):
+        return list(self._load(tradeYmd).get("snaps") or [])
+
     def slot(self, tradeYmd, slot):
-        for snap in self._load(tradeYmd).get("snaps") or []:
-            if str(snap.get("slot")) == str(slot):
+        match = [
+            snap
+            for snap in self.snaps(tradeYmd)
+            if str(snap.get("slot")) == str(slot)
+        ]
+        for snap in match:
+            if snap.get("state") == "COLLECTED" and snap.get("observedAt"):
                 return snap
-        return None
+        return match[-1] if match else None
+
+    def latestForDay(self, tradeYmd):
+        return latestDisplaySnapshot(self.snaps(tradeYmd))
 
     def recordLate(self, tradeYmd, observedAt, rows, provenance):
         """16:00 슬롯이 없으면 NOT_COLLECTED 로 남기고, 실제 시각은 ADHOC 에만 저장."""

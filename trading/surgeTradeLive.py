@@ -16,7 +16,9 @@ from trading.surgeTradeGate import evaluateMarketRead, submitSurgeOrder
 
 _lock = threading.Lock()
 _started = False
-_refresh = {"state": "IDLE", "reason": "", "updatedAt": ""}
+_rankStarted = False
+_refresh = {"state": "IDLE", "reason": "", "updatedAt": "", "orders": 0, "label": ""}
+RANK_POLL_SEC = 25
 
 
 def isSurgeEnabled():
@@ -153,55 +155,164 @@ def paperRankTransport(session):
     return _call
 
 
+def _readSession(session):
+    if not isinstance(session, dict):
+        return session
+    out = dict(session)
+    out["purpose"] = "market_read"
+    return out
+
+
+def _finalCollected(store, ymd):
+    snap = store.slot(ymd, "1600")
+    return bool(snap and snap.get("state") == "COLLECTED" and snap.get("observedAt"))
+
+
 def pullPaperRank(session, now, store, isTrading, transport=None):
-    """슬롯이 도래했을 때만 조회한다. 실패 시 순위를 만들지 않는다."""
-    from trading.surgeTradeData import dueSlot, parseKa00198Body
+    """슬롯이 도래했을 때만 조회한다. 실패 시 순위를 만들지 않는다. 주문은 만들지 않는다."""
+    from trading.surgeTradeData import parseKa00198Body, rankCollectSlot
     from trading.surgeTradeGate import evaluateMarketRead
 
-    read = evaluateMarketRead(dict(session or {}, purpose="market_read"))
+    read = evaluateMarketRead(_readSession(session))
     if not read.get("ok"):
-        return {"ok": False, "reason": read.get("reason"), "called": False}
-    slot = dueSlot(now, isTrading)
-    if slot is None:
-        return {"ok": True, "reason": "NOT_DUE", "called": False}
+        return {"ok": False, "reason": read.get("reason"), "called": False, "orders": 0}
     ymd = now.strftime("%Y%m%d")
-    if store.slot(ymd, slot) is not None:
-        return {"ok": True, "reason": "ALREADY", "called": False}
+    if _finalCollected(store, ymd):
+        return {"ok": True, "reason": "FINAL_DONE", "called": False, "orders": 0}
+    slot = rankCollectSlot(now, isTrading, hasFinalCollected=False)
+    if slot is None:
+        return {"ok": True, "reason": "NOT_DUE", "called": False, "orders": 0}
+    existing = store.slot(ymd, slot)
+    if existing and existing.get("state") == "COLLECTED" and existing.get("observedAt"):
+        return {"ok": True, "reason": "ALREADY", "called": False, "orders": 0, "slot": slot}
     if transport is None:
-        return {"ok": False, "reason": "NO_TRANSPORT", "called": False}
+        return {"ok": False, "reason": "NO_TRANSPORT", "called": False, "orders": 0}
     try:
         body = transport()
     except Exception as err:
-        return {"ok": False, "reason": str(err), "called": True}
-    snap = parseKa00198Body(body, now.strftime("%Y-%m-%dT%H:%M:%S"), slot, "paper_read")
+        return {"ok": False, "reason": str(err), "called": True, "orders": 0}
+    observed = now.strftime("%Y-%m-%dT%H:%M:%S")
+    snap = parseKa00198Body(body, observed, slot, "paper_read")
     if not snap.get("ok"):
-        return {"ok": False, "reason": snap.get("errMsg") or "PARSE", "called": True}
+        return {"ok": False, "reason": snap.get("errMsg") or "PARSE", "called": True, "orders": 0}
     store.save(snap)
-    return {"ok": True, "reason": "SAVED", "called": True, "slot": slot}
+    return {"ok": True, "reason": "SAVED", "called": True, "slot": slot, "orders": 0, "observedAt": observed}
 
 
-def enqueueManualRefresh(session=None, transport=None, nowText=""):
+def runManualRankSave(session, store, now, transport):
     """
-    수동 갱신. 모의 조회 세션이 없으면 네트워크를 열지 않는다.
-    이 경로는 주문을 만들지 않는다.
+    수동 갱신. 장중 슬롯과 무관하게 당일누적 1회를 ADHOC 으로 저장한다.
+    주문·설정 파일은 건드리지 않는다.
+    """
+    from trading.surgeTradeData import parseKa00198Body
+    from trading.surgeTradeGate import evaluateMarketRead
+
+    read = evaluateMarketRead(_readSession(session))
+    if not read.get("ok"):
+        reason = read.get("reason") or "PAPER_SESSION_REQUIRED"
+        return {
+            "ok": False,
+            "state": "FAIL",
+            "reason": reason,
+            "label": f"실패 {reason}",
+            "called": False,
+            "orders": 0,
+        }
+    if transport is None:
+        return {
+            "ok": False,
+            "state": "FAIL",
+            "reason": "NO_TRANSPORT",
+            "label": "실패 NO_TRANSPORT",
+            "called": False,
+            "orders": 0,
+        }
+    try:
+        body = transport()
+    except Exception as err:
+        return {
+            "ok": False,
+            "state": "FAIL",
+            "reason": str(err),
+            "label": f"실패 {err}",
+            "called": True,
+            "orders": 0,
+        }
+    observed = now.strftime("%Y-%m-%dT%H:%M:%S")
+    snap = parseKa00198Body(body, observed, "ADHOC", "manual_paper_read")
+    if not snap.get("ok"):
+        reason = snap.get("errMsg") or "PARSE"
+        return {
+            "ok": False,
+            "state": "FAIL",
+            "reason": reason,
+            "label": f"실패 {reason}",
+            "called": True,
+            "orders": 0,
+        }
+    store.save(snap)
+    return {
+        "ok": True,
+        "state": "DONE",
+        "reason": "",
+        "label": f"완료 {now.strftime('%H:%M')}",
+        "called": True,
+        "orders": 0,
+        "observedAt": observed,
+        "slot": "ADHOC",
+    }
+
+
+def beginManualRankRefresh(session, store, now, transport):
+    """UI 스레드를 막지 않는다. 상태는 조회중 으로 두고 끝난 뒤 완료·실패를 남긴다."""
+    global _refresh
+    with _lock:
+        if _refresh.get("state") == "BUSY":
+            return dict(_refresh)
+        _refresh = {"state": "BUSY", "reason": "", "orders": 0, "label": "조회중"}
+
+    def _run():
+        global _refresh
+        try:
+            result = runManualRankSave(session, store, now, transport)
+        except Exception as err:
+            result = {
+                "ok": False,
+                "state": "FAIL",
+                "reason": str(err),
+                "label": f"실패 {err}",
+                "orders": 0,
+            }
+        with _lock:
+            _refresh = result
+
+    threading.Thread(target=_run, name="surgeManualRank", daemon=True).start()
+    return {"state": "BUSY", "label": "조회중", "orders": 0}
+
+
+def enqueueManualRefresh(session=None, transport=None, nowText="", store=None, now=None):
+    """
+    수동 갱신. 모의 조회가 아니면 네트워크를 열지 않는다.
+    transport 와 store 가 있으면 ADHOC 으로 저장한다. 주문은 만들지 않는다.
     """
     global _refresh
-    read = evaluateMarketRead(session or {"purpose": "market_read"})
+    if store is not None and now is not None:
+        state = runManualRankSave(session, store, now, transport)
+        state["updatedAt"] = nowText or state.get("observedAt") or ""
+        with _lock:
+            _refresh = state
+        return dict(state)
+    read = evaluateMarketRead(_readSession(session) if session else {"purpose": "market_read"})
     if not read.get("ok"):
-        state = {"state": "BLOCKED", "reason": read.get("reason") or "PAPER_SESSION_REQUIRED", "orders": 0}
-    elif transport is None:
-        state = {"state": "BLOCKED", "reason": "NO_TRANSPORT", "orders": 0}
+        reason = read.get("reason") or "PAPER_SESSION_REQUIRED"
+        state = {"state": "FAIL", "reason": reason, "label": f"실패 {reason}", "orders": 0}
     else:
-        try:
-            body = transport()
-            state = {
-                "state": "READY" if isinstance(body, dict) else "ERROR",
-                "reason": "",
-                "orders": 0,
-                "body": body if isinstance(body, dict) else None,
-            }
-        except Exception as err:
-            state = {"state": "ERROR", "reason": str(err), "orders": 0}
+        state = {
+            "state": "FAIL",
+            "reason": "NO_TRANSPORT",
+            "label": "실패 NO_TRANSPORT",
+            "orders": 0,
+        }
     state["updatedAt"] = nowText
     with _lock:
         _refresh = state
@@ -318,22 +429,7 @@ def _loop():
             if session is None:
                 time.sleep(5)
                 continue
-            try:
-                from config.krHoliday import isTradingDay
-                from trading.surgeTradeData import SnapStore
-                from utils.appPaths import configDataDir
-
-                now = datetime.now()
-                pullPaperRank(
-                    session,
-                    now,
-                    SnapStore(configDataDir() / "surgeTrade"),
-                    isTradingDay(now),
-                    transport=paperRankTransport(session),
-                )
-            except Exception:
-                pass
-            # 검증된 시세·구성·이슈가 없으면 후보를 넘기지 않는다. 빈 시세로 주문하지 않는다.
+            # ka00198 은 조회 수집기가 저장한다. 여기서 다시 호출하지 않는다.
             liveTick(
                 book,
                 datetime.now(),
@@ -348,6 +444,83 @@ def _loop():
         except Exception:
             pass
         time.sleep(5)
+
+
+def surgeInquiryVisible(settings=None):
+    """급등주 탭이 조회 목록에 있을 때만 수집한다."""
+    from trading.deskLiveAlgs import visibleMonitorTabs
+
+    return any(row.get("key") == "surge" for row in visibleMonitorTabs(settings))
+
+
+def _rankStore():
+    from trading.surgeTradeData import SnapStore
+    from utils.appPaths import configDataDir
+
+    return SnapStore(configDataDir() / "surgeTrade")
+
+
+def collectRankTick(now, store, isTrading, session, transport):
+    """조회 1회. 주문 함수를 호출하지 않는다."""
+    result = pullPaperRank(session, now, store, isTrading, transport)
+    result["orders"] = 0
+    return result
+
+
+def _rankLoop():
+    """SRG01 매매와 별개. 급등주 탭이 보이는 동안만 모의 조회를 저장한다."""
+    import time
+    from datetime import datetime
+
+    while True:
+        try:
+            if not surgeInquiryVisible():
+                time.sleep(RANK_POLL_SEC)
+                continue
+            from config.krHoliday import isTradingDay
+
+            now = datetime.now()
+            if not isTradingDay(now):
+                time.sleep(RANK_POLL_SEC)
+                continue
+            session = loadPaperOrderSession()
+            if session is None:
+                time.sleep(RANK_POLL_SEC)
+                continue
+            session = dict(session)
+            session["purpose"] = "market_read"
+            collectRankTick(
+                now,
+                _rankStore(),
+                True,
+                session,
+                paperRankTransport(session),
+            )
+        except Exception:
+            pass
+        time.sleep(RANK_POLL_SEC)
+
+
+def startSurgeRankCollector():
+    """
+    급등주 탭이 보이면 조회 스레드를 연다.
+    매매 enabled 와 무관하다. 설정 파일은 쓰지 않는다.
+    """
+    global _rankStarted
+    if not surgeInquiryVisible():
+        return {"started": False, "reason": "TAB_HIDDEN", "orders": 0}
+    with _lock:
+        if _rankStarted:
+            return {"started": True, "reason": "ALREADY", "orders": 0}
+        _rankStarted = True
+        threading.Thread(target=_rankLoop, name="surgeRankCollect", daemon=True).start()
+    try:
+        from utils.termLog import termLog
+
+        termLog("[급등주] 조회 수집 시작 — 매매와 분리, 주문 없음")
+    except Exception:
+        pass
+    return {"started": True, "reason": "RANK_ONLY", "orders": 0}
 
 
 def startSurgeTradeLive():

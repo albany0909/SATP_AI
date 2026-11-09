@@ -11,7 +11,7 @@ import threading
 from datetime import datetime, timedelta
 
 ALG_CD = "SRG01"
-ALG_VER = 1
+ALG_VER = 2
 STRAT_ID = "surgeTrade_v1"
 ENGLISH_NAME = "Surge Trade"
 NAME_KR = "급등주매매"
@@ -856,7 +856,7 @@ def causalMa20(priorCloses, currentPx):
 
 
 def buildAlgVerEvent(evtTp, stkCd, reason, tradeDt, evtTm, px=None):
-    """ALG_VER=1 이벤트 본문. DB 에 쓰지 않는다."""
+    """ALG_VER 이벤트 본문. DB 에 쓰지 않는다."""
     return {
         "algCd": ALG_CD,
         "algVer": ALG_VER,
@@ -872,9 +872,12 @@ def buildAlgVerEvent(evtTp, stkCd, reason, tradeDt, evtTm, px=None):
     }
 
 
-def algVerHistPayload(gitHash="", ymd="2026-11-08"):
+def algVerHistPayload(gitHash="", ymd="2026-11-09"):
     """AI_ALG_VER_HIST 적재용 값. 이 함수는 DB 를 열지 않는다."""
-    note = "v1 급등주매매(Surge Trade) 모의 전용 초안. 기본 비활성. 실주문 없음."
+    note = (
+        "v2 급등주 탭 ka00198 당일누적 조회는 전략이 꺼져 있어도 "
+        "15분·16:00 수집. 주문은 기본 비활성."
+    )
     return {
         "algCd": ALG_CD,
         "stratId": STRAT_ID,

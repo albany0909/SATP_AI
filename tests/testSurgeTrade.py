@@ -50,6 +50,7 @@ from trading.surgeTradeData import (
     dueSlot,
     fifteenMinuteSlots,
     filterRankRows,
+    latestDisplaySnapshot,
     nextRetryDelaySec,
     notCollectedSnapshot,
     parseDartList,
@@ -73,7 +74,9 @@ from trading.surgeTradeLive import (
     loadBook,
     pullPaperRank,
     runDecisionCycle,
+    runManualRankSave,
     saveBook,
+    surgeInquiryVisible,
 )
 
 
@@ -205,7 +208,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 1)
+        self.assertEqual(int(spec["version"]), 2)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -218,7 +221,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 1)
+        self.assertEqual(payload["algVer"], 2)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -611,7 +614,7 @@ class SurgeTradeTest(unittest.TestCase):
             enabled=True,
         )
         self.assertTrue(on["orders"][0]["ok"])
-        self.assertEqual(on["events"][0]["algVer"], 1)
+        self.assertEqual(on["events"][0]["algVer"], ALG_VER)
         stale = SurgeBook(self.cal)
         stale.position("005930").update({"phase": "OPEN", "qty": 3, "avgPx": 10000, "costPxQty": 30000, "entryYmd": "20261106", "entryKind": "INITIAL"})
         old = datetime(2026, 11, 9, 10, 0)
@@ -620,8 +623,9 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(any(a.get("reason") == "STALE_QUOTE" for a in held["actions"]))
         self.assertEqual(sells(held["actions"]), [])
         missing = enqueueManualRefresh(None, transport=lambda: {"no": True})
-        self.assertEqual(missing["state"], "BLOCKED")
+        self.assertEqual(missing["state"], "FAIL")
         self.assertEqual(missing["orders"], 0)
+        self.assertIn("실패", missing["label"])
         calls = []
 
         def transport():
@@ -880,6 +884,122 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual([r["algCd"] for r in backOff], [])
         self.assertEqual(resolveInfoSelection("SRG01", []), "")
         self.assertEqual(resolveInfoSelection("LDR01", ["SRG01"]), "SRG01")
+
+    def test_rank_collector_and_manual_refresh(self):
+        self.assertFalse(isSurgeEnabled())
+        self.assertTrue(surgeInquiryVisible(settings={}))
+        self.assertFalse(surgeInquiryVisible(settings={"deskMonitorTabs": ["acnt"]}))
+        body = {
+            "item_inq_rank": [
+                {
+                    "bigd_rank": "3",
+                    "stk_cd": "005930",
+                    "stk_nm": "삼성전자",
+                    "past_curr_prc": "+70000",
+                    "base_comp_chgr": "+1.20",
+                }
+            ]
+        }
+        calls = []
+
+        def transport():
+            calls.append("ka00198")
+            return body
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SnapStore(tmp)
+            morning = datetime(2026, 11, 6, 9, 0, 20)
+            saved = pullPaperRank(
+                paperSession(purpose="market_read"),
+                morning,
+                store,
+                True,
+                transport,
+            )
+            self.assertEqual(saved["slot"], "0900")
+            self.assertEqual(saved["orders"], 0)
+            self.assertTrue(saved["called"])
+            self.assertEqual(store.slot("20261106", "0900")["observedAt"], "2026-11-06T09:00:20")
+            again = pullPaperRank(
+                paperSession(purpose="market_read"),
+                datetime(2026, 11, 6, 9, 0, 40),
+                store,
+                True,
+                transport,
+            )
+            self.assertFalse(again["called"])
+            self.assertEqual(again["orders"], 0)
+            late = datetime(2026, 11, 6, 16, 5, 30)
+            final = pullPaperRank(
+                paperSession(purpose="market_read"),
+                late,
+                store,
+                True,
+                transport,
+            )
+            self.assertEqual(final["slot"], "1600")
+            self.assertEqual(final["orders"], 0)
+            self.assertEqual(store.slot("20261106", "1600")["observedAt"], "2026-11-06T16:05:30")
+            before = len(calls)
+            done = pullPaperRank(
+                paperSession(purpose="market_read"),
+                datetime(2026, 11, 6, 16, 8, 0),
+                store,
+                True,
+                transport,
+            )
+            self.assertFalse(done["called"])
+            self.assertEqual(done["reason"], "FINAL_DONE")
+            self.assertEqual(len(calls), before)
+            weekend = pullPaperRank(
+                paperSession(purpose="market_read"),
+                datetime(2026, 11, 7, 10, 0, 0),
+                store,
+                False,
+                transport,
+            )
+            self.assertFalse(weekend["called"])
+            self.assertEqual(weekend["orders"], 0)
+            night = datetime(2026, 11, 6, 21, 12, 0)
+            manual = runManualRankSave(
+                paperSession(purpose="market_read"),
+                store,
+                night,
+                transport,
+            )
+            self.assertEqual(manual["state"], "DONE")
+            self.assertEqual(manual["orders"], 0)
+            self.assertEqual(manual["slot"], "ADHOC")
+            self.assertEqual(manual["label"], "완료 21:12")
+            shown = store.latestForDay("20261106")
+            self.assertEqual(shown["slot"], "ADHOC")
+            self.assertEqual(shown["observedAt"], "2026-11-06T21:12:00")
+            older = {
+                "state": "COLLECTED",
+                "slot": "ADHOC",
+                "observedAt": "2026-11-06T15:00:00",
+            }
+            finalSnap = {
+                "state": "COLLECTED",
+                "slot": "1600",
+                "observedAt": "2026-11-06T16:05:30",
+            }
+            self.assertEqual(latestDisplaySnapshot([older, finalSnap])["slot"], "1600")
+            newer = {
+                "state": "COLLECTED",
+                "slot": "ADHOC",
+                "observedAt": "2026-11-06T21:12:00",
+            }
+            self.assertEqual(latestDisplaySnapshot([finalSnap, newer])["slot"], "ADHOC")
+        blocked = runManualRankSave(
+            paperSession(mode="real"),
+            SnapStore(tempfile.mkdtemp()),
+            datetime(2026, 11, 6, 21, 0, 0),
+            transport,
+        )
+        self.assertEqual(blocked["orders"], 0)
+        self.assertFalse(blocked["called"])
+        self.assertTrue(blocked["label"].startswith("실패"))
 
     def test_offscreen_yellow_cell(self):
         try:
