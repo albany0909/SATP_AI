@@ -93,6 +93,97 @@ def rankCollectSlot(now, isTrading, hasFinalCollected=False):
     return dueSlot(now, True)
 
 
+def _hmsOf(value):
+    text = str(value or "").replace("-", "").replace(":", "").replace("T", "").replace(" ", "")
+    return text[8:14] if len(text) >= 14 else ""
+
+
+def _collected(snap):
+    return isinstance(snap, dict) and snap.get("state") == "COLLECTED" and snap.get("observedAt")
+
+
+def sessionSnapshot(snap, tradeYmd):
+    """거래일 09:00 이후 관측. 장 시작 전 0% 조회는 여기 들어가지 않는다."""
+    if not _collected(snap):
+        return False
+    if _ymdOf(snap.get("observedAt")) != str(tradeYmd):
+        return False
+    hms = _hmsOf(snap.get("observedAt"))
+    return bool(hms) and hms >= "090000"
+
+
+def dayFinalSnapshot(snaps):
+    """그 날 16:00 이 있으면 그것을, 없으면 가장 늦은 수집분을 쓴다."""
+    collected = [s for s in snaps or [] if _collected(s)]
+    finals = [s for s in collected if str(s.get("slot")) == "1600"]
+    if finals:
+        return latestDisplaySnapshot(finals)
+    return latestDisplaySnapshot(collected)
+
+
+def queryStampLabel(observedAt, fallback):
+    """상단 조회일시. 전일 목록이면 뒤에 전일 기준을 붙인다."""
+    text = str(observedAt or "")
+    stamp = ""
+    if "T" in text and len(text) >= 16:
+        day, rest = text.split("T", 1)
+        stamp = f"{day} {rest[:5]}"
+    elif len(text) >= 16 and text[10] == " ":
+        stamp = text[:16]
+    if not stamp:
+        return "조회일시 -"
+    if fallback:
+        return f"조회일시 {stamp} (전일 기준)"
+    return f"조회일시 {stamp}"
+
+
+def selectTabDisplay(store, now):
+    """
+    탭에 그릴 스냅샷만 고른다.
+    장중 관측이 생기기 전에는 직전 거래일 최종 목록을 보여 준다.
+    주문·첫급등 파일을 쓰지 않는다.
+    """
+    from config.krHoliday import isTradingDay, prevTradingDay
+
+    ymd = now.strftime("%Y%m%d")
+    chosen = None
+    fallback = True
+    if isTradingDay(now):
+        collected = [s for s in store.snaps(ymd) if _collected(s)]
+        inSession = [s for s in collected if sessionSnapshot(s, ymd)]
+        if inSession:
+            chosen = latestDisplaySnapshot(inSession)
+            fallback = False
+        else:
+            named = [
+                s
+                for s in collected
+                if tabRankRows(s.get("rows") or []).get("keptCount", 0) > 0
+            ]
+            if named:
+                chosen = latestDisplaySnapshot(named)
+                fallback = False
+    if chosen is None:
+        cursor = ymd
+        for _ in range(40):
+            prev = prevTradingDay(cursor)
+            if not prev:
+                break
+            final = dayFinalSnapshot(store.snaps(prev))
+            if final is not None:
+                chosen = final
+                fallback = True
+                break
+            cursor = prev
+    return {
+        "snap": chosen,
+        "fallback": bool(chosen) and fallback,
+        "asof": str((chosen or {}).get("tradeYmd") or ymd)[:8],
+        "queryLabel": queryStampLabel((chosen or {}).get("observedAt"), bool(chosen) and fallback),
+        "orders": 0,
+    }
+
+
 def latestDisplaySnapshot(snaps):
     """
     화면에 쓸 그날 스냅샷.

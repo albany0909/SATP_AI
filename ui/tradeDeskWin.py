@@ -5116,21 +5116,24 @@ class TradeDeskWin(QMainWindow):
             SnapStore,
             TAB_COLUMNS,
             buildTabRows,
-            refreshFirstSurgeBook,
+            loadFirstSurgeBook,
+            selectTabDisplay,
         )
 
         try:
             from utils.appPaths import configDataDir
 
             store = SnapStore(configDataDir() / "surgeTrade")
-            ymd = datetime.now().strftime("%Y%m%d")
-            snap = store.latestForDay(ymd)
-            book = refreshFirstSurgeBook(store.dir)
-            view = buildTabRows(snap, ymd, {"firstSurge": book})
+            picked = selectTabDisplay(store, datetime.now())
+            book = loadFirstSurgeBook(store.dir)
+            snap = picked.get("snap")
+            view = buildTabRows(snap, picked.get("asof") or "", {"firstSurge": book})
             view["slot"] = (snap or {}).get("slot") or ""
             view["observedAt"] = (snap or {}).get("observedAt") or (snap or {}).get("notedAt") or ""
+            view["queryLabel"] = picked.get("queryLabel") or "조회일시 -"
+            view["fallback"] = picked.get("fallback") is True
         except Exception as err:
-            view = {"state": "ERROR", "lastUpdated": "", "rows": [], "note": str(err)}
+            view = {"state": "ERROR", "lastUpdated": "", "rows": [], "note": str(err), "queryLabel": "조회일시 -"}
         rows = view.get("rows") or []
         table.setRowCount(len(rows))
         for r, row in enumerate(rows):
@@ -5153,12 +5156,12 @@ class TradeDeskWin(QMainWindow):
                 table.setItem(r, c, item)
         label = getattr(self, "_surgeStateLbl", None)
         if label is not None:
-            stamp = view.get("observedAt") or view.get("lastUpdated") or "-"
+            stamp = view.get("queryLabel") or "조회일시 -"
             word = str(getattr(self, "_surgeStatusWord", "") or "")
             if word:
-                label.setText(f"{word} · 최종 갱신: {stamp}")
+                label.setText(f"{word} · {stamp}")
             else:
-                label.setText(f"최종 갱신: {stamp}")
+                label.setText(stamp)
 
     def _onSurgeRefresh(self):
         """수동 갱신. 백그라운드에서 ka00198 만 읽고 ADHOC 으로 저장한다."""

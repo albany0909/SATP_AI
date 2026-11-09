@@ -4,7 +4,7 @@
   "englishName": "Surge Trade",
   "name": "급등주매매",
   "status": "draft",
-  "version": 6,
+  "version": 7,
   "enabled": false,
   "timeframe": "D",
   "docPath": "strategies/docs/surgeTrade_v1.md",
@@ -48,7 +48,7 @@
   },
   "rules": {
     "scope": "PAPER ONLY. Real mode, missing mode, unverified paper account, or non-paper host fails closed at the final order boundary.",
-    "rank": "ka00198 qry_tp=4 day-cumulative inquiry rank. Not ka10027 gainers. Keep source order. The tab shows base_comp_chgr >= +5 and hides original rank and the 1-year low column. '+10.50' is +10.50, '--' is missing and dropped. SRG01 entry rows stay >= +10. No index membership.",
+    "rank": "ka00198 qry_tp=4 day-cumulative inquiry rank. Not ka10027 gainers. Keep source order. The tab shows base_comp_chgr >= +5 and hides original rank and the 1-year low column. Before the first in-session snapshot, the tab shows the previous trading day's final list and labels that query time. '+10.50' is +10.50, '--' is missing and dropped. SRG01 entry rows stay >= +10 and do not use that fallback. No index membership.",
     "entry": "Verified first surge of the same confirmed event, tradable, and base_comp_chgr >= 10%. The tab's 5% list is not the entry universe. One initial 1,000,000 KRW from 15:18 until regular close. Freshness requires a snapshot observed at or after 15:18, never a future 16:00 snapshot.",
     "fallback": "If nothing filled by the close, the next trading day open may buy 1,000,000 KRW only on a gap up that is still above the previous regular close. Partial fills are not missed. No later chase.",
     "adds": "Next trading day after the initial fill, +5% adds 1,000,000 and +10% adds another 1,000,000. A jump to +10% executes stage 1 only. At most one add stage per trading day. Reentry may add the same day but does not reset that daily cap.",
@@ -66,5 +66,5 @@
     "closingAuctionTrdeTp": "0",
     "closingAuctionNote": "kt10000 documents no dedicated closing-auction code. 15:20-15:30 uses ordinary limit 0. Market 3 and after-hours 81 are not used in that window."
   },
-  "notes": "v6. The tab lists base_comp_chgr >= 5 and shows percent versus the first +10% day's close. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
+  "notes": "v7. Before 09:00 the tab keeps the previous trading day's final list. Entry still requires >= 10 and ignores that fallback. Trading stays disabled. Live DB is not updated by this file."
 }

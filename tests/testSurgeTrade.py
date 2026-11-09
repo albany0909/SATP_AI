@@ -51,11 +51,13 @@ from trading.surgeTradeData import (
     buildTabRows,
     dueSlot,
     entryUniverseRows,
+    loadFirstSurgeBook,
+    queryStampLabel,
+    selectTabDisplay,
     fifteenMinuteSlots,
     filterRankRows,
     formatFirstSurgeVs,
     latestDisplaySnapshot,
-    loadFirstSurgeBook,
     nextRetryDelaySec,
     notCollectedSnapshot,
     parseDartList,
@@ -214,7 +216,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 6)
+        self.assertEqual(int(spec["version"]), 7)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -227,7 +229,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 6)
+        self.assertEqual(payload["algVer"], 7)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -1274,6 +1276,78 @@ class SurgeTradeTest(unittest.TestCase):
         plan = paperLoginPlan()
         self.assertNotIn("token", plan)
         self.assertNotIn("appKey", plan)
+
+    def test_preopen_tab_keeps_prior_day_list(self):
+        def snap(ymd, observed, slot, rows):
+            return {
+                "ok": True,
+                "tradeYmd": ymd,
+                "slot": slot,
+                "state": "COLLECTED",
+                "observedAt": observed,
+                "rows": rows,
+                "sourceCount": len(rows),
+            }
+
+        priorRow = {
+            "originalRank": 2,
+            "stkCd": "005930",
+            "name": "삼성전자",
+            "price": 110,
+            "baseCompChgr": 6.0,
+        }
+        zeroRow = {
+            "originalRank": 1,
+            "stkCd": "000660",
+            "name": "하이닉스",
+            "price": 1,
+            "baseCompChgr": 0.0,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SnapStore(tmp)
+            bookPath = store.dir / "firstSurge.json"
+            bookPath.write_text("{}\n", encoding="utf-8")
+            store.save(snap("20261109", "2026-11-09T16:00:10", "1600", [dict(priorRow, price=110)]))
+            store.save(snap("20261109", "2026-11-09T22:25:06", "ADHOC", [priorRow]))
+            store.save(snap("20261110", "2026-11-10T07:36:00", "ADHOC", [zeroRow]))
+            before = bookPath.read_text(encoding="utf-8")
+            pre = selectTabDisplay(store, datetime(2026, 11, 10, 7, 36))
+            self.assertTrue(pre["fallback"])
+            self.assertEqual(pre["orders"], 0)
+            self.assertEqual(pre["snap"]["slot"], "1600")
+            self.assertEqual(pre["snap"]["rows"][0]["stkCd"], "005930")
+            self.assertEqual(pre["queryLabel"], "조회일시 2026-11-09 16:00 (전일 기준)")
+            self.assertEqual(bookPath.read_text(encoding="utf-8"), before)
+            today = entryUniverseRows(store.snaps("20261110")[-1]["rows"])
+            self.assertEqual(today["rows"], [])
+            self.assertNotIn("005930", [r["stkCd"] for r in today["rows"]])
+            view = buildTabRows(
+                pre["snap"],
+                pre["asof"],
+                {"firstSurge": {"005930": {"ymd": "20261101", "price": 100, "source": "snapshot_1600"}}},
+            )
+            self.assertEqual(view["rows"][0]["firstSurgeVs"], "+10.00")
+            onlyAdhoc = SnapStore(tmp + "-adhoc")
+            onlyAdhoc.save(snap("20261109", "2026-11-09T22:25:06", "ADHOC", [priorRow]))
+            onlyAdhoc.save(snap("20261110", "2026-11-10T07:30:00", "ADHOC", [zeroRow, zeroRow]))
+            adhoc = selectTabDisplay(onlyAdhoc, datetime(2026, 11, 10, 7, 30))
+            self.assertEqual(adhoc["snap"]["observedAt"], "2026-11-09T22:25:06")
+            self.assertEqual(adhoc["queryLabel"], "조회일시 2026-11-09 22:25 (전일 기준)")
+            emptyToday = SnapStore(tmp + "-empty")
+            emptyToday.save(snap("20261109", "2026-11-09T22:25:06", "ADHOC", [priorRow]))
+            emptyToday.save(snap("20261110", "2026-11-10T09:15:00", "0915", [zeroRow]))
+            opened = selectTabDisplay(emptyToday, datetime(2026, 11, 10, 9, 15))
+            self.assertFalse(opened["fallback"])
+            self.assertEqual(opened["queryLabel"], "조회일시 2026-11-10 09:15")
+            openedView = buildTabRows(opened["snap"], opened["asof"], {})
+            self.assertEqual(openedView["state"], "EMPTY")
+            self.assertEqual(openedView["rows"], [])
+            weekend = SnapStore(tmp + "-weekend")
+            weekend.save(snap("20261112", "2026-11-12T22:25:06", "ADHOC", [priorRow]))
+            sat = selectTabDisplay(weekend, datetime(2026, 11, 14, 10, 0))
+            self.assertTrue(sat["fallback"])
+            self.assertEqual(sat["snap"]["tradeYmd"], "20261112")
+            self.assertEqual(queryStampLabel("2026-11-10T09:15:00", False), "조회일시 2026-11-10 09:15")
 
     def test_offscreen_yellow_cell(self):
         try:
