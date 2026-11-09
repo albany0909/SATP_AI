@@ -78,7 +78,7 @@ v4 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-09`
 - SRC: `manual`
 - NOTE: `v4 KOSPI200은 모의 ka20002 전수. KOSDAQ150은 KRX 지수명 조회. DART 키는 출력하지 않음. 주문 비활성.`
-- GIT_HASH: `PENDING_V4`
+- GIT_HASH: `79f8e44a4bc7`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -86,7 +86,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 4, '2026-11-09',
    'v4 KOSPI200은 모의 ka20002 전수. KOSDAQ150은 KRX 지수명 조회. DART 키는 출력하지 않음. 주문 비활성.',
-   'PENDING_V4', 'manual')
+   '79f8e44a4bc7', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
