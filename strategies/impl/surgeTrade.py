@@ -11,7 +11,7 @@ import threading
 from datetime import datetime, timedelta
 
 ALG_CD = "SRG01"
-ALG_VER = 4
+ALG_VER = 5
 STRAT_ID = "surgeTrade_v1"
 ENGLISH_NAME = "Surge Trade"
 NAME_KR = "급등주매매"
@@ -175,7 +175,7 @@ def decisionSnapOk(candidate, now, maxAgeSec=DECISION_SNAP_MAX_AGE_SEC):
     if (cur - seen).total_seconds() > float(maxAgeSec):
         return False, "SNAP_STALE"
     basis = str(candidate.get("dailyBasis") or "")
-    if basis != "prev_regular_close":
+    if basis != "ka00198_base_comp_chgr":
         return False, "DAILY_BASIS_UNVERIFIED"
     return True, ""
 
@@ -605,7 +605,7 @@ class SurgeBook:
                     "eventFirstYmd": pos.get("eventFirstYmd"),
                     "confirmed": True,
                     "dailyPct": FIRST_SURGE_PCT,
-                    "dailyBasis": "prev_regular_close",
+                    "dailyBasis": "ka00198_base_comp_chgr",
                     "member": True,
                     "tradable": True,
                     "snapObservedAt": now,
@@ -811,8 +811,6 @@ def _firstSurgeBlock(pos, row, ymd, quote):
         return "EVENT_ID_MISSING"
     if str(row.get("eventFirstYmd") or "") != ymd:
         return "NOT_FIRST_SURGE_DAY"
-    if row.get("member") is not True:
-        return "MEMBERSHIP_MISSING"
     if row.get("tradable") is not True:
         return "NOT_TRADABLE"
     try:
@@ -895,8 +893,8 @@ def buildAlgVerEvent(evtTp, stkCd, reason, tradeDt, evtTm, px=None):
 def algVerHistPayload(gitHash="", ymd="2026-11-09"):
     """AI_ALG_VER_HIST 적재용 값. 이 함수는 DB 를 열지 않는다."""
     note = (
-        "v4 KOSPI200 은 ka20002 전수·약 200종목일 때만. KOSDAQ150 은 KRX 지수명 조회 후만. "
-        "DART 키는 config 로 읽고 출력하지 않는다. 주문은 기본 비활성."
+        "v5 후보는 ka00198 당일누적 순위에서 base_comp_chgr 10% 이상만. 명부는 쓰지 않는다. "
+        "주문은 기본 비활성."
     )
     return {
         "algCd": ALG_CD,

@@ -13,7 +13,6 @@ from pathlib import Path
 
 from trading.surgeTradeData import (
     FLOW_STATUS_PROVISIONAL,
-    membershipOk,
     parseDartList,
     parseKa10059Flow,
     turnoverEok,
@@ -339,22 +338,24 @@ def clearSrgQuoteCodes():
     _QUOTE_CODES.clear()
 
 
-def entryGate(code, tradeYmd, dailyPct, book, records, quoteOk):
-    """매수 입력. 하나라도 실패하면 ok False."""
+def entryGate(code, tradeYmd, dailyPct, records, quoteOk):
+    """매수 입력. 명부는 보지 않는다. 이슈나 시세가 없으면 ok False."""
     reasons = []
-    lookup = membershipLookupBook(book)
-    member, index = membershipOk(code, tradeYmd, lookup)
-    if not member:
-        reasons.append("MEMBERSHIP")
     issue = firstSurgeRecord(records, code, tradeYmd, dailyPct)
     if not issue.get("ok"):
         reasons.append(issue.get("reason") or "ISSUE")
     if quoteOk is not True:
         reasons.append("QUOTE")
+    try:
+        daily = float(dailyPct)
+    except (TypeError, ValueError):
+        daily = None
+    if daily is None or daily + 1e-9 < 10.0:
+        reasons.append("DAILY_BELOW_10")
     return {
         "ok": not reasons,
         "reasons": reasons,
-        "index": index if member else "",
+        "index": "",
         "issue": issue,
     }
 
@@ -422,32 +423,12 @@ def readinessChecks(
     quoteAgeSec=None,
     dartConfigured=None,
 ):
-    """주문 없이 입력 상태만 적는다. 비밀값은 출력하지 않는다."""
+    """주문 없이 입력 상태만 적는다. 명부 파일은 보지 않는다. 비밀값은 출력하지 않는다."""
     env = env if isinstance(env, dict) else None
     checks = []
 
     def add(name, ok, detail):
         checks.append({"name": name, "status": "PASS" if ok else "FAIL", "detail": detail})
-
-    book = membership if isinstance(membership, dict) else emptyMembership()
-    kospi = (book.get("indexes") or {}).get("KOSPI200") or {}
-    kosdaq = (book.get("indexes") or {}).get("KOSDAQ150") or {}
-    kCount = len(kospi.get("codes") or [])
-    qCount = len(kosdaq.get("codes") or [])
-    add(
-        "kospi200Membership",
-        kospi.get("complete") is True and countInRange(kCount, KOSPI200_COUNT),
-        f"count={kCount} ka20002 mrkt_tp=2 inds_cd=201"
-        if kospi.get("complete")
-        else f"count={kCount} {kospi.get('reason') or 'NOT_FETCHED'}",
-    )
-    add(
-        "kosdaq150Membership",
-        kosdaq.get("complete") is True and countInRange(qCount, KOSDAQ150_COUNT),
-        f"count={qCount} {KRX_CONSTITUENT_BLD}"
-        if kosdaq.get("complete")
-        else f"count={qCount} {kosdaq.get('reason') or KOSDAQ150_GAP}",
-    )
     if dartConfigured is None:
         if env is not None and "DART_API_KEY" in env:
             dartConfigured = bool(str(env.get("DART_API_KEY") or "").strip())

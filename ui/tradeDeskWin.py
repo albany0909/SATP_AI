@@ -5134,7 +5134,7 @@ class TradeDeskWin(QMainWindow):
             store = SnapStore(configDataDir() / "surgeTrade")
             ymd = datetime.now().strftime("%Y%m%d")
             snap = store.latestForDay(ymd)
-            view = buildTabRows(snap, ymd, {}, {})
+            view = buildTabRows(snap, ymd)
             view["slot"] = (snap or {}).get("slot") or ""
             view["observedAt"] = (snap or {}).get("observedAt") or (snap or {}).get("notedAt") or ""
         except Exception as err:

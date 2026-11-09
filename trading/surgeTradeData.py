@@ -20,6 +20,9 @@ SOURCE_CAP_NOTE = (
     "ka00198 응답 건수가 곧 시장 전체 급등 목록은 아니다. "
     "페이지가 더 있거나 원천이 상한을 두면 sourceTruncated 로만 표시한다."
 )
+# ka00198 base_comp_chgr: 기준가 대비 등락율(%). '+10.50' 은 +10.50, '--' 는 값 없음.
+MIN_DAILY_PCT = 10.0
+DAILY_BASIS_KA00198 = "ka00198_base_comp_chgr"
 FLOW_UNIT_MILLION_KRW = "백만원"
 FLOW_STATUS_PROVISIONAL = "provisional_not_krx_final"
 KRW_PER_MILLION = 1_000_000
@@ -97,6 +100,11 @@ def latestDisplaySnapshot(snaps):
 
 
 def _num(raw):
+    """
+    키움 부호 문자열.
+    '+10.5' → 10.5, '-3.20' → -3.2, '--10.50' → -10.5.
+    빈 값·'-'·'--' 는 None. 등락이 없는 칸을 0 으로 만들지 않는다.
+    """
     if raw is None:
         return None
     text = str(raw).strip().replace(",", "")
@@ -147,7 +155,7 @@ def parseKa00198Body(body, observedAt, slot, provenance, exchange="KRX"):
                 "baseCompSign": str(raw.get("base_comp_sign") or "").strip(),
                 "sourceDt": str(raw.get("dt") or "").strip(),
                 "sourceTm": str(raw.get("tm") or "").strip(),
-                "dailyBasis": "ka00198_base_comp_unverified",
+                "dailyBasis": DAILY_BASIS_KA00198,
             }
         )
     cont = str((body or {}).get("cont-yn") or (body or {}).get("contYn") or "").upper()
@@ -307,25 +315,44 @@ def verifiedDailyPct(px, prevRegularClose):
     return (price / prev - 1.0) * 100.0
 
 
-def filterRankRows(rows, asof, membership, prevCloseByCode, priceByCode=None):
-    """원천 순위를 유지한 채 구성·양봉만 남긴다. 350개로 늘리지 않는다."""
+def ka00198ChangePct(row):
+    """행의 base_comp_chgr. 이미 숫자면 그대로, 아니면 '+10.5' / '--' 규칙을 쓴다."""
+    if not isinstance(row, dict):
+        return None
+    raw = row.get("baseCompChgr")
+    if raw is None:
+        raw = row.get("base_comp_chgr")
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        return float(raw)
+    return _num(raw)
+
+
+def snapComplete(snap):
+    """다시 받지 않아도 되는 수집분. 잘리거나 실패한 파일은 불완전이다."""
+    if not isinstance(snap, dict):
+        return False
+    if snap.get("state") != "COLLECTED" or not snap.get("observedAt"):
+        return False
+    if snap.get("ok") is False or snap.get("truncated") is True:
+        return False
+    return isinstance(snap.get("rows"), list)
+
+
+def filterRankRows(rows, minPct=MIN_DAILY_PCT):
+    """
+    원천 순위를 유지하고, ka00198 base_comp_chgr 가 minPct 이상인 행만 남긴다.
+    명부·전일종가 계산은 쓰지 않는다. 등락이 없으면 버린다.
+    """
     kept = []
+    floor = float(minPct)
     for row in rows or []:
-        code = str(row.get("stkCd") or "")
-        ok, index = membershipOk(code, asof, membership)
-        if not ok:
-            continue
-        px = (priceByCode or {}).get(code, row.get("price"))
-        prev = (prevCloseByCode or {}).get(code)
-        daily = verifiedDailyPct(px, prev)
-        if daily is None or daily <= 0:
+        daily = ka00198ChangePct(row)
+        if daily is None or daily + 1e-9 < floor:
             continue
         item = dict(row)
-        item["index"] = index
-        item["price"] = px
         item["dailyPct"] = daily
-        item["dailyBasis"] = "prev_regular_close"
-        item["prevRegularClose"] = prev
+        item["dailyBasis"] = DAILY_BASIS_KA00198
+        item["index"] = ""
         kept.append(item)
     kept.sort(key=lambda r: int(r.get("originalRank") or 0))
     return {
@@ -333,7 +360,7 @@ def filterRankRows(rows, asof, membership, prevCloseByCode, priceByCode=None):
         "sourceCount": len(rows or []),
         "keptCount": len(kept),
         "exhaustive": False,
-        "note": SOURCE_CAP_NOTE,
+        "note": SOURCE_CAP_NOTE + " 필터는 base_comp_chgr >= 10.",
     }
 
 
@@ -559,8 +586,8 @@ def yellowName(confirmed, dailyPct, tradeYmd, firstSurgeYmd):
     )
 
 
-def buildTabRows(snap, asof, membership, prevCloses, extras=None):
-    """탭에 그릴 행. 없는 지표는 None / N/A."""
+def buildTabRows(snap, asof, extras=None):
+    """탭에 그릴 행. 없는 지표는 None / N/A. 명부는 보지 않는다."""
     extras = extras or {}
     if not snap or snap.get("state") == "NOT_COLLECTED":
         return {
@@ -571,14 +598,7 @@ def buildTabRows(snap, asof, membership, prevCloses, extras=None):
             "exhaustive": False,
             "note": (snap or {}).get("note") or "미수집",
         }
-    prices = extras.get("prices") or {}
-    filtered = filterRankRows(
-        snap.get("rows") or [],
-        asof,
-        membership,
-        prevCloses,
-        prices,
-    )
+    filtered = filterRankRows(snap.get("rows") or [])
     view = []
     for row in filtered["rows"]:
         code = row["stkCd"]

@@ -132,7 +132,7 @@ def cand(now, daily=12.0, event="EVT1", ymd=None, **extra):
         "eventFirstYmd": day,
         "confirmed": True,
         "dailyPct": daily,
-        "dailyBasis": "prev_regular_close",
+        "dailyBasis": "ka00198_base_comp_chgr",
         "member": True,
         "tradable": True,
         "snapObservedAt": now,
@@ -208,7 +208,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 4)
+        self.assertEqual(int(spec["version"]), 5)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -221,7 +221,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 4)
+        self.assertEqual(payload["algVer"], 5)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -650,17 +650,17 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertFalse(snap["exhaustive"])
         self.assertEqual(snap["qryTp"], "4")
         rows = [
-            {"originalRank": 1, "stkCd": "000001", "name": "밖", "price": 10},
-            {"originalRank": 2, "stkCd": "000002", "name": "하락", "price": 9},
-            {"originalRank": 8, "stkCd": "000003", "name": "통과", "price": 11},
+            {"originalRank": 1, "stkCd": "000001", "name": "미만", "price": 10, "baseCompChgr": 9.99},
+            {"originalRank": 2, "stkCd": "000002", "name": "경계", "price": 9, "baseCompChgr": 10.0},
+            {"originalRank": 8, "stkCd": "000003", "name": "통과", "price": 11, "base_comp_chgr": "+10.01"},
+            {"originalRank": 3, "stkCd": "000004", "name": "빈칸", "price": 12, "base_comp_chgr": "--"},
+            {"originalRank": 4, "stkCd": "000005", "name": "하락", "price": 8, "baseCompChgr": "--1.20"},
         ]
-        membership = {
-            "000002": {"index": "KOSPI200", "effectiveFrom": "20200101", "effectiveTo": "20261231"},
-            "000003": {"index": "KOSDAQ150", "effectiveFrom": "20200101", "effectiveTo": "20261231"},
-        }
-        kept = filterRankRows(rows, "20261106", membership, {"000002": 10, "000003": 10}, {"000002": 9, "000003": 11})
-        self.assertEqual([r["originalRank"] for r in kept["rows"]], [8])
-        self.assertEqual(kept["sourceCount"], 3)
+        kept = filterRankRows(rows)
+        self.assertEqual([r["originalRank"] for r in kept["rows"]], [2, 8])
+        self.assertEqual(kept["rows"][0]["dailyBasis"], "ka00198_base_comp_chgr")
+        self.assertAlmostEqual(kept["rows"][1]["dailyPct"], 10.01)
+        self.assertEqual(kept["sourceCount"], 5)
         self.assertFalse(kept["exhaustive"])
         eok, note = turnoverEok(64215, "백만원")
         self.assertAlmostEqual(eok, 64215 * 1_000_000 / 100_000_000)
@@ -732,16 +732,14 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertFalse(yellowName(True, 10, "20261109", "20261106"))
         self.assertFalse(yellowName(False, 12, "20261106", "20261106"))
         view = buildTabRows(
-            {"state": "COLLECTED", "observedAt": "2026-11-06T15:18:00", "sourceCount": 3, "provenance": "synthetic", "rows": rows},
+            {"state": "COLLECTED", "observedAt": "2026-11-06T15:18:00", "sourceCount": 5, "provenance": "synthetic", "rows": rows},
             "20261106",
-            membership,
-            {"000003": 10},
-            {"prices": {"000003": 12}, "byCode": {"000003": {"issue": good["record"], "rsi14": None, "dataState": "PARTIAL"}}},
+            {"byCode": {"000003": {"issue": good["record"], "rsi14": None, "dataState": "PARTIAL"}}},
         )
-        self.assertEqual(view["rows"][0]["originalRank"], 8)
-        self.assertTrue(view["rows"][0]["yellowName"])
+        self.assertEqual([r["originalRank"] for r in view["rows"]], [2, 8])
+        self.assertTrue(view["rows"][1]["yellowName"])
         self.assertFalse(view["exhaustive"])
-        empty = buildTabRows(notCollectedSnapshot("20261106", "1600", "2026-11-06T18:00:00"), "20261106", {}, {})
+        empty = buildTabRows(notCollectedSnapshot("20261106", "1600", "2026-11-06T18:00:00"), "20261106")
         self.assertEqual(empty["state"], "NOT_COLLECTED")
         self.assertEqual(empty["rows"], [])
         names = [row["key"] for row in monitorTabCatalog()]
@@ -920,6 +918,28 @@ class SurgeTradeTest(unittest.TestCase):
             self.assertEqual(saved["orders"], 0)
             self.assertTrue(saved["called"])
             self.assertEqual(store.slot("20261106", "0900")["observedAt"], "2026-11-06T09:00:20")
+            store.save(
+                {
+                    "ok": False,
+                    "tradeYmd": "20261106",
+                    "slot": "0915",
+                    "state": "COLLECTED",
+                    "observedAt": "2026-11-06T09:15:01",
+                    "truncated": True,
+                    "rows": [],
+                }
+            )
+            beforeRetry = len(calls)
+            retry = pullPaperRank(
+                paperSession(purpose="market_read"),
+                datetime(2026, 11, 6, 9, 15, 20),
+                store,
+                True,
+                transport,
+            )
+            self.assertTrue(retry["called"])
+            self.assertEqual(retry["orders"], 0)
+            self.assertGreater(len(calls), beforeRetry)
             again = pullPaperRank(
                 paperSession(purpose="market_read"),
                 datetime(2026, 11, 6, 9, 0, 40),
@@ -1093,9 +1113,12 @@ class SurgeTradeTest(unittest.TestCase):
             {"src": "0B", "curPrc": 11000, "asof": datetime(2026, 11, 6, 15, 10, 0)},
         )
         self.assertTrue(old["stale"])
-        gate = entryGate("005930", "20261106", 12, freshBook, issues, True)
+        gate = entryGate("005930", "20261106", 12, issues, True)
         self.assertTrue(gate["ok"])
-        blocked = entryGate("000660", "20261106", 12, freshBook, issues, True)
+        self.assertNotIn("MEMBERSHIP", gate["reasons"])
+        blocked = entryGate("000660", "20261106", 12, issues, True)
+        lowDaily = entryGate("005930", "20261106", 9.99, issues, True)
+        self.assertIn("DAILY_BELOW_10", lowDaily["reasons"])
         self.assertIn("ISSUE_UNCONFIRMED", blocked["reasons"])
         held = SurgeBook(self.cal)
         held.position("005930").update(
@@ -1151,8 +1174,8 @@ class SurgeTradeTest(unittest.TestCase):
         text = " ".join(row["detail"] for row in report["checks"])
         self.assertNotIn("do-not-print", text)
         byName = {row["name"]: row["status"] for row in report["checks"]}
-        self.assertEqual(byName["kospi200Membership"], "FAIL")
-        self.assertEqual(byName["kosdaq150Membership"], "FAIL")
+        self.assertNotIn("kospi200Membership", byName)
+        self.assertNotIn("kosdaq150Membership", byName)
         self.assertEqual(byName["dartApiKey"], "PASS")
         self.assertEqual(byName["srg01TradingEnabled"], "FAIL")
         from trading.surgeTradeInputs import (
@@ -1185,6 +1208,15 @@ class SurgeTradeTest(unittest.TestCase):
             )
         )
         self.assertEqual(tagFromTitle("깜짝실적 공시"), "어닝서프라이즈")
+        from scripts.srgMembershipRefresh import fetchKospiPaperPages, refreshIfDue
+        from trading.surgeTradeLive import paperLoginPlan
+
+        self.assertEqual(refreshIfDue()["reason"], "MEMBERSHIP_DISABLED")
+        self.assertEqual(refreshIfDue()["orders"], 0)
+        self.assertEqual(fetchKospiPaperPages()["pages"], [])
+        plan = paperLoginPlan()
+        self.assertNotIn("token", plan)
+        self.assertNotIn("appKey", plan)
 
     def test_offscreen_yellow_cell(self):
         try:

@@ -164,8 +164,13 @@ def _readSession(session):
 
 
 def _finalCollected(store, ymd):
-    snap = store.slot(ymd, "1600")
-    return bool(snap and snap.get("state") == "COLLECTED" and snap.get("observedAt"))
+    from trading.surgeTradeData import snapComplete
+
+    return any(
+        snapComplete(snap)
+        for snap in store.snaps(ymd)
+        if str(snap.get("slot")) == "1600"
+    )
 
 
 def pullPaperRank(session, now, store, isTrading, transport=None):
@@ -182,8 +187,14 @@ def pullPaperRank(session, now, store, isTrading, transport=None):
     slot = rankCollectSlot(now, isTrading, hasFinalCollected=False)
     if slot is None:
         return {"ok": True, "reason": "NOT_DUE", "called": False, "orders": 0}
-    existing = store.slot(ymd, slot)
-    if existing and existing.get("state") == "COLLECTED" and existing.get("observedAt"):
+    existing = [
+        snap
+        for snap in store.snaps(ymd)
+        if str(snap.get("slot")) == str(slot)
+    ]
+    from trading.surgeTradeData import snapComplete
+
+    if any(snapComplete(snap) for snap in existing):
         return {"ok": True, "reason": "ALREADY", "called": False, "orders": 0, "slot": slot}
     if transport is None:
         return {"ok": False, "reason": "NO_TRANSPORT", "called": False, "orders": 0}
@@ -322,6 +333,86 @@ def enqueueManualRefresh(session=None, transport=None, nowText="", store=None, n
 def refreshStatus():
     with _lock:
         return dict(_refresh)
+
+
+_loginHoldUntil = 0.0
+
+
+def paperLoginPlan():
+    """
+    네트워크 없이 모의 조회 세션의 다음 단계만 정한다.
+    토큰과 앱키는 반환하지 않는다.
+    """
+    session = loadPaperOrderSession()
+    if session:
+        return {"action": "USE", "reason": "DESK_SESSION"}
+    try:
+        from config.config import paper_app_key, paper_app_secret, paper_host_url
+        from utils.tradeSession import getDeskTradeMode
+    except Exception:
+        return {"action": "STOP", "reason": "IMPORT_FAIL"}
+    if str(getDeskTradeMode() or "") != "paper":
+        return {
+            "action": "STOP",
+            "reason": "DESK_MODE_NOT_PAPER",
+            "detail": "모의 모드에서만 조회한다. 실호스트로는 넘어가지 않는다.",
+        }
+    if "mockapi.kiwoom.com" not in str(paper_host_url or ""):
+        return {"action": "STOP", "reason": "HOST_NOT_PAPER"}
+    if not str(paper_app_key or "").strip() or not str(paper_app_secret or "").strip():
+        return {
+            "action": "STOP",
+            "reason": "NO_PAPER_CREDENTIALS",
+            "detail": "매매창 모의 로그인 안에서 실행하거나 .env 모의 앱키를 둔다.",
+        }
+    return {"action": "LOGIN", "reason": "PAPER_KEYS"}
+
+
+def ensurePaperReadSession(nowTs=None):
+    """모의 세션이 없으면 모의 앱키로만 로그인한다. 토큰은 반환·출력하지 않는다."""
+    global _loginHoldUntil
+    plan = paperLoginPlan()
+    if plan.get("action") == "USE":
+        session = dict(loadPaperOrderSession() or {})
+        session["purpose"] = "market_read"
+        return {"ok": True, "session": session, "reason": plan.get("reason") or "DESK_SESSION"}
+    if plan.get("action") != "LOGIN":
+        return {
+            "ok": False,
+            "session": None,
+            "reason": plan.get("reason") or "NO_PAPER_SESSION",
+            "detail": plan.get("detail") or "",
+        }
+    import time
+
+    nowTs = time.time() if nowTs is None else float(nowTs)
+    if nowTs < _loginHoldUntil:
+        return {"ok": False, "session": None, "reason": "LOGIN_BACKOFF", "detail": ""}
+    from api.getToken import issueAccToken
+    from config import runtimeState
+    from config.config import paper_app_key, paper_app_secret, paper_host_url
+
+    issued = issueAccToken(paper_host_url, paper_app_key, paper_app_secret)
+    if not issued.get("ok"):
+        _loginHoldUntil = nowTs + 300
+        return {
+            "ok": False,
+            "session": None,
+            "reason": "PAPER_LOGIN_FAIL",
+            "detail": "모의 토큰 발급 실패",
+        }
+    runtimeState.setLoginState(
+        issued.get("token"),
+        "paper",
+        expiresDt=issued.get("expiresDt") or "",
+        tokenType=issued.get("tokenType") or "bearer",
+    )
+    session = loadPaperOrderSession()
+    if not session:
+        return {"ok": False, "session": None, "reason": "SESSION_NOT_PAPER", "detail": ""}
+    session = dict(session)
+    session["purpose"] = "market_read"
+    return {"ok": True, "session": session, "reason": "PAPER_LOGIN"}
 
 
 def loadPaperOrderSession():
@@ -483,18 +574,11 @@ def _rankLoop():
             if not isTradingDay(now):
                 time.sleep(RANK_POLL_SEC)
                 continue
-            try:
-                from scripts.srgMembershipRefresh import refreshIfDue
-
-                refreshIfDue(now)
-            except Exception:
-                pass
-            session = loadPaperOrderSession()
-            if session is None:
+            got = ensurePaperReadSession()
+            session = got.get("session")
+            if not got.get("ok") or not session:
                 time.sleep(RANK_POLL_SEC)
                 continue
-            session = dict(session)
-            session["purpose"] = "market_read"
             collectRankTick(
                 now,
                 _rankStore(),
