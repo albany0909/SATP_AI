@@ -46,17 +46,23 @@ from trading.deskLiveAlgs import (
 )
 from trading.surgeTradeData import (
     SnapStore,
+    TAB_COLUMNS,
+    absorbFirstSurge,
     buildTabRows,
     dueSlot,
+    entryUniverseRows,
     fifteenMinuteSlots,
     filterRankRows,
+    formatFirstSurgeVs,
     latestDisplaySnapshot,
+    loadFirstSurgeBook,
     nextRetryDelaySec,
     notCollectedSnapshot,
     parseDartList,
     parseKa00198Body,
     parseKa10059Flow,
     rsi14,
+    tabRankRows,
     turnoverEok,
     validateEventAudit,
     yearLowRisePct,
@@ -208,7 +214,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 5)
+        self.assertEqual(int(spec["version"]), 6)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -221,7 +227,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 5)
+        self.assertEqual(payload["algVer"], 6)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -656,8 +662,15 @@ class SurgeTradeTest(unittest.TestCase):
             {"originalRank": 3, "stkCd": "000004", "name": "빈칸", "price": 12, "base_comp_chgr": "--"},
             {"originalRank": 4, "stkCd": "000005", "name": "하락", "price": 8, "baseCompChgr": "--1.20"},
         ]
-        kept = filterRankRows(rows)
+        kept = entryUniverseRows(rows)
         self.assertEqual([r["originalRank"] for r in kept["rows"]], [2, 8])
+        shown = tabRankRows(
+            [
+                {"originalRank": 1, "stkCd": "000009", "baseCompChgr": 4.99, "price": 1},
+                {"originalRank": 2, "stkCd": "000008", "baseCompChgr": 5.0, "price": 1},
+            ]
+        )
+        self.assertEqual([r["stkCd"] for r in shown["rows"]], ["000008"])
         self.assertEqual(kept["rows"][0]["dailyBasis"], "ka00198_base_comp_chgr")
         self.assertAlmostEqual(kept["rows"][1]["dailyPct"], 10.01)
         self.assertEqual(kept["sourceCount"], 5)
@@ -736,8 +749,52 @@ class SurgeTradeTest(unittest.TestCase):
             "20261106",
             {"byCode": {"000003": {"issue": good["record"], "rsi14": None, "dataState": "PARTIAL"}}},
         )
-        self.assertEqual([r["originalRank"] for r in view["rows"]], [2, 8])
-        self.assertTrue(view["rows"][1]["yellowName"])
+        self.assertEqual([r["code"] for r in view["rows"]], ["000001", "000002", "000003"])
+        self.assertNotIn("originalRank", view["rows"][0])
+        self.assertNotIn("yearLowRisePct", view["rows"][0])
+        self.assertEqual(view["rows"][0]["firstSurgeVs"], "-")
+        labels = [label for _key, label in TAB_COLUMNS]
+        self.assertNotIn("원순위", labels)
+        self.assertNotIn("1년저점대비%", labels)
+        self.assertIn("첫급등대비", labels)
+        self.assertTrue(view["rows"][2]["yellowName"])
+        morning = {
+            "tradeYmd": "20261106",
+            "slot": "0900",
+            "state": "COLLECTED",
+            "rows": [{"stkCd": "000003", "price": 100, "baseCompChgr": 10.5, "originalRank": 1}],
+        }
+        close = {
+            "tradeYmd": "20261106",
+            "slot": "1600",
+            "state": "COLLECTED",
+            "rows": [{"stkCd": "000003", "price": 110, "baseCompChgr": 11, "originalRank": 1}],
+        }
+        book = absorbFirstSurge(absorbFirstSurge({}, morning), close)
+        self.assertEqual(book["000003"]["price"], 110)
+        self.assertEqual(book["000003"]["source"], "snapshot_1600")
+        later = buildTabRows(
+            {
+                "state": "COLLECTED",
+                "observedAt": "2026-11-09T10:00:00",
+                "rows": [{"stkCd": "000003", "name": "통과", "price": 121, "baseCompChgr": 5.5, "originalRank": 1}],
+            },
+            "20261109",
+            {"firstSurge": book},
+        )
+        self.assertEqual(later["rows"][0]["firstSurgeVs"], "+10.00")
+        self.assertEqual(later["rows"][0]["firstSurgeSign"], "up")
+        downText, downSign = formatFirstSurgeVs(99, 110)
+        self.assertEqual(downText, "-10.00")
+        self.assertEqual(downSign, "down")
+        missingText, _missingSign = formatFirstSurgeVs(None, 110)
+        self.assertEqual(missingText, "-")
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SnapStore(tmp)
+            store.save(dict(close, observedAt="2026-11-06T16:00:00"))
+            saved = loadFirstSurgeBook(tmp)
+            self.assertEqual(saved["000003"]["price"], 110)
+            self.assertEqual(saved["000003"]["ymd"], "20261106")
         self.assertFalse(view["exhaustive"])
         empty = buildTabRows(notCollectedSnapshot("20261106", "1600", "2026-11-06T18:00:00"), "20261106")
         self.assertEqual(empty["state"], "NOT_COLLECTED")

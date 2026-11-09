@@ -1137,24 +1137,10 @@ class TradeDeskWin(QMainWindow):
         _sgLay.addStretch(1)
         self._surgeTools.setVisible(False)
         watchLay.addWidget(self._surgeTools)
-        self.surgeRankTbl = QTableWidget(0, 13)
-        self.surgeRankTbl.setHorizontalHeaderLabels(
-            [
-                "원순위",
-                "코드",
-                "종목명",
-                "지수",
-                "현재가",
-                "일간%",
-                "거래대금(억)",
-                "이슈",
-                "기관순매수",
-                "외국인순매수",
-                "RSI14",
-                "1년저점대비%",
-                "상태",
-            ]
-        )
+        from trading.surgeTradeData import TAB_COLUMNS
+
+        self.surgeRankTbl = QTableWidget(0, len(TAB_COLUMNS))
+        self.surgeRankTbl.setHorizontalHeaderLabels([label for _key, label in TAB_COLUMNS])
         self._tuneGrid(self.surgeRankTbl, [])
         self.surgeRankTbl.setVisible(False)
         watchLay.addWidget(self.surgeRankTbl, 1)
@@ -5126,7 +5112,12 @@ class TradeDeskWin(QMainWindow):
         table = getattr(self, "surgeRankTbl", None)
         if table is None:
             return
-        from trading.surgeTradeData import SnapStore, buildTabRows
+        from trading.surgeTradeData import (
+            SnapStore,
+            TAB_COLUMNS,
+            buildTabRows,
+            refreshFirstSurgeBook,
+        )
 
         try:
             from utils.appPaths import configDataDir
@@ -5134,35 +5125,25 @@ class TradeDeskWin(QMainWindow):
             store = SnapStore(configDataDir() / "surgeTrade")
             ymd = datetime.now().strftime("%Y%m%d")
             snap = store.latestForDay(ymd)
-            view = buildTabRows(snap, ymd)
+            book = refreshFirstSurgeBook(store.dir)
+            view = buildTabRows(snap, ymd, {"firstSurge": book})
             view["slot"] = (snap or {}).get("slot") or ""
             view["observedAt"] = (snap or {}).get("observedAt") or (snap or {}).get("notedAt") or ""
         except Exception as err:
             view = {"state": "ERROR", "lastUpdated": "", "rows": [], "note": str(err)}
         rows = view.get("rows") or []
         table.setRowCount(len(rows))
-        headers = (
-            "originalRank",
-            "code",
-            "name",
-            "index",
-            "price",
-            "dailyPct",
-            "turnoverEok",
-            "issues",
-            "orgnNetMillionKrw",
-            "frgnNetMillionKrw",
-            "rsi14",
-            "yearLowRisePct",
-            "dataState",
-        )
         for r, row in enumerate(rows):
-            for c, key in enumerate(headers):
+            for c, (key, _label) in enumerate(TAB_COLUMNS):
                 val = row.get(key)
                 text = "-" if val in (None, "") else str(val)
                 item = QTableWidgetItem(text)
                 if key == "name" and row.get("yellowName"):
                     item.setBackground(QBrush(QColor("#FFF59D")))
+                if key == "firstSurgeVs" and row.get("firstSurgeSign") == "up":
+                    item.setForeground(QBrush(_PNL_PLUS))
+                elif key == "firstSurgeVs" and row.get("firstSurgeSign") == "down":
+                    item.setForeground(QBrush(_PNL_MINUS))
                 if key in ("issues", "orgnNetMillionKrw", "frgnNetMillionKrw"):
                     tip = row.get("flowStatus") or ""
                     details = row.get("issueDetails") or []

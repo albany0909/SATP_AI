@@ -21,8 +21,26 @@ SOURCE_CAP_NOTE = (
     "페이지가 더 있거나 원천이 상한을 두면 sourceTruncated 로만 표시한다."
 )
 # ka00198 base_comp_chgr: 기준가 대비 등락율(%). '+10.50' 은 +10.50, '--' 는 값 없음.
-MIN_DAILY_PCT = 10.0
+# 탭은 5% 이상. SRG01 매수 후보는 10% 이상. 둘을 같은 값으로 두지 않는다.
+TAB_MIN_DAILY_PCT = 5.0
+ENTRY_MIN_DAILY_PCT = 10.0
+MIN_DAILY_PCT = ENTRY_MIN_DAILY_PCT
 DAILY_BASIS_KA00198 = "ka00198_base_comp_chgr"
+FIRST_SURGE_FILE = "firstSurge.json"
+TAB_COLUMNS = (
+    ("code", "코드"),
+    ("name", "종목명"),
+    ("index", "지수"),
+    ("price", "현재가"),
+    ("dailyPct", "일간%"),
+    ("turnoverEok", "거래대금(억)"),
+    ("issues", "이슈"),
+    ("orgnNetMillionKrw", "기관순매수"),
+    ("frgnNetMillionKrw", "외국인순매수"),
+    ("rsi14", "RSI14"),
+    ("firstSurgeVs", "첫급등대비"),
+    ("dataState", "상태"),
+)
 FLOW_UNIT_MILLION_KRW = "백만원"
 FLOW_STATUS_PROVISIONAL = "provisional_not_krx_final"
 KRW_PER_MILLION = 1_000_000
@@ -232,6 +250,10 @@ class SnapStore:
         snaps.append(snap)
         data["snaps"] = snaps
         self._path(ymd).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            rememberFirstSurge(self.dir, snap)
+        except Exception:
+            pass
         return snap
 
     def snaps(self, tradeYmd):
@@ -338,9 +360,10 @@ def snapComplete(snap):
     return isinstance(snap.get("rows"), list)
 
 
-def filterRankRows(rows, minPct=MIN_DAILY_PCT):
+def filterRankRows(rows, minPct=ENTRY_MIN_DAILY_PCT):
     """
     원천 순위를 유지하고, ka00198 base_comp_chgr 가 minPct 이상인 행만 남긴다.
+    기본값은 SRG01 매수 기준 10%. 탭은 tabRankRows 로 5% 를 쓴다.
     명부·전일종가 계산은 쓰지 않는다. 등락이 없으면 버린다.
     """
     kept = []
@@ -360,8 +383,145 @@ def filterRankRows(rows, minPct=MIN_DAILY_PCT):
         "sourceCount": len(rows or []),
         "keptCount": len(kept),
         "exhaustive": False,
-        "note": SOURCE_CAP_NOTE + " 필터는 base_comp_chgr >= 10.",
+        "note": SOURCE_CAP_NOTE + f" 필터는 base_comp_chgr >= {floor:g}.",
     }
+
+
+def tabRankRows(rows):
+    """급등주 탭. base_comp_chgr >= 5. 매수 후보가 아니다."""
+    return filterRankRows(rows, TAB_MIN_DAILY_PCT)
+
+
+def entryUniverseRows(rows):
+    """SRG01 후보. base_comp_chgr >= 10. 탭의 5% 목록과 분리한다."""
+    return filterRankRows(rows, ENTRY_MIN_DAILY_PCT)
+
+
+def _priceSource(slot):
+    return "snapshot_1600" if str(slot) == "1600" else "snapshot_intraday"
+
+
+def _offerFirstSurge(book, code, ymd, price, source):
+    """더 이른 첫 급등일을 유지한다. 같은 날이면 16:00 종가, 그 다음 일봉, 그 다음 장중 최신가."""
+    try:
+        px = float(price)
+    except (TypeError, ValueError):
+        return
+    if not code or len(str(ymd)) != 8 or px <= 0:
+        return
+    rank = {"snapshot_intraday": 1, "daily_close": 2, "snapshot_1600": 3}
+    cur = book.get(code)
+    if cur is None or str(ymd) < str(cur.get("ymd") or "99999999"):
+        book[code] = {"ymd": str(ymd), "price": px, "source": source}
+        return
+    if str(ymd) != str(cur.get("ymd")):
+        return
+    old = rank.get(cur.get("source"), 0)
+    new = rank.get(source, 0)
+    if new > old or (new == old == 1):
+        book[code] = {"ymd": str(ymd), "price": px, "source": source}
+
+
+def absorbFirstSurge(book, snap):
+    """등락이 10% 이상인 스냅만 첫 급등일로 본다. 입력 dict 는 바꾸지 않는다."""
+    out = {}
+    for code, row in (book or {}).items():
+        if isinstance(row, dict) and row.get("ymd") and row.get("price"):
+            out[str(code)] = {
+                "ymd": str(row.get("ymd"))[:8],
+                "price": float(row.get("price")),
+                "source": str(row.get("source") or "snapshot_intraday"),
+            }
+    if not isinstance(snap, dict) or snap.get("state") == "NOT_COLLECTED":
+        return out
+    ymd = str(snap.get("tradeYmd") or "")[:8]
+    if len(ymd) != 8:
+        return out
+    source = _priceSource(snap.get("slot"))
+    for row in snap.get("rows") or []:
+        if not isinstance(row, dict):
+            continue
+        change = ka00198ChangePct(row)
+        if change is None or change + 1e-9 < ENTRY_MIN_DAILY_PCT:
+            continue
+        _offerFirstSurge(out, str(row.get("stkCd") or ""), ymd, row.get("price"), source)
+    return out
+
+
+def applyDailyClose(book, code, ymd, price):
+    """첫 급등일의 16:00 스냅이 없을 때만 일봉 종가로 기준가를 바꾼다."""
+    out = absorbFirstSurge(book, None)
+    cur = out.get(str(code))
+    if not cur or str(cur.get("ymd")) != str(ymd)[:8]:
+        return out
+    if cur.get("source") == "snapshot_1600":
+        return out
+    _offerFirstSurge(out, str(code), str(ymd)[:8], price, "daily_close")
+    return out
+
+
+def firstSurgePath(directory):
+    return Path(directory) / FIRST_SURGE_FILE
+
+
+def loadFirstSurgeBook(directory):
+    path = firstSurgePath(directory)
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return absorbFirstSurge(data if isinstance(data, dict) else {}, None)
+
+
+def saveFirstSurgeBook(directory, book):
+    path = firstSurgePath(directory)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(book or {}, ensure_ascii=False, indent=2), encoding="utf-8")
+    return book
+
+
+def rememberFirstSurge(directory, snap):
+    book = absorbFirstSurge(loadFirstSurgeBook(directory), snap)
+    saveFirstSurgeBook(directory, book)
+    return book
+
+
+def refreshFirstSurgeBook(directory):
+    """저장된 일자 파일을 다시 읽어 첫 급등 기준을 맞춘다."""
+    book = loadFirstSurgeBook(directory)
+    root = Path(directory)
+    if not root.is_dir():
+        return book
+    for path in sorted(root.glob("*.json")):
+        if path.name == FIRST_SURGE_FILE:
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for snap in (data or {}).get("snaps") or []:
+            book = absorbFirstSurge(book, snap)
+    saveFirstSurgeBook(directory, book)
+    return book
+
+
+def formatFirstSurgeVs(current, refPrice):
+    """(현재가 / 첫급등 기준가 - 1) × 100. 기준이 없으면 '-'."""
+    try:
+        px = float(current)
+        ref = float(refPrice)
+    except (TypeError, ValueError):
+        return "-", ""
+    if px <= 0 or ref <= 0:
+        return "-", ""
+    pct = (px / ref - 1.0) * 100.0
+    if pct > 0:
+        return f"+{pct:.2f}", "up"
+    if pct < 0:
+        return f"{pct:.2f}", "down"
+    return f"{pct:.2f}", ""
 
 
 def turnoverEok(amount, unit):
@@ -598,7 +758,12 @@ def buildTabRows(snap, asof, extras=None):
             "exhaustive": False,
             "note": (snap or {}).get("note") or "미수집",
         }
-    filtered = filterRankRows(snap.get("rows") or [])
+    filtered = tabRankRows(snap.get("rows") or [])
+    book = extras.get("firstSurge") or {}
+    closes = extras.get("dailyClose") or {}
+    for code, bar in closes.items():
+        if isinstance(bar, dict):
+            book = applyDailyClose(book, code, bar.get("ymd"), bar.get("price"))
     view = []
     for row in filtered["rows"]:
         code = row["stkCd"]
@@ -608,8 +773,11 @@ def buildTabRows(snap, asof, extras=None):
         daily = row.get("dailyPct")
         first = str(issue.get("firstSurgeDate") or "")
         tags = issue.get("tag") or ""
+        ref = book.get(code) if isinstance(book, dict) else None
+        vs, sign = ("-", "")
+        if isinstance(ref, dict):
+            vs, sign = formatFirstSurgeVs(row.get("price"), ref.get("price"))
         item = {
-            "originalRank": row.get("originalRank"),
             "code": code,
             "name": row.get("name") or "",
             "index": row.get("index") or "",
@@ -625,7 +793,8 @@ def buildTabRows(snap, asof, extras=None):
             "flowAsOf": flow.get("asof") or "",
             "flowStatus": flow.get("flowStatus") or "N/A",
             "rsi14": extra.get("rsi14"),
-            "yearLowRisePct": extra.get("yearLowRisePct"),
+            "firstSurgeVs": vs,
+            "firstSurgeSign": sign,
             "dataState": extra.get("dataState") or "PARTIAL",
             "yellowName": yellowName(issue.get("confirmed"), daily, asof, first),
             "buyEligible": False,
