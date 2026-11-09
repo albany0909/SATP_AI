@@ -124,7 +124,7 @@ v6 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-09`
 - SRC: `manual`
 - NOTE: `v6 탭은 5% 이상. 원순위와 1년저점대비를 빼고 첫급등대비를 표시. 매수는 10% 유지. 주문 비활성.`
-- GIT_HASH: `PENDING_V6`
+- GIT_HASH: `2e698b34b3f3`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -132,7 +132,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 6, '2026-11-09',
    'v6 탭은 5% 이상. 원순위와 1년저점대비를 빼고 첫급등대비를 표시. 매수는 10% 유지. 주문 비활성.',
-   'PENDING_V6', 'manual')
+   '2e698b34b3f3', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
