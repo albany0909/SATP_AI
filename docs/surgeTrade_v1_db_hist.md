@@ -101,7 +101,7 @@ v5 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-09`
 - SRC: `manual`
 - NOTE: `v5 명부 필터 제거. ka00198 base_comp_chgr 10% 이상만. 주문 비활성.`
-- GIT_HASH: `PENDING_V5`
+- GIT_HASH: `3b7521c080d5`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -109,7 +109,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 5, '2026-11-09',
    'v5 명부 필터 제거. ka00198 base_comp_chgr 10% 이상만. 주문 비활성.',
-   'PENDING_V5', 'manual')
+   '3b7521c080d5', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
