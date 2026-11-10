@@ -35,8 +35,9 @@ TAB_COLUMNS = (
     ("rsi14", "RSI14"),
     ("turnoverEok", "거래대금(억)"),
     ("issues", "이슈"),
-    ("orgnNetMillionKrw", "기관순매수(억)"),
-    ("frgnNetMillionKrw", "외국인순매수(억)"),
+    ("frgnNetMillionKrw", "외국인"),
+    ("orgnNetMillionKrw", "기관"),
+    ("penfndNetMillionKrw", "연기금"),
     ("firstSurgeVs", "첫급등대비"),
     ("dataState", "상태"),
 )
@@ -648,7 +649,8 @@ def parseKa10059Flow(row, requested):
     asof = str(row.get("dt") or "")
     orgn = _num(row.get("orgn"))
     frgn = _num(row.get("frgnr_invsr"))
-    if orgn is None and frgn is None:
+    pen = _num(row.get("penfnd_etc")) if "penfnd_etc" in row else None
+    if orgn is None and frgn is None and pen is None:
         return {"state": "N/A", "reason": "순매수 필드 없음", "asof": asof}
     turnover, note = turnoverEok(row.get("acc_trde_prica"), FLOW_UNIT_MILLION_KRW)
     return {
@@ -658,6 +660,8 @@ def parseKa10059Flow(row, requested):
         "unitNote": "ka10059 금액(amt_qty_tp=1)·순매수(trde_tp=0). 명세 단위 백만원.",
         "orgnNetMillionKrw": orgn,
         "frgnNetMillionKrw": frgn,
+        "penfndNetMillionKrw": pen,
+        "pensionDefinition": "penfnd_etc 연기금등. 기관계(orgn)에서 빼지 않는다.",
         "foreignDefinition": "frgnr_invsr 외국인투자자. natfor(내외국인) 합산 아님.",
         "flowStatus": FLOW_STATUS_PROVISIONAL,
         "flowStatusNote": "KRX 정규 데이터는 15:45 예정, 시간외 반영 최종은 20:00. 키움 응답을 확정으로 보지 않는다.",
@@ -822,27 +826,46 @@ def validateEventAudit(form, todayYmd, now=None):
     }
 
 
-_ISSUE_TAG_COLORS = {
-    "지분분쟁": "#E8F5C8",
-    "어닝서프라이즈": "#FFF3C4",
-    "전쟁": "#FFD6D6",
-    "코로나": "#FAD9EC",
-    "관세": "#D3E6FF",
-}
-_ISSUE_PASTELS = (
-    "#FFF3C4",
-    "#FFD6D6",
-    "#E4D9F7",
-    "#D3E6FF",
-    "#D6F2DD",
-    "#CFF1EF",
-    "#FAD9EC",
-    "#DCE2F8",
-    "#DCEFFA",
-    "#FFE2C6",
-    "#EEEEDC",
-    "#E8F5C8",
+# 이유·테마 단어를 앞에 두고, 서로 떨어진 파스텔을 고정한다.
+# RSI #D6E8FF/#FFD6D6, 배지 #D4F5D4 와 겹치지 않는다.
+_ISSUE_PALETTE = (
+    "#ACDBEC", "#F08989", "#89F089", "#F4F4A4", "#F089F0", "#8989F0", "#FBDBFB", "#CFAABE",
+    "#B9ECAC", "#BFA4F4", "#89F0C7", "#F0C089", "#F7C7BF", "#89B9F0", "#F089B9", "#F0FBDB",
+    "#AAB9CF", "#D6CBEB", "#D5F089", "#89F0F0", "#ECACDB", "#D6DABE", "#BFF7F7", "#F4AAA4",
+    "#B2F089", "#ACECCE", "#AB89F0", "#9FDB9F", "#DBCF9F", "#CE89F0", "#AACFB9", "#9F9FDB",
+    "#F0BFF7", "#CF9FDB", "#F7E5BF", "#F0E389", "#ACBDEC", "#DFA4F4", "#BECDDA", "#DABECF",
+    "#89F0A5", "#DB9F9F", "#F4A4BF", "#A4F4F4", "#D4F4A4", "#94D0E6", "#E694D0", "#F0A589",
+    "#F4D9A4", "#C0CFAA", "#E3B8B5", "#A4A4F4", "#BFCBF7", "#C7B5E3", "#BEDAC5", "#94E6DB",
+    "#B79FDB", "#A4F4A4", "#DBB79F", "#E8F7BF", "#F0E5E9", "#BFF7BF", "#AACFCF", "#C5E694",
+    "#F4A4EE", "#E094E6", "#94E6B4", "#F4BFA4", "#A4F4B9", "#899EF0", "#F0899E", "#EBCBE7",
+    "#A4F4DF", "#C3AACF", "#B3DB9F", "#9EF089", "#E3CEB5", "#CFAAAA", "#D1DDE5", "#B5E3DD",
+    "#DDB5E3", "#CFC3AA", "#9FDBC3", "#89DCF0", "#9FC3DB", "#F089DC", "#94AAE6", "#E694AA",
+    "#C7E3B5", "#E3ECAC", "#CEBFF7", "#E0E694", "#DB9FC7", "#DB9FB3", "#E69494", "#94E694",
+    "#9494E6", "#E6AF94", "#BF94E6", "#B1ACEC", "#EBE7CB", "#F7BFE5", "#9FD7DB", "#B2AACF",
+    "#CFDB9F", "#AAE694", "#DAC3BE", "#D2ACEC", "#E6D594", "#A4CFF4", "#B5E3BB", "#94BFE6",
+    "#E694BF", "#9FDBAF", "#9FB3DB", "#A494E6", "#F4A4CF", "#AFCFAA", "#C4F4A4", "#E6C594",
+    "#ECACB1", "#E3B5C4", "#94E6CA", "#CFBEDA", "#E3DDB5", "#F7F7BF", "#BFF7E8", "#BEBEDA",
+    "#DDBFF7", "#D094E6",
 )
+
+
+def _knownIssueTags():
+    from trading.leaderIssueWords import LEADER_EVENT_MAP, LEADER_ISSUE_MAP, REASON_MAP
+
+    tags = []
+    for canon, _words in REASON_MAP:
+        if canon not in tags:
+            tags.append(canon)
+    for _key, lab in list(LEADER_ISSUE_MAP) + list(LEADER_EVENT_MAP):
+        if lab not in tags:
+            tags.append(lab)
+    return tags
+
+
+_KNOWN_ISSUE_TAGS = _knownIssueTags()
+_ISSUE_TAG_COLORS = {
+    tag: _ISSUE_PALETTE[i] for i, tag in enumerate(_KNOWN_ISSUE_TAGS)
+}
 
 
 def _truncInt(value):
@@ -862,7 +885,7 @@ def formatGroupedInt(value):
 
 def formatNetEok(millionKrw):
     """
-    ka10059 금액(amt_qty_tp=1)·순매수(trde_tp=0)의 orgn·frgnr_invsr.
+    ka10059 금액(amt_qty_tp=1)·순매수(trde_tp=0)의 orgn·frgnr_invsr·penfnd_etc.
     명세 단위는 백만원. 100백만원 = 1억. 소수점 이하는 버린다.
     반환: (표시문자열, up|down|"")
     """
@@ -922,17 +945,76 @@ def rsiCellColor(value):
     return ""
 
 
+def _freshPastel(used):
+    """팔레트가 바닥나면 화면에서 아직 안 쓴 색을 하나 고른다."""
+    banned = {"#D6E8FF", "#FFD6D6", "#D4F5D4"}
+    n = 0
+    while n < 720:
+        hue = (n * 47 + 19) % 360
+        n += 1
+        sat = 0.45 + (n % 3) * 0.12
+        light = 0.78 + (n % 4) * 0.04
+        c = (1 - abs(2 * light - 1)) * sat
+        x = c * (1 - abs((hue / 60.0) % 2 - 1))
+        m = light - c / 2
+        if hue < 60:
+            r, g, b = c, x, 0
+        elif hue < 120:
+            r, g, b = x, c, 0
+        elif hue < 180:
+            r, g, b = 0, c, x
+        elif hue < 240:
+            r, g, b = 0, x, c
+        elif hue < 300:
+            r, g, b = x, 0, c
+        else:
+            r, g, b = c, 0, x
+        color = "#{:02X}{:02X}{:02X}".format(
+            int(round((r + m) * 255)),
+            int(round((g + m) * 255)),
+            int(round((b + m) * 255)),
+        )
+        if color in used or color in banned or color in _ISSUE_TAG_COLORS.values():
+            continue
+        return color
+    return "#F3E6D0"
+
+
 def issueTagColor(tag):
-    """같은 이슈 단어는 항상 같은 옅은 배경. 빈 칸은 색 없음."""
+    """목록에 있는 이슈는 항상 같은 색. 없으면 빈 문자열."""
     text = str(tag or "").strip()
     if not text:
         return ""
-    known = _ISSUE_TAG_COLORS.get(text)
-    if known:
-        return known
-    import zlib
+    return _ISSUE_TAG_COLORS.get(text, "")
 
-    return _ISSUE_PASTELS[zlib.crc32(text.encode("utf-8")) % len(_ISSUE_PASTELS)]
+
+def assignIssueColors(tags):
+    """한 화면에서 서로 다른 이슈는 다른 색. 같은 이슈는 같은 색."""
+    chosen = {}
+    used = set()
+    spare = [color for color in _ISSUE_PALETTE if color not in _ISSUE_TAG_COLORS.values()]
+    spare_i = 0
+    out = []
+    for raw in tags or []:
+        text = str(raw or "").strip()
+        if not text:
+            out.append("")
+            continue
+        if text not in chosen:
+            fixed = _ISSUE_TAG_COLORS.get(text)
+            if fixed and fixed not in used:
+                chosen[text] = fixed
+            else:
+                while spare_i < len(spare) and spare[spare_i] in used:
+                    spare_i += 1
+                if spare_i < len(spare):
+                    chosen[text] = spare[spare_i]
+                    spare_i += 1
+                else:
+                    chosen[text] = _freshPastel(used)
+            used.add(chosen[text])
+        out.append(chosen[text])
+    return out
 
 
 def yellowName(confirmed, dailyPct, tradeYmd, firstSurgeYmd):
@@ -991,10 +1073,11 @@ def buildTabRows(snap, asof, extras=None):
             "turnoverEok": flow.get("turnoverEok"),
             "turnoverNote": flow.get("turnoverNote") or "N/A",
             "issues": tags if issue.get("confirmed") else "",
-            "issueColor": issueTagColor(tags if issue.get("confirmed") else ""),
+            "issueColor": "",
             "issueDetails": issue.get("details") or ([] if not issue else [issue]),
             "orgnNetMillionKrw": flow.get("orgnNetMillionKrw"),
             "frgnNetMillionKrw": flow.get("frgnNetMillionKrw"),
+            "penfndNetMillionKrw": flow.get("penfndNetMillionKrw"),
             "flowUnit": flow.get("unit") or "",
             "flowAsOf": flow.get("asof") or "",
             "flowStatus": flow.get("flowStatus") or "N/A",
@@ -1006,6 +1089,9 @@ def buildTabRows(snap, asof, extras=None):
             "buyEligible": False,
         }
         view.append(item)
+    colors = assignIssueColors([row.get("issues") for row in view])
+    for row, color in zip(view, colors):
+        row["issueColor"] = color
     observed = snap.get("observedAt") or ""
     return {
         "state": "READY" if view else "EMPTY",

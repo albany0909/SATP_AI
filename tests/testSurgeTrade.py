@@ -216,7 +216,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 18)
+        self.assertEqual(int(spec["version"]), 19)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -229,7 +229,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 18)
+        self.assertEqual(payload["algVer"], 19)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -766,8 +766,9 @@ class SurgeTradeTest(unittest.TestCase):
                 "RSI14",
                 "거래대금(억)",
                 "이슈",
-                "기관순매수(억)",
-                "외국인순매수(억)",
+                "외국인",
+                "기관",
+                "연기금",
                 "첫급등대비",
                 "상태",
             ],
@@ -1470,11 +1471,9 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(rsiCellColor(69.99), "")
         self.assertEqual(rsiCellColor(None), "")
         self.assertEqual(rsiCellColor(""), "")
-        self.assertEqual(issueTagColor("지분분쟁"), "#E8F5C8")
-        self.assertEqual(issueTagColor("관세"), "#D3E6FF")
+        self.assertTrue(issueTagColor("지분분쟁").startswith("#"))
         self.assertNotEqual(issueTagColor("지분분쟁"), issueTagColor("관세"))
-        self.assertEqual(issueTagColor("기타이슈"), issueTagColor("기타이슈"))
-        self.assertTrue(issueTagColor("기타이슈").startswith("#"))
+        self.assertEqual(issueTagColor("기타이슈"), "")
         colored = buildTabRows(
             {
                 "state": "COLLECTED",
@@ -1669,6 +1668,59 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(netFlowColor("up"), "#D32F2F")
         self.assertEqual(netFlowColor("down"), "#1565C0")
         self.assertEqual(netFlowColor(""), "")
+        from trading.leaderIssueWords import LEADER_EVENT_MAP, LEADER_ISSUE_MAP, REASON_MAP
+        from trading.surgeTradeData import assignIssueColors, issueTagColor
+
+        known = []
+        for canon, _words in REASON_MAP:
+            if canon not in known:
+                known.append(canon)
+        for _key, lab in list(LEADER_ISSUE_MAP) + list(LEADER_EVENT_MAP):
+            if lab not in known:
+                known.append(lab)
+        colors = [issueTagColor(tag) for tag in known]
+        self.assertEqual(len(colors), len(set(colors)))
+        self.assertNotIn("", colors)
+        self.assertNotIn("#D6E8FF", colors)
+        self.assertNotIn("#FFD6D6", colors)
+        self.assertNotIn("#D4F5D4", colors)
+
+        def _dist(a, b):
+            pa = tuple(int(a[i:i + 2], 16) for i in (1, 3, 5))
+            pb = tuple(int(b[i:i + 2], 16) for i in (1, 3, 5))
+            return sum((x - y) ** 2 for x, y in zip(pa, pb)) ** 0.5
+
+        core = []
+        for canon, _words in REASON_MAP:
+            if canon not in core:
+                core.append(canon)
+        for _key, lab in LEADER_ISSUE_MAP:
+            if lab not in core:
+                core.append(lab)
+        core_colors = [issueTagColor(tag) for tag in core]
+        closest = min(
+            _dist(core_colors[i], core_colors[j])
+            for i in range(len(core_colors))
+            for j in range(i + 1, len(core_colors))
+        )
+        self.assertGreaterEqual(closest, 24)
+        screen = assignIssueColors(known + ["없는이슈A", "없는이슈B", "없는이슈A", ""])
+        filled = [color for color in screen if color]
+        self.assertEqual(len(set(filled)), len(known) + 2)
+        self.assertEqual(screen[-2], screen[-4])
+        self.assertNotEqual(screen[-3], screen[-4])
+        self.assertEqual(screen[-1], "")
+        flow = parseKa10059Flow(
+            {"dt": "20261110", "orgn": "200", "frgnr_invsr": "-50", "penfnd_etc": "80"},
+            {"amtQtyTp": "1", "trdeTp": "0"},
+        )
+        self.assertEqual(flow["orgnNetMillionKrw"], 200)
+        self.assertEqual(flow["penfndNetMillionKrw"], 80)
+        missing = parseKa10059Flow(
+            {"dt": "20261110", "orgn": "10", "frgnr_invsr": "1"},
+            {"amtQtyTp": "1", "trdeTp": "0"},
+        )
+        self.assertIsNone(missing["penfndNetMillionKrw"])
         self.assertEqual(badgeFillColor("신"), "#FFD6D6")
         self.assertEqual(badgeFillColor("뉴"), "#D4F5D4")
         self.assertEqual(badgeFillColor(""), "")

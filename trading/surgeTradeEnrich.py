@@ -294,6 +294,7 @@ def displayExtras(directory, asof):
                 "turnoverNote": row.get("turnoverNote") or "",
                 "orgnNetMillionKrw": row.get("orgnNetMillionKrw"),
                 "frgnNetMillionKrw": row.get("frgnNetMillionKrw"),
+                "penfndNetMillionKrw": row.get("penfndNetMillionKrw"),
                 "unit": row.get("flowUnit") or "",
                 "asof": row.get("flowAsOf") or "",
                 "flowStatus": row.get("flowStatus") or "",
@@ -432,6 +433,7 @@ def _fillCode(row, code, asof, now, fetchers, calls, price=None, todayPct=None, 
         if parsed.get("state") == "OK":
             row["orgnNetMillionKrw"] = parsed.get("orgnNetMillionKrw")
             row["frgnNetMillionKrw"] = parsed.get("frgnNetMillionKrw")
+            row["penfndNetMillionKrw"] = parsed.get("penfndNetMillionKrw")
             row["flowUnit"] = parsed.get("unit") or ""
             row["flowAsOf"] = parsed.get("asof") or asof
             row["flowStatus"] = parsed.get("flowStatus") or ""

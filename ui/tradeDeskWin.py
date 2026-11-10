@@ -5158,7 +5158,7 @@ class TradeDeskWin(QMainWindow):
                 elif key == "turnoverEok":
                     text = formatGroupedInt(val)
                     sortNum = val
-                elif key in ("orgnNetMillionKrw", "frgnNetMillionKrw"):
+                elif key in ("orgnNetMillionKrw", "frgnNetMillionKrw", "penfndNetMillionKrw"):
                     text, flowSign = formatNetEok(val)
                     sortNum = val
                 else:
@@ -5186,7 +5186,7 @@ class TradeDeskWin(QMainWindow):
                     item.setForeground(QBrush(_PNL_PLUS))
                 elif key == "firstSurgeVs" and row.get("firstSurgeSign") == "down":
                     item.setForeground(QBrush(_PNL_MINUS))
-                if key in ("issues", "orgnNetMillionKrw", "frgnNetMillionKrw"):
+                if key in ("issues", "orgnNetMillionKrw", "frgnNetMillionKrw", "penfndNetMillionKrw"):
                     tip = row.get("flowStatus") or ""
                     details = row.get("issueDetails") or []
                     if details:
