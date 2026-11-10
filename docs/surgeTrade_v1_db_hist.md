@@ -193,7 +193,7 @@ v9 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-10`
 - SRC: `manual`
 - NOTE: `v9 같은 이슈는 같은 배경. 헤드라인은 네이버 모바일 종목뉴스. 주문 비활성.`
-- GIT_HASH: `PENDING_V9`
+- GIT_HASH: `f7b2101a2ad6`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -201,7 +201,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 9, '2026-11-10',
    'v9 같은 이슈는 같은 배경. 헤드라인은 네이버 모바일 종목뉴스. 주문 비활성.',
-   'PENDING_V9', 'manual')
+   'f7b2101a2ad6', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
