@@ -45,7 +45,13 @@ def _loadDayPrcBg(stkCds, tradeDt):
     try:
         # 관심 교체 전에 15분 편입 SRC/NOTE 를 읽어야 당일 추가분이 남는다
         collected = collectCloseMinStkCds(tradeDt, rankStkCds=stkCds)
-        allCds = collected.get("stkCds") or list(stkCds or [])
+        from utils.chartBarPlan import collectSurgeChartCds, mergeLoadCodes
+
+        surgeCds = collectSurgeChartCds()
+        allCds = mergeLoadCodes(
+            collected.get("stkCds") or list(stkCds or []),
+            surgeCds,
+        )
         extraN = int(collected.get("extra15mCnt") or 0)
         if extraN:
             termLog(
@@ -106,6 +112,14 @@ def _loadDayPrcBg(stkCds, tradeDt):
                 termLog(wres.get("summary"))
         except Exception as err:
             termLog(f"[inqRankSched] 관심일봉 증분 실패: {err}")
+        try:
+            from utils.chartBarLoad import loadWeekMonthForCodes
+
+            pole = loadWeekMonthForCodes(allCds, refetch=False, endDt=tradeDt)
+            if pole.get("summary"):
+                termLog(pole.get("summary"))
+        except Exception as err:
+            termLog(f"[inqRankSched] 주월봉 실패: {err}")
     except Exception as err:
         _notify(f"[순위일봉실패] {err}")
 

@@ -216,7 +216,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 22)
+        self.assertEqual(int(spec["version"]), 23)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -229,7 +229,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 22)
+        self.assertEqual(payload["algVer"], 23)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -1636,6 +1636,68 @@ class SurgeTradeTest(unittest.TestCase):
             again = displayExtras(store.dir, "20261110")["byCode"]["005930"]
             self.assertFalse(again["newHigh"])
             self.assertEqual(again["newHighLookback"], 10)
+
+    def test_chart_load_includes_surge_day_week_month(self):
+        from utils.chartBarPlan import (
+            CHART_PERIODS,
+            POLE_API,
+            codesFromSurgeRows,
+            collectSurgeChartCds,
+            liveTickRedraws,
+            mergeLoadCodes,
+            needsAutoFetch,
+            poleFetchDecision,
+            seriesFor,
+        )
+
+        rows = [
+            {"stkCd": "003490", "baseCompChgr": 11, "price": 100, "originalRank": 1},
+            {"stkCd": "000001", "baseCompChgr": 4, "price": 10, "originalRank": 2},
+            {"stkCd": "267850", "baseCompChgr": 6, "price": 20, "originalRank": 3},
+        ]
+        surge = codesFromSurgeRows(rows)
+        self.assertEqual(surge, ["003490", "267850"])
+        merged = mergeLoadCodes(["005930"], ["005930", "000660"], surge)
+        self.assertEqual(merged, ["005930", "000660", "003490", "267850"])
+        self.assertEqual(CHART_PERIODS, ("day", "week", "month"))
+        self.assertEqual(POLE_API["week"], "ka10082")
+        self.assertEqual(POLE_API["month"], "ka10083")
+        bundle = {
+            "day": [],
+            "week": [{"tradeDt": "20261107", "close": 3}],
+            "month": [{"tradeDt": "20261101", "close": 4}],
+        }
+        self.assertTrue(needsAutoFetch(bundle, "day"))
+        self.assertFalse(needsAutoFetch(bundle, "week"))
+        self.assertEqual(seriesFor(bundle, "month")[0]["close"], 4)
+        self.assertNotEqual(seriesFor(bundle, "week"), seriesFor(bundle, "month"))
+        self.assertTrue(liveTickRedraws("day"))
+        self.assertFalse(liveTickRedraws("week"))
+        self.assertFalse(liveTickRedraws("month"))
+        self.assertEqual(poleFetchDecision({"cnt": 0, "maxDt": ""}, "20261111", "week"), "fetch")
+        self.assertEqual(
+            poleFetchDecision({"cnt": 20, "maxDt": "20261110"}, "20261111", "week"),
+            "skip",
+        )
+        self.assertEqual(
+            poleFetchDecision({"cnt": 20, "maxDt": "20261110"}, "20261111", "week", refetch=True),
+            "fetch",
+        )
+        self.assertEqual(collectSurgeChartCds(directory="/tmp/satp-no-such-surge"), [])
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SnapStore(tmp)
+            store.save(
+                {
+                    "ok": True,
+                    "tradeYmd": "20261110",
+                    "slot": "1000",
+                    "state": "COLLECTED",
+                    "observedAt": "2026-11-10T10:00:00",
+                    "rows": rows,
+                }
+            )
+            shown = collectSurgeChartCds(datetime(2026, 11, 10, 10, 30), tmp)
+            self.assertEqual(shown, ["003490", "267850"])
 
     def test_recent_year_uses_daily_low_without_extra_fetch(self):
         from trading.surgeTradeData import formatYearRisePct, recentYearLow, yearRisePct

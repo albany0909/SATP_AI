@@ -4,7 +4,7 @@
   "englishName": "Surge Trade",
   "name": "급등주매매",
   "status": "draft",
-  "version": 22,
+  "version": 23,
   "enabled": false,
   "timeframe": "D",
   "docPath": "strategies/docs/surgeTrade_v1.md",
@@ -66,5 +66,5 @@
     "closingAuctionTrdeTp": "0",
     "closingAuctionNote": "kt10000 documents no dedicated closing-auction code. 15:20-15:30 uses ordinary limit 0. Market 3 and after-hours 81 are not used in that window."
   },
-  "notes": "v22. Theme matching drops airline names before the word list, and bare 항공 is no longer 우주항공. 통합 and oil-price phrases are reason tags. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
+  "notes": "v23. Surge tab names join the daily bar load. Week bars are ka10082 and month bars are ka10083, shown on the chart tab. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
 }

@@ -75,7 +75,9 @@ def loadDayPrcForWatchHolds(
     관심·실계좌 종목 일봉 증분 적재.
     skipIfEnough=True → maxDt 이후분만 조회. refetchLastDay로 당일봉 정정.
     """
-    cds = collectWatchHoldCds()
+    from utils.chartBarPlan import collectSurgeChartCds, mergeLoadCodes
+
+    cds = mergeLoadCodes(collectWatchHoldCds(), collectSurgeChartCds())
     ymd = str(endDt or datetime.now().strftime("%Y%m%d"))[:8]
     if not cds:
         return {
@@ -88,7 +90,7 @@ def loadDayPrcForWatchHolds(
             "summary": "[관심일봉] 대상 없음",
             "tradeDt": ymd,
         }
-    termLog(f"[watchDayPrc] 관심·실계좌 {len(cds)}종 · 증분 적재 시작 ({ymd})")
+    termLog(f"[watchDayPrc] 관심·급등 {len(cds)}종 · 증분 적재 시작 ({ymd})")
     result = loadDayPrcForRankStks(
         cds,
         months=months,
@@ -108,4 +110,13 @@ def loadDayPrcForWatchHolds(
             f"실패 {result.get('failCnt') or 0}"
         )
         termLog(result["summary"])
+    try:
+        from utils.chartBarLoad import loadWeekMonthForCodes
+
+        pole = loadWeekMonthForCodes(cds, refetch=False, endDt=ymd)
+        if pole.get("summary"):
+            termLog(pole.get("summary"))
+        result["pole"] = pole
+    except Exception as err:
+        termLog(f"[watchDayPrc] 주월봉 실패: {err}")
     return result

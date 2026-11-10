@@ -1,7 +1,6 @@
 """
-매매창 관심종목 일봉 차트.
-과거는 AI_DAY_STK_PRC, 당일은 이미 수신 중인 0B 현재가로만 덧그린다.
-TR 을 추가로 부르지 않는다.
+매매창 차트. 일봉은 AI_DAY_STK_PRC, 주봉은 AI_WK_STK_PRC, 월봉은 AI_MON_STK_PRC.
+당일 일봉만 이미 수신 중인 0B 현재가로 덧그린다. 주·월은 1초마다 다시 그리지 않는다.
 """
 
 from datetime import datetime, timedelta
@@ -693,7 +692,9 @@ class VolBarView(QWidget):
 
 
 class DeskStkChartPane(QWidget):
-    """일봉 + 바로 아래 거래량 + SMA + 지지선."""
+    """일·주·월봉 + 바로 아래 거래량 + SMA + 지지선."""
+
+    barsMissing = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -757,7 +758,7 @@ class DeskStkChartPane(QWidget):
         top.addStretch(1)
         self.btnRefresh = QToolButton()
         self.btnRefresh.setText("차트 최신화")
-        self.btnRefresh.setToolTip("선택 종목 일봉을 키움에서 다시 받아 DB 적재 후 차트를 다시 그립니다")
+        self.btnRefresh.setToolTip("선택 종목 일봉·주봉·월봉을 키움에서 받아 저장한 뒤 차트를 다시 그립니다")
         self.btnRefresh.setStyleSheet("QToolButton { padding: 2px 6px; }")
         top.addWidget(self.btnRefresh)
         top.addWidget(self.btnAddSr)
@@ -831,10 +832,17 @@ class DeskStkChartPane(QWidget):
         self.headLbl.setText(title)
 
     def _rebuildBars(self):
-        """저장된 일봉을 선택 주기(일·주·월)로 다시 묶는다."""
+        """선택 주기의 저장 봉을 쓴다. 주·월이 아직 없으면 일봉을 묶지 않는다."""
         if self._barTp not in _SHOW_BY_TP:
             self._barTp = "day"
-        self._bars = _aggBars(self._dayBars, self._barTp)
+        stored = None
+        byTp = getattr(self, "_byTp", None)
+        if isinstance(byTp, dict) and self._barTp in byTp:
+            stored = byTp.get(self._barTp)
+        if stored is None and self._barTp != "day":
+            self._bars = _aggBars(self._dayBars, self._barTp)
+        else:
+            self._bars = [dict(b) for b in (stored if stored is not None else self._dayBars)]
 
     def _onBarTpClicked(self, btn):
         tp = str(btn.property("barTp") or "day")
@@ -847,6 +855,12 @@ class DeskStkChartPane(QWidget):
         if self._showN > len(self._bars) > 0:
             self._showN = len(self._bars)
         self._setHeadTitle()
+        if not self._bars:
+            self.headLbl.setText(f"{self._stkNm}({self._stkCd}) {self._barTpNm()} 없음")
+            self.candleChart.removeAllSeries()
+            self.volView.setRows([])
+            self.barsMissing.emit(tp)
+            return
         self._redraw()
 
     def _visibleBars(self):
@@ -980,6 +994,7 @@ class DeskStkChartPane(QWidget):
     def clearChart(self, msg="관심종목에서 종목을 선택하세요"):
         self._bars = []
         self._dayBars = []
+        self._byTp = {}
         self._stkCd = ""
         self._stkNm = ""
         self._srHideId = ""
@@ -993,21 +1008,38 @@ class DeskStkChartPane(QWidget):
         self.candleView.setXTicks(0, [])
 
     def setDayBars(self, stkCd, stkNm, bars, liveYmd=None):
-        """DB 일봉을 받아 두고, 선택 주기(일·주·월·년)로 그려 둔다."""
+        """일봉만 넘어온 예전 호출. 주·월은 키가 없어 일봉을 묶는다."""
+        self.setChartBundle(
+            stkCd,
+            stkNm,
+            {"day": bars or []},
+            liveYmd=liveYmd,
+        )
+
+    def setChartBundle(self, stkCd, stkNm, bundle, liveYmd=None):
+        """일·주·월 저장 봉. 없는 주기는 빈 목록이라 일봉으로 대신 그리지 않는다."""
+        data = bundle or {}
         self._stkCd = str(stkCd or "")
         self._stkNm = str(stkNm or "")
         self._liveYmd = str(liveYmd or datetime.now().strftime("%Y%m%d"))[:8]
-        self._dayBars = [dict(b) for b in (bars or [])]
+        self._byTp = {}
+        for key in ("day", "week", "month"):
+            if key in data:
+                self._byTp[key] = [dict(b) for b in (data.get(key) or [])]
+        self._dayBars = list(self._byTp.get("day") or [])
         self._rebuildBars()
-        self._setHeadTitle()
+        note = str(data.get("note") or "").strip()
         if not self._bars:
-            self.headLbl.setText(
-                f"{self._stkNm}({self._stkCd}) 일봉 없음" if self._stkCd else "일봉 없음"
-            )
+            label = self._barTpNm()
+            title = f"{self._stkNm}({self._stkCd}) {label} 없음" if self._stkCd else f"{label} 없음"
+            if note:
+                title = f"{title} · {note[:80]}"
+            self.headLbl.setText(title)
             self.candleChart.removeAllSeries()
             self.volView.setRows([])
             self._fillSrList()
             return
+        self._setHeadTitle()
         if self._showN > len(self._bars):
             self._showN = len(self._bars)
         self._fillSrList()
@@ -1033,16 +1065,17 @@ class DeskStkChartPane(QWidget):
             if float(last.get("open") or 0) <= 0:
                 last["open"] = px
         else:
-            self._dayBars.append(
-                {
-                    "tradeDt": self._liveYmd,
-                    "open": px,
-                    "high": px,
-                    "low": px,
-                    "close": px,
-                    "qty": 0,
-                }
-            )
+            fresh = {
+                "tradeDt": self._liveYmd,
+                "open": px,
+                "high": px,
+                "low": px,
+                "close": px,
+                "qty": 0,
+            }
+            self._dayBars.append(fresh)
+        if self._barTp != "day":
+            return True
         self._rebuildBars()
         self._redraw()
         return True

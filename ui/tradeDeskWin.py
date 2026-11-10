@@ -1461,6 +1461,8 @@ class TradeDeskWin(QMainWindow):
         chartPane = DeskStkChartPane()
         self.deskChart = chartPane
         self.deskChart.btnRefresh.clicked.connect(self._onChartRefreshClick)
+        self.deskChart.barsMissing.connect(self._onChartBarsMissing)
+        self._chartFetchTried = set()
         self.sideStack.addWidget(chartPane)
 
         # 설정 — 투자모드·매매방식 (상단바에서 이동)
@@ -1895,6 +1897,7 @@ class TradeDeskWin(QMainWindow):
             return
         self._chartStkCd = cd
         self._chartStkNm = nm
+        self._chartFetchTried = set()
         if getattr(self, "_sideKey", "") == "chart":
             self._reloadDeskChart()
 
@@ -1913,6 +1916,7 @@ class TradeDeskWin(QMainWindow):
                 cd, nm = self._selectedWatchStk()
         self._chartStkCd = cd
         self._chartStkNm = nm
+        self._chartFetchTried = set()
         self._reloadDeskChart()
         if not self._chartLiveTimer.isActive():
             self._chartLiveTimer.start(1000)
@@ -1922,8 +1926,8 @@ class TradeDeskWin(QMainWindow):
         if getattr(self, "_chartLiveTimer", None) is not None:
             self._chartLiveTimer.stop()
 
-    def _reloadDeskChart(self):
-        """일봉은 백그라운드에서만. 차트 탭이 아니면 조회하지 않는다."""
+    def _reloadDeskChart(self, allowFetch=True):
+        """일·주·월봉은 백그라운드에서만. 차트 탭이 아니면 조회하지 않는다."""
         if getattr(self, "_sideKey", "") != "chart":
             return
         cd = str(getattr(self, "_chartStkCd", "") or "")
@@ -1933,20 +1937,49 @@ class TradeDeskWin(QMainWindow):
             return
         self._chartLoadTok = int(getattr(self, "_chartLoadTok", 0) or 0) + 1
         tok = self._chartLoadTok
+        period = str(getattr(self.deskChart, "_barTp", "") or "day")
         self.deskChart.headLbl.setText(f"{nm}({cd}) 차트 조회…")
 
         def _job():
-            try:
-                from ui.deskStkChart import loadDeskDayBars
+            from utils.chartBarLoad import ensureChartBars, loadDeskChartBundle
+            from utils.chartBarPlan import needsAutoFetch
+            from utils.termLog import termLog
 
-                bars = loadDeskDayBars(cd)
-            except Exception:
-                bars = []
+            try:
+                bundle = loadDeskChartBundle(cd)
+            except Exception as err:
+                termLog(f"[deskChart] 차트 조회 실패 {cd}: {err}")
+                bundle = {"day": [], "week": [], "month": [], "note": str(err)}
+            key = (cd, period)
+            tried = getattr(self, "_chartFetchTried", set())
+            if allowFetch and needsAutoFetch(bundle, period) and key not in tried:
+                tried.add(key)
+                self._chartFetchTried = tried
+                try:
+                    got = ensureChartBars(cd) or {}
+                except Exception as err:
+                    termLog(f"[deskChart] 자동 조회 실패 {cd}: {err}")
+                    got = {"ok": False, "errMsg": str(err)}
+                try:
+                    bundle = loadDeskChartBundle(cd)
+                except Exception as err:
+                    termLog(f"[deskChart] 재조회 실패 {cd}: {err}")
+                    bundle = {"day": [], "week": [], "month": []}
+                if needsAutoFetch(bundle, period):
+                    note = str(got.get("errMsg") or "일·주·월봉을 받지 못했습니다")
+                    bundle["note"] = note
+                    termLog(f"[deskChart] {cd} {period} 없음 · {note}")
             if tok != getattr(self, "_chartLoadTok", 0):
                 return
-            self.chartBarsOk.emit(cd, bars, nm)
+            self.chartBarsOk.emit(cd, bundle, nm)
 
         threading.Thread(target=_job, daemon=True).start()
+
+    def _onChartBarsMissing(self, period):
+        """주·월 전환인데 봉이 없으면 일·주·월을 함께 받는다."""
+        if getattr(self, "_sideKey", "") != "chart":
+            return
+        self._reloadDeskChart(allowFetch=True)
 
     def _onChartRefreshClick(self):
         """차트 최신화: 선택 종목 일봉 증분+마지막날 재조회 → DB 적재 → 차트 다시 읽기."""
@@ -1958,17 +1991,18 @@ class TradeDeskWin(QMainWindow):
         btn = self.deskChart.btnRefresh
         btn.setEnabled(False)
         btn.setText("갱신 중…")
-        self.deskChart.headLbl.setText(f"{nm}({cd}) 일봉 최신화 중…")
+        self.deskChart.headLbl.setText(f"{nm}({cd}) 일·주·월봉 최신화 중…")
 
         def _job():
             try:
-                from utils.rankDayPrcLoad import loadDayPrcForRankStks, DEFAULT_MONTHS
+                from utils.chartBarLoad import ensureChartBars
 
-                res = loadDayPrcForRankStks(
-                    [cd], months=DEFAULT_MONTHS, skipIfEnough=False, refetchLastDay=True
-                ) or {}
+                res = ensureChartBars(cd, refetch=True) or {}
             except Exception as e:
-                res = {"ok": False, "errMsg": str(e)}
+                from utils.termLog import termLog
+
+                termLog(f"[deskChart] 최신화 실패 {cd}: {e}")
+                res = {"ok": False, "errMsg": str(e), "failCnt": 1}
             self.chartRefreshDone.emit(cd, res)
 
         threading.Thread(target=_job, daemon=True).start()
@@ -2004,7 +2038,8 @@ class TradeDeskWin(QMainWindow):
         if str(stkCd or "") != str(getattr(self, "_chartStkCd", "") or ""):
             return
         ymd = datetime.now().strftime("%Y%m%d")
-        self.deskChart.setDayBars(stkCd, stkNm, bars or [], liveYmd=ymd)
+        bundle = bars if isinstance(bars, dict) else {"day": bars or []}
+        self.deskChart.setChartBundle(stkCd, stkNm, bundle, liveYmd=ymd)
         self._tickDeskChart()
 
     def _tickDeskChart(self):
