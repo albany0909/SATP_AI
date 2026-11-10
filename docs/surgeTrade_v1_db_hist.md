@@ -354,7 +354,7 @@ v16 은 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-10`
 - SRC: `manual`
 - NOTE: `v16 이슈는 종목명 헤드라인의 이유 태그 우선. 테마는 없을 때만. 주문 비활성.`
-- GIT_HASH: `PENDING_V16`
+- GIT_HASH: `46310e80089f`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -362,7 +362,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 16, '2026-11-10',
    'v16 이슈는 종목명 헤드라인의 이유 태그 우선. 테마는 없을 때만. 주문 비활성.',
-   'PENDING_V16', 'manual')
+   '46310e80089f', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
