@@ -16,6 +16,7 @@ from trading.surgeTradeData import (
     selectTabDisplay,
     turnoverEok,
 )
+from trading.leaderIssueWords import leaderIssueTag
 from trading.surgeTradeInputs import tagFromTitle
 
 # 52주(거래일 250일) 고가. 당일 봉은 빼고 그 이전만 본다.
@@ -25,21 +26,6 @@ NEW_HIGH_FETCH_BARS = NEW_HIGH_LOOKBACK + 1
 # 최근 20거래일 안에만 첫 급등이 있으면 뉴.
 NEW_SURGE_WINDOW = 20
 SURGE_DAY_PCT = 10.0
-
-# 주도주 탭과 같은 짧은 이슈 단어. URL 이 있는 제목만 확인으로 본다.
-_LEADER_TAGS = (
-    ("지분분쟁", "지분분쟁"),
-    ("경영권분쟁", "지분분쟁"),
-    ("경영권", "지분분쟁"),
-    ("어닝서프라이즈", "어닝서프라이즈"),
-    ("깜짝실적", "어닝서프라이즈"),
-    ("깜짝 실적", "어닝서프라이즈"),
-    ("관세", "관세"),
-    ("전쟁", "전쟁"),
-    ("코로나", "코로나"),
-    ("팬데믹", "코로나"),
-)
-
 
 def dailyNewHigh(bars, todayPx, asof="", lookback=NEW_HIGH_LOOKBACK):
     """
@@ -171,24 +157,18 @@ def _splitNews(raw):
 
 
 def issueFromHeadlines(items):
-    """제목과 URL 이 있을 때만 태그. 없으면 빈 칸과 이유를 남긴다."""
-    sawTitle = False
+    """제목과 URL 이 있을 때만 태그. 없으면 빈 칸과 확인한 건수를 남긴다."""
+    checked = 0
     for item in items or []:
         if not isinstance(item, dict):
             continue
         title = str(item.get("title") or item.get("reportNm") or "")
         url = str(item.get("url") or item.get("newsUrl") or item.get("sourceUrl") or "")
         if title:
-            sawTitle = True
+            checked += 1
         if not url.startswith("http"):
             continue
-        tag = tagFromTitle(title)
-        if not tag:
-            low = title.lower()
-            for key, lab in _LEADER_TAGS:
-                if key.lower() in low:
-                    tag = lab
-                    break
+        tag = leaderIssueTag(title) or tagFromTitle(title)
         if tag:
             return {
                 "tag": tag,
@@ -196,10 +176,26 @@ def issueFromHeadlines(items):
                 "sourceUrl": url,
                 "firstSurgeDate": str(item.get("publishedAt") or "")[:8],
                 "note": "headline+url",
+                "checked": checked,
             }
-    if sawTitle:
-        return {"tag": "", "confirmed": False, "note": "제목에 확인 태그가 없다"}
-    return {"tag": "", "confirmed": False, "note": "확인된 제목·URL 이 없다"}
+    if checked:
+        return {
+            "tag": "",
+            "confirmed": False,
+            "note": f"헤드라인 {checked}건, 맞는 단어 없음",
+            "checked": checked,
+        }
+    return {"tag": "", "confirmed": False, "note": "확인된 제목·URL 이 없다", "checked": 0}
+
+
+def issueNeedsFetch(row, now, force=False):
+    """15분마다, 수동 갱신마다, 그리고 실패로 남은 캐시는 바로 다시 받는다."""
+    if force or not isinstance(row, dict):
+        return True
+    note = str(row.get("issueNote") or "")
+    if row.get("issueFailed") or "확인된 제목·URL 이 없다" in note or "조회 실패" in note:
+        return True
+    return _need(row, now, "issue", 15)
 
 
 def _cachePath(directory, ymd):
@@ -282,7 +278,7 @@ def _need(row, now, field, minutes):
     return now - seen >= timedelta(minutes=minutes)
 
 
-def enrichDisplayed(now, store, fetchers=None):
+def enrichDisplayed(now, store, fetchers=None, forceIssue=False):
     """
     화면에 나온 종목만 캐시에 채운다.
     fetchers 가 없으면 모의 조회로 받는다. 실패해도 칸만 비운다.
@@ -330,6 +326,7 @@ def enrichDisplayed(now, store, fetchers=None):
                 prices.get(code),
                 pcts.get(code),
                 bookYmd,
+                forceIssue,
             ):
                 newsFailures += 1
         except Exception:
@@ -358,7 +355,7 @@ def enrichDisplayed(now, store, fetchers=None):
     }
 
 
-def _fillCode(row, code, asof, now, fetchers, calls, price=None, todayPct=None, bookYmd=""):
+def _fillCode(row, code, asof, now, fetchers, calls, price=None, todayPct=None, bookYmd="", forceIssue=False):
     getters = fetchers if isinstance(fetchers, dict) else {}
     if _need(row, now, "market", None):
         market = _call(getters, "market", code, calls, "ka10100")
@@ -408,16 +405,25 @@ def _fillCode(row, code, asof, now, fetchers, calls, price=None, todayPct=None, 
         )
         row["newHigh"] = flag
     newsFailed = False
-    if _need(row, now, "issue", None):
+    if issueNeedsFetch(row, now, forceIssue):
         raw = _call(getters, "news", code, calls, "news")
         items, newsFailed = _splitNews(raw)
-        found = issueFromHeadlines(items)
-        row["issues"] = found.get("tag") or ""
-        row["issueConfirmed"] = found.get("confirmed") is True
-        row["issueUrl"] = found.get("sourceUrl") or ""
-        row["issueDate"] = found.get("firstSurgeDate") or ""
-        row["issueNote"] = found.get("note") or ""
-        row["issueAt"] = now.strftime("%Y-%m-%dT%H:%M:%S")
+        if newsFailed:
+            row["issues"] = ""
+            row["issueConfirmed"] = False
+            row["issueUrl"] = ""
+            row["issueFailed"] = True
+            row["issueNote"] = "헤드라인 조회 실패"
+            row["issueAt"] = ""
+        else:
+            found = issueFromHeadlines(items)
+            row["issues"] = found.get("tag") or ""
+            row["issueConfirmed"] = found.get("confirmed") is True
+            row["issueUrl"] = found.get("sourceUrl") or ""
+            row["issueDate"] = found.get("firstSurgeDate") or ""
+            row["issueFailed"] = False
+            row["issueNote"] = found.get("note") or ""
+            row["issueAt"] = now.strftime("%Y-%m-%dT%H:%M:%S")
     surgeBars = [{"dt": dt, "close": close} for dt, close in (row.get("dayCloses") or [])]
     fresh, found = firstNewSurge(surgeBars, asof, todayPct, bookYmd)
     row["newSurge"] = fresh

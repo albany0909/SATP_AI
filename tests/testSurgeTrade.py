@@ -216,7 +216,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 14)
+        self.assertEqual(int(spec["version"]), 15)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -229,7 +229,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 14)
+        self.assertEqual(payload["algVer"], 15)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -1665,6 +1665,86 @@ class SurgeTradeTest(unittest.TestCase):
         )
         self.assertEqual(view["rows"][0]["name"], "삼성전자")
         self.assertTrue(view["rows"][0]["newSurge"])
+
+    def test_issue_cache_refetch_and_leader_words(self):
+        from trading.leaderIssueWords import leaderIssueTag
+        from trading.surgeTradeEnrich import enrichDisplayed, issueFromHeadlines, issueNeedsFetch
+
+        self.assertEqual(leaderIssueTag("지분분쟁 격화"), "경영권분쟁")
+        self.assertEqual(leaderIssueTag("대규모 수주 공시"), "수주")
+        self.assertEqual(leaderIssueTag("관세 협상"), "관세")
+        self.assertEqual(leaderIssueTag("어닝서프라이즈"), "어닝서프라이즈")
+        blank = issueFromHeadlines(
+            [
+                {"title": "날씨 맑음", "url": "https://n.news.naver.com/a"},
+                {"title": "주가 보합", "url": "https://n.news.naver.com/b"},
+            ]
+        )
+        self.assertEqual(blank["tag"], "")
+        self.assertIn("헤드라인 2건", blank["note"])
+        now = datetime(2026, 11, 10, 12, 44)
+        self.assertTrue(
+            issueNeedsFetch(
+                {"issueAt": "2026-11-10T12:40:00", "issueNote": "확인된 제목·URL 이 없다"},
+                now,
+            )
+        )
+        self.assertFalse(
+            issueNeedsFetch(
+                {"issueAt": "2026-11-10T12:40:00", "issueNote": "headline+url", "issues": "관세"},
+                now,
+            )
+        )
+        self.assertTrue(
+            issueNeedsFetch(
+                {"issueAt": "2026-11-10T12:40:00", "issueNote": "headline+url"},
+                now,
+                force=True,
+            )
+        )
+        calls = {"news": 0}
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SnapStore(tmp)
+            (store.dir / "columns_20261110.json").write_text(
+                json.dumps(
+                    {
+                        "180640": {
+                            "issueAt": "2026-11-10T10:28:25",
+                            "issueNote": "확인된 제목·URL 이 없다",
+                            "issues": "",
+                            "issueConfirmed": False,
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            store.save(
+                {
+                    "ok": True,
+                    "tradeYmd": "20261110",
+                    "slot": "1244",
+                    "state": "COLLECTED",
+                    "observedAt": "2026-11-10T12:44:00",
+                    "rows": [{"stkCd": "180640", "name": "한진칼", "price": 10, "baseCompChgr": 6, "originalRank": 1}],
+                }
+            )
+
+            def news(_code):
+                calls["news"] += 1
+                return {
+                    "ok": True,
+                    "items": [{"title": "경영권 분쟁", "url": "https://n.news.naver.com/x", "publishedAt": "20261110"}],
+                }
+
+            enrichDisplayed(
+                now,
+                store,
+                {"flow": lambda _c: None, "bars": lambda _c: [], "market": lambda _c: "", "news": news},
+            )
+            self.assertEqual(calls["news"], 1)
+            saved = json.loads((store.dir / "columns_20261110.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved["180640"]["issues"], "경영권분쟁")
 
     def test_offscreen_yellow_cell(self):
         try:

@@ -4,7 +4,7 @@
   "englishName": "Surge Trade",
   "name": "급등주매매",
   "status": "draft",
-  "version": 14,
+  "version": 15,
   "enabled": false,
   "timeframe": "D",
   "docPath": "strategies/docs/surgeTrade_v1.md",
@@ -66,5 +66,5 @@
     "closingAuctionTrdeTp": "0",
     "closingAuctionNote": "kt10000 documents no dedicated closing-auction code. 15:20-15:30 uses ordinary limit 0. Market 3 and after-hours 81 are not used in that window."
   },
-  "notes": "v14. A visual 뉴 badge marks a first +10% day inside the last 20 sessions, using cached daily closes. 신 is drawn first when both apply. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
+  "notes": "v15. Issue headlines are fetched again every 15 minutes and after a failed cache note. Tags use the leader-tab word list. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
 }

@@ -289,7 +289,7 @@ def beginManualRankRefresh(session, store, now, transport):
             try:
                 from trading.surgeTradeEnrich import enrichDisplayed
 
-                enrichDisplayed(now, store)
+                enrichDisplayed(now, store, forceIssue=True)
             except Exception:
                 pass
         except Exception as err:
