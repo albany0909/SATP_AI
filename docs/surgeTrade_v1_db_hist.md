@@ -331,7 +331,7 @@ v15 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-10`
 - SRC: `manual`
 - NOTE: `v15 실패로 남은 이슈 캐시는 다시 조회. 단어는 주도주와 같음. 주문 비활성.`
-- GIT_HASH: `PENDING_V15`
+- GIT_HASH: `abbbc5706ba3`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -339,7 +339,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 15, '2026-11-10',
    'v15 실패로 남은 이슈 캐시는 다시 조회. 단어는 주도주와 같음. 주문 비활성.',
-   'PENDING_V15', 'manual')
+   'abbbc5706ba3', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
