@@ -845,6 +845,16 @@ _ISSUE_PASTELS = (
 )
 
 
+def nameBadges(newHigh, newSurge):
+    """배지 글자. 셀의 종목명 문자열에는 넣지 않는다."""
+    marks = ""
+    if newHigh:
+        marks += "신"
+    if newSurge:
+        marks += "뉴"
+    return marks
+
+
 def rsiCellColor(value):
     """RSI14 배경. 30 이하는 옅은 파랑, 70 이상은 옅은 빨강. 그 사이와 빈 값은 색 없음."""
     if value in (None, ""):
@@ -922,6 +932,7 @@ def buildTabRows(snap, asof, extras=None):
             "code": code,
             "name": row.get("name") or "",
             "newHigh": extra.get("newHigh") is True,
+            "newSurge": extra.get("newSurge") is True,
             "index": extra.get("market") or row.get("index") or "",
             "price": row.get("price"),
             "dailyPct": daily,

@@ -216,7 +216,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 13)
+        self.assertEqual(int(spec["version"]), 14)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -229,7 +229,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 13)
+        self.assertEqual(payload["algVer"], 14)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -1622,6 +1622,49 @@ class SurgeTradeTest(unittest.TestCase):
             again = displayExtras(store.dir, "20261110")["byCode"]["005930"]
             self.assertFalse(again["newHigh"])
             self.assertEqual(again["newHighLookback"], 10)
+
+    def test_new_surge_badge_window(self):
+        from trading.surgeTradeData import nameBadges
+        from trading.surgeTradeEnrich import firstNewSurge
+
+        def closes(start, n, jumpAt):
+            out = []
+            px = 100.0
+            day = datetime(2025, 1, 1) + timedelta(days=start)
+            for i in range(n):
+                if i in jumpAt:
+                    px *= 1.12
+                out.append({"dt": (day + timedelta(days=i)).strftime("%Y%m%d"), "close": px})
+            return out
+
+        only = firstNewSurge(closes(0, 30, {25}), "20251231", 1)
+        self.assertTrue(only[0])
+        self.assertEqual(only[1], closes(0, 30, {25})[25]["dt"])
+        earlier = firstNewSurge(closes(0, 30, {2, 25}), "20251231", 1)
+        self.assertFalse(earlier[0])
+        self.assertEqual(earlier[1], closes(0, 30, {2})[2]["dt"])
+        none = firstNewSurge(closes(0, 30, set()), "20251231", 1)
+        self.assertFalse(none[0])
+        self.assertEqual(none[1], "")
+        short = firstNewSurge(closes(0, 25, {20}), "20251231", 1)
+        self.assertTrue(short[0])
+        today = firstNewSurge(closes(0, 30, set()), "20261110", 10)
+        self.assertTrue(today[0])
+        self.assertEqual(today[1], "20261110")
+        booked = firstNewSurge(closes(0, 30, set()), "20251231", 1, closes(0, 30, set())[-1]["dt"])
+        self.assertTrue(booked[0])
+        self.assertEqual(nameBadges(True, True), "신뉴")
+        self.assertEqual(nameBadges(False, True), "뉴")
+        view = buildTabRows(
+            {
+                "state": "COLLECTED",
+                "rows": [{"stkCd": "005930", "name": "삼성전자", "price": 110, "baseCompChgr": 12, "originalRank": 1}],
+            },
+            "20261110",
+            {"byCode": {"005930": {"newHigh": True, "newSurge": True}}},
+        )
+        self.assertEqual(view["rows"][0]["name"], "삼성전자")
+        self.assertTrue(view["rows"][0]["newSurge"])
 
     def test_offscreen_yellow_cell(self):
         try:

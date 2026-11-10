@@ -529,24 +529,30 @@ class RsiDelegate(QStyledItemDelegate):
 
 
 class SurgeNameDelegate(QStyledItemDelegate):
-    """종목명 앞에 신고가 배지. 셀 글자는 종목명만 남겨 복사·정렬이 배지를 포함하지 않는다."""
+    """종목명 앞에 신·뉴 배지. 셀 글자는 종목명만 남겨 복사·정렬이 배지를 포함하지 않는다."""
 
     def paint(self, painter, option, index):
-        if index.data(Qt.ItemDataRole.UserRole) is not True:
+        marks = index.data(Qt.ItemDataRole.UserRole)
+        if marks is True:
+            marks = "신"
+        if not isinstance(marks, str) or not marks:
             super().paint(painter, option, index)
             return
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         painter.save()
         painter.fillRect(opt.rect, opt.backgroundBrush)
-        box = QRect(opt.rect.left() + 3, opt.rect.center().y() - 7, 14, 14)
         painter.setPen(QPen(QColor("#212121")))
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(box)
-        painter.drawText(box, int(Qt.AlignmentFlag.AlignCenter), "신")
+        left = opt.rect.left() + 3
+        for ch in marks:
+            box = QRect(left, opt.rect.center().y() - 7, 14, 14)
+            painter.drawRect(box)
+            painter.drawText(box, int(Qt.AlignmentFlag.AlignCenter), ch)
+            left += 16
         painter.setPen(QColor("#212121"))
         painter.drawText(
-            opt.rect.adjusted(20, 0, -4, 0),
+            opt.rect.adjusted(left - opt.rect.left(), 0, -4, 0),
             int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
             str(opt.text or ""),
         )
@@ -5142,6 +5148,7 @@ class TradeDeskWin(QMainWindow):
             SnapStore,
             TAB_COLUMNS,
             buildTabRows,
+            nameBadges,
             rsiCellColor,
             selectTabDisplay,
         )
@@ -5172,7 +5179,10 @@ class TradeDeskWin(QMainWindow):
                 if key == "name" and row.get("yellowName"):
                     item.setBackground(QBrush(QColor("#FFF59D")))
                 if key == "name":
-                    item.setData(Qt.ItemDataRole.UserRole, row.get("newHigh") is True)
+                    item.setData(
+                        Qt.ItemDataRole.UserRole,
+                        nameBadges(row.get("newHigh"), row.get("newSurge")),
+                    )
                 if key == "rsi14":
                     rsiBg = rsiCellColor(val)
                     if rsiBg:
