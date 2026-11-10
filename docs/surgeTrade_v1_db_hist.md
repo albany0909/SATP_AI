@@ -492,7 +492,7 @@ v22 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-11`
 - SRC: `manual`
 - NOTE: `v22 우주항공 오탐 수정. 유가·통합 이유 단어. 주문 비활성.`
-- GIT_HASH: `PENDING_V22`
+- GIT_HASH: `11b1e3fd555d`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -500,7 +500,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 22, '2026-11-11',
    'v22 우주항공 오탐 수정. 유가·통합 이유 단어. 주문 비활성.',
-   'PENDING_V22', 'manual')
+   '11b1e3fd555d', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
