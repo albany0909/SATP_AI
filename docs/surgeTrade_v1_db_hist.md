@@ -216,7 +216,7 @@ v10 은 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-10`
 - SRC: `manual`
 - NOTE: `v10 급등주 탭에서 시장 칸을 뺌. 시장 값은 캐시에 남김. 주문 비활성.`
-- GIT_HASH: `PENDING_V10`
+- GIT_HASH: `fd3bf7ac1004`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -224,7 +224,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 10, '2026-11-10',
    'v10 급등주 탭에서 시장 칸을 뺌. 시장 값은 캐시에 남김. 주문 비활성.',
-   'PENDING_V10', 'manual')
+   'fd3bf7ac1004', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
