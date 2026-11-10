@@ -446,7 +446,7 @@ v20 은 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-10`
 - SRC: `manual`
 - NOTE: `v20 최근1년은 일봉 저가 대비. 첫급등 기록은 남김. 주문 비활성.`
-- GIT_HASH: `PENDING_V20`
+- GIT_HASH: `417b08be14eb`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -454,7 +454,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 20, '2026-11-10',
    'v20 최근1년은 일봉 저가 대비. 첫급등 기록은 남김. 주문 비활성.',
-   'PENDING_V20', 'manual')
+   '417b08be14eb', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
