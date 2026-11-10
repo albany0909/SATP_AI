@@ -377,7 +377,7 @@ v17 은 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-10`
 - SRC: `manual`
 - NOTE: `v17 종목명 바탕색 제거. 신 연빨강, 뉴 연초록. 주문 비활성.`
-- GIT_HASH: `PENDING_V17`
+- GIT_HASH: `e91735ff7671`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -385,7 +385,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 17, '2026-11-10',
    'v17 종목명 바탕색 제거. 신 연빨강, 뉴 연초록. 주문 비활성.',
-   'PENDING_V17', 'manual')
+   'e91735ff7671', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
