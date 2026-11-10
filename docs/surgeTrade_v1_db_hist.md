@@ -262,7 +262,7 @@ v12 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-10`
 - SRC: `manual`
 - NOTE: `v12 RSI 30 이하 옅은 파랑, 70 이상 옅은 빨강. 주문 비활성.`
-- GIT_HASH: `PENDING_V12`
+- GIT_HASH: `72854eb4275a`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -270,7 +270,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 12, '2026-11-10',
    'v12 RSI 30 이하 옅은 파랑, 70 이상 옅은 빨강. 주문 비활성.',
-   'PENDING_V12', 'manual')
+   '72854eb4275a', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
