@@ -540,13 +540,19 @@ class SurgeNameDelegate(QStyledItemDelegate):
             return
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
+        from trading.surgeTradeData import badgeFillColor
+
         painter.save()
-        painter.fillRect(opt.rect, opt.backgroundBrush)
-        painter.setPen(QPen(QColor("#212121")))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
+        if opt.state & QStyle.StateFlag.State_Selected:
+            painter.fillRect(opt.rect, opt.palette.highlight())
+        else:
+            painter.fillRect(opt.rect, opt.palette.base())
         left = opt.rect.left() + 3
         for ch in marks:
             box = QRect(left, opt.rect.center().y() - 7, 14, 14)
+            fill = badgeFillColor(ch)
+            painter.setPen(QPen(QColor("#212121")))
+            painter.setBrush(QColor(fill) if fill else Qt.BrushStyle.NoBrush)
             painter.drawRect(box)
             painter.drawText(box, int(Qt.AlignmentFlag.AlignCenter), ch)
             left += 16
@@ -5129,8 +5135,6 @@ class TradeDeskWin(QMainWindow):
                 val = row.get(key)
                 text = "-" if val in (None, "") else str(val)
                 item = QTableWidgetItem(text)
-                if key == "name" and row.get("yellowName"):
-                    item.setBackground(QBrush(QColor("#FFF59D")))
                 if key == "name":
                     item.setData(
                         Qt.ItemDataRole.UserRole,

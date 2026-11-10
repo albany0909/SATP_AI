@@ -216,7 +216,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 16)
+        self.assertEqual(int(spec["version"]), 17)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -229,7 +229,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 16)
+        self.assertEqual(payload["algVer"], 17)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -1655,6 +1655,11 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(booked[0])
         self.assertEqual(nameBadges(True, True), "신뉴")
         self.assertEqual(nameBadges(False, True), "뉴")
+        from trading.surgeTradeData import badgeFillColor
+
+        self.assertEqual(badgeFillColor("신"), "#FFD6D6")
+        self.assertEqual(badgeFillColor("뉴"), "#D4F5D4")
+        self.assertEqual(badgeFillColor(""), "")
         view = buildTabRows(
             {
                 "state": "COLLECTED",

@@ -855,6 +855,15 @@ def nameBadges(newHigh, newSurge):
     return marks
 
 
+def badgeFillColor(mark):
+    """신·뉴 네모 안 바탕. 종목명 칸 전체에는 쓰지 않는다."""
+    if mark == "신":
+        return "#FFD6D6"
+    if mark == "뉴":
+        return "#D4F5D4"
+    return ""
+
+
 def rsiCellColor(value):
     """RSI14 배경. 30 이하는 옅은 파랑, 70 이상은 옅은 빨강. 그 사이와 빈 값은 색 없음."""
     if value in (None, ""):
