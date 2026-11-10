@@ -285,7 +285,7 @@ v13 은 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-10`
 - SRC: `manual`
 - NOTE: `v13 52주 신고가 신 배지. 일봉은 RSI와 같은 ka10081. 주문 비활성.`
-- GIT_HASH: `PENDING_V13`
+- GIT_HASH: `42ddb69b8a3d`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -293,7 +293,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 13, '2026-11-10',
    'v13 52주 신고가 신 배지. 일봉은 RSI와 같은 ka10081. 주문 비활성.',
-   'PENDING_V13', 'manual')
+   '42ddb69b8a3d', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
