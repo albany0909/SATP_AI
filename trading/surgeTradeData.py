@@ -1007,6 +1007,25 @@ def badgeFillColor(mark):
     return ""
 
 
+DAILY_PCT_BG_20 = "#FFD6D6"
+DAILY_PCT_BG_10 = "#FFF3C4"
+
+
+def dailyPctCellColor(value):
+    """일간% 배경만. 20% 이상은 연빨강, 10% 이상 20% 미만은 연노랑. 글자색은 바꾸지 않는다."""
+    if value in (None, ""):
+        return ""
+    try:
+        pct = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if pct >= 20:
+        return DAILY_PCT_BG_20
+    if pct >= 10:
+        return DAILY_PCT_BG_10
+    return ""
+
+
 def rsiCellColor(value):
     """RSI14 배경. 30 이하는 옅은 파랑, 70 이상은 옅은 빨강. 그 사이와 빈 값은 색 없음."""
     if value in (None, ""):

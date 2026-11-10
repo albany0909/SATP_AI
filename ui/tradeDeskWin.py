@@ -5121,6 +5121,7 @@ class TradeDeskWin(QMainWindow):
             SnapStore,
             TAB_COLUMNS,
             buildTabRows,
+            dailyPctCellColor,
             formatGroupedInt,
             formatNetEok,
             formatYearRisePct,
@@ -5175,6 +5176,10 @@ class TradeDeskWin(QMainWindow):
                         Qt.ItemDataRole.UserRole,
                         nameBadges(row.get("newHigh"), row.get("newSurge")),
                     )
+                if key == "dailyPct":
+                    dailyBg = dailyPctCellColor(val)
+                    if dailyBg:
+                        item.setBackground(QBrush(QColor(dailyBg)))
                 if key == "rsi14":
                     rsiBg = rsiCellColor(val)
                     if rsiBg:
