@@ -39,7 +39,8 @@ LEADER_ISSUE_MAP = (
     ("원전", "원전"), ("원자력", "원전"), ("SMR", "원전"), ("전선", "전선"), ("전력", "전력"), ("변압기", "전력"),
     ("2차전지", "2차전지"), ("배터리", "2차전지"), ("리튬", "2차전지"),
     ("바이오", "바이오"), ("제약", "바이오"), ("신약", "바이오"), ("비만", "비만약"),
-    ("로봇", "로봇"), ("AI", "AI"), ("인공지능", "AI"), ("조선", "조선"), ("우주", "우주항공"), ("항공", "우주항공"),
+    ("로봇", "로봇"), ("AI", "AI"), ("인공지능", "AI"), ("조선", "조선"), ("우주", "우주항공"), ("우주항공", "우주항공"),
+    ("항공주", "항공"), ("항공업계", "항공"), ("항공사", "항공"),
     ("자동차", "자동차"), ("엔터", "엔터"), ("게임", "게임"), ("화장품", "화장품"), ("음식", "K푸드"),
     ("통신", "통신"), ("5G", "통신"), ("건설", "건설"), ("은행", "금융"), ("증권", "금융"), ("금융", "금융"),
     ("철강", "철강"), ("석유", "에너지"), ("가스", "에너지"), ("태양광", "태양광"), ("수소", "수소"),
@@ -63,7 +64,8 @@ REASON_MAP = (
     ("흑자전환", ("흑자전환", "흑자 전환", "턴어라운드")),
     ("어닝쇼크", ("어닝쇼크", "어닝 쇼크", "실적 부진", "적자전환", "적자 전환")),
     ("수주", ("공급계약", "공급 계약", "계약 체결", "수주", "납품")),
-    ("인수합병", ("인수합병", "m&a", "인수", "합병", "매각")),
+    ("인수합병", ("인수합병", "m&a", "인수", "합병", "매각", "합병 등기", "사업 재편", "통합")),
+    ("유가", ("국제유가", "유가 급락", "유가급락", "유가 하락", "유가하락", "유가 급등", "유가급등", "유가 상승", "유가상승")),
     ("관세", ("관세",)),
     ("전쟁", ("전쟁", "무력충돌", "무력 충돌")),
     ("코로나", ("코로나", "코로나19", "팬데믹")),
@@ -77,6 +79,25 @@ REASON_MAP = (
     ("정부정책", ("정부정책", "정책", "정부")),
     ("기술수출", ("기술수출", "기술이전", "라이선스", "라이센스")),
 )
+
+# 테마 매칭 전에만 지운다. 제목에 종목명이 있는지는 그대로 본다.
+# 이름 안의 '항공'이 우주항공으로 붙지 않게 계열 이름을 빼 둔다.
+THEME_NAME_MASKS = (
+    "대한항공",
+    "아시아나항공",
+    "아시아나IDT",
+    "아시아나 IDT",
+    "아시아나",
+    "진에어",
+    "제주항공",
+    "티웨이항공",
+    "에어부산",
+    "에어서울",
+    "이스타항공",
+)
+# '통합'은 인수합병. 통합검색·통합지수는 그 단어가 아니다.
+_TONGHAP_SKIP = ("통합검색", "통합지수")
+
 
 STOCK_ALIASES = {
     "000660": ("하이닉스", "하닉"),
@@ -97,10 +118,27 @@ def stockNameKeys(name, code=""):
     return keys
 
 
+def _tonghap(low):
+    start = 0
+    while True:
+        found = low.find("통합", start)
+        if found < 0:
+            return False
+        if any(low.startswith(skip, found) for skip in _TONGHAP_SKIP):
+            start = found + 2
+            continue
+        return True
+
+
 def _hit(title, words):
     low = str(title or "").lower()
     for word in words:
-        if str(word).lower() in low:
+        token = str(word).lower()
+        if token == "통합":
+            if _tonghap(low):
+                return True
+            continue
+        if token in low:
             return True
     return False
 
@@ -113,11 +151,21 @@ def reasonTag(title):
     return ""
 
 
-def themeTag(title):
-    """종목명 헤드라인에서 테마 단어. 이유 표에 없을 때만 급등주가 쓴다."""
+def themeTag(title, name="", code=""):
+    """종목명 헤드라인에서 테마 단어. 이유 표에 없을 때만 급등주가 쓴다.
+
+    종목명·계열 별칭은 테마를 찾기 전에 지운다. 제목 채택 필터는 바꾸지 않는다.
+    """
     low = str(title or "").lower()
     if not low:
         return ""
+    masks = []
+    for raw in list(stockNameKeys(name, code)) + list(THEME_NAME_MASKS):
+        text = str(raw or "").strip().lower()
+        if len(text) >= 2 and text not in masks:
+            masks.append(text)
+    for mask in sorted(masks, key=len, reverse=True):
+        low = low.replace(mask, " ")
     for key, lab in LEADER_ISSUE_MAP:
         if str(key).lower() in low:
             return lab

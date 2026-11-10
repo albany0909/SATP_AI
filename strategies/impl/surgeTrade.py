@@ -11,7 +11,7 @@ import threading
 from datetime import datetime, timedelta
 
 ALG_CD = "SRG01"
-ALG_VER = 21
+ALG_VER = 22
 STRAT_ID = "surgeTrade_v1"
 ENGLISH_NAME = "Surge Trade"
 NAME_KR = "급등주매매"
@@ -893,7 +893,7 @@ def buildAlgVerEvent(evtTp, stkCd, reason, tradeDt, evtTm, px=None):
 def algVerHistPayload(gitHash="", ymd="2026-11-09"):
     """AI_ALG_VER_HIST 적재용 값. 이 함수는 DB 를 열지 않는다."""
     note = (
-        "v21 일간% 20% 이상은 연빨강, 10% 이상은 연노랑. 주문은 기본 비활성."
+        "v22 우주항공 오탐을 고치고 유가·통합을 이유 단어로 둔다. 주문은 기본 비활성."
     )
     return {
         "algCd": ALG_CD,

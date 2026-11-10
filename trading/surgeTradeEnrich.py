@@ -205,7 +205,7 @@ def issueFromHeadlines(items, name="", code=""):
                 reasonBest = cand
             continue
         if themeBest is None or when > themeBest[0]:
-            theme = themeTag(title)
+            theme = themeTag(title, name, code)
             if theme:
                 themeBest = (when, item, theme)
     picked = reasonBest or themeBest

@@ -216,7 +216,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 21)
+        self.assertEqual(int(spec["version"]), 22)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -229,7 +229,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 21)
+        self.assertEqual(payload["algVer"], 22)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -1867,11 +1867,69 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(newer["tag"], "수주")
         self.assertEqual(newer["firstSurgeDate"], "20261110")
         theme = issueFromHeadlines(
-            [{"title": "한진칼 항공 부품", "url": "https://n.news.naver.com/t", "publishedAt": "20261110"}],
+            [{"title": "한진칼 위성 발사", "url": "https://n.news.naver.com/t", "publishedAt": "20261110"}],
             "한진칼",
         )
         self.assertEqual(theme["kind"], "theme")
         self.assertEqual(theme["tag"], "우주항공")
+        name_only = issueFromHeadlines(
+            [{"title": "대한항공 주가 보합", "url": "https://n.news.naver.com/air", "publishedAt": "20261110"}],
+            "대한항공",
+        )
+        self.assertNotEqual(name_only["tag"], "우주항공")
+        self.assertEqual(name_only["tag"], "")
+        idt = issueFromHeadlines(
+            [{"title": "[특징주] 대한항공·아시아나 통합 시너지 시동… 아시아나IDT '上'", "url": "https://n.news.naver.com/idt", "publishedAt": "20261111"}],
+            "아시아나IDT",
+            "267850",
+        )
+        self.assertEqual(idt["tag"], "인수합병")
+        self.assertEqual(idt["kind"], "reason")
+        merge = issueFromHeadlines(
+            [{"title": "대한항공 항공사 통합 발표", "url": "https://n.news.naver.com/mg", "publishedAt": "20261111"}],
+            "대한항공",
+        )
+        self.assertEqual(merge["tag"], "인수합병")
+        self.assertEqual(merge["kind"], "reason")
+        oil = issueFromHeadlines(
+            [{"title": "[특징주] 국제유가 급락에 항공주 급등…대한항공 11%대↑(종합)", "url": "https://n.news.naver.com/oil", "publishedAt": "20261111"}],
+            "대한항공",
+        )
+        self.assertEqual(oil["tag"], "유가")
+        self.assertEqual(oil["kind"], "reason")
+        self.assertNotEqual(oil["tag"], "우주항공")
+        space = issueFromHeadlines(
+            [{"title": "한진칼 우주 발사체", "url": "https://n.news.naver.com/sp", "publishedAt": "20261111"}],
+            "한진칼",
+        )
+        self.assertEqual(space["tag"], "우주항공")
+        airline = issueFromHeadlines(
+            [{"title": "대한항공 항공주 동반 강세", "url": "https://n.news.naver.com/al", "publishedAt": "20261111"}],
+            "대한항공",
+        )
+        self.assertEqual(airline["tag"], "항공")
+        self.assertEqual(airline["kind"], "theme")
+        for phrase in ("항공업계 훈풍 대한항공", "대한항공 항공사 전망"):
+            row = issueFromHeadlines(
+                [{"title": phrase, "url": "https://n.news.naver.com/ph", "publishedAt": "20261111"}],
+                "대한항공",
+            )
+            self.assertEqual(row["tag"], "항공", phrase)
+            self.assertEqual(row["kind"], "theme", phrase)
+        stake = issueFromHeadlines(
+            [{"title": "한진칼 지분 경쟁 재점화", "url": "https://n.news.naver.com/st", "publishedAt": "20261111"}],
+            "한진칼",
+            "180640",
+        )
+        self.assertEqual(stake["tag"], "지분분쟁")
+        self.assertEqual(stake["kind"], "reason")
+        self.assertEqual(
+            issueFromHeadlines(
+                [{"title": "한진칼 통합검색 개편", "url": "https://n.news.naver.com/ns", "publishedAt": "20261111"}],
+                "한진칼",
+            )["tag"],
+            "",
+        )
         skipped = issueFromHeadlines(
             [{"title": "반도체 훈풍에 코스피 급등", "url": "https://n.news.naver.com/z", "publishedAt": "20261110"}],
             "한진칼",
