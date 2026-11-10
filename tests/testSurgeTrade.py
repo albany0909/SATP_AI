@@ -216,7 +216,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 12)
+        self.assertEqual(int(spec["version"]), 13)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -229,7 +229,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 12)
+        self.assertEqual(payload["algVer"], 13)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -1543,6 +1543,85 @@ class SurgeTradeTest(unittest.TestCase):
             )
             self.assertEqual(failed["newsFailures"], 2)
             self.assertEqual(failed["orders"], 0)
+
+    def test_new_high_badge_uses_prior_bars_only(self):
+        from trading.surgeTradeEnrich import NEW_HIGH_FETCH_BARS, dailyNewHigh, displayExtras, enrichDisplayed
+
+        prior = [{"dt": f"2025{(i // 28) + 1:02d}{(i % 28) + 1:02d}", "high": 100, "close": 90} for i in range(250)]
+        flag, used, high = dailyNewHigh(prior, 100, "20261110")
+        self.assertTrue(flag)
+        self.assertEqual(used, 250)
+        self.assertEqual(high, 100)
+        self.assertFalse(dailyNewHigh(prior, 99.99, "20261110")[0])
+        short = [{"dt": f"202501{i:02d}", "high": 50, "close": 40} for i in range(1, 11)]
+        self.assertEqual(dailyNewHigh(short, 50, "20261110"), (True, 10, 50))
+        self.assertEqual(dailyNewHigh([], 50, "20261110"), (False, 0, None))
+        withToday = short + [{"dt": "20261110", "high": 999, "close": 90}]
+        self.assertFalse(dailyNewHigh(withToday, 49, "20261110")[0])
+        old = [{"dt": "20200101", "high": 999, "close": 1}] + [
+            {"dt": f"2025{(i // 28) + 1:02d}{(i % 28) + 1:02d}", "high": 100, "close": 90} for i in range(250)
+        ]
+        self.assertTrue(dailyNewHigh(old, 100, "20261110")[0])
+        self.assertEqual(dailyNewHigh(old, 100, "20261110")[1], 250)
+        self.assertEqual(NEW_HIGH_FETCH_BARS, 251)
+        view = buildTabRows(
+            {
+                "state": "COLLECTED",
+                "rows": [{"stkCd": "005930", "name": "삼성전자", "price": 110, "baseCompChgr": 6, "originalRank": 1}],
+            },
+            "20261110",
+            {"byCode": {"005930": {"newHigh": True, "issue": {}}}},
+        )
+        self.assertEqual(view["rows"][0]["name"], "삼성전자")
+        self.assertNotIn("신", view["rows"][0]["name"])
+        self.assertTrue(view["rows"][0]["newHigh"])
+        now = datetime(2026, 11, 10, 10, 0)
+        calls = {"bars": 0}
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SnapStore(tmp)
+            store.save(
+                {
+                    "ok": True,
+                    "tradeYmd": "20261110",
+                    "slot": "1000",
+                    "state": "COLLECTED",
+                    "observedAt": "2026-11-10T10:00:00",
+                    "rows": [{"stkCd": "005930", "name": "삼성전자", "price": 80, "baseCompChgr": 6, "originalRank": 1}],
+                }
+            )
+
+            def bars(_code):
+                calls["bars"] += 1
+                return short
+
+            enrichDisplayed(
+                now,
+                store,
+                {"flow": lambda _c: None, "bars": bars, "market": lambda _c: "", "news": lambda _c: []},
+            )
+            cached = displayExtras(store.dir, "20261110")["byCode"]["005930"]
+            self.assertTrue(cached["newHigh"])
+            self.assertEqual(cached["newHighLookback"], 10)
+            self.assertEqual(calls["bars"], 1)
+            store.save(
+                {
+                    "ok": True,
+                    "tradeYmd": "20261110",
+                    "slot": "1015",
+                    "state": "COLLECTED",
+                    "observedAt": "2026-11-10T10:15:00",
+                    "rows": [{"stkCd": "005930", "name": "삼성전자", "price": 40, "baseCompChgr": 6, "originalRank": 1}],
+                }
+            )
+            enrichDisplayed(
+                datetime(2026, 11, 10, 10, 15),
+                store,
+                {"flow": lambda _c: None, "bars": bars, "market": lambda _c: "", "news": lambda _c: []},
+            )
+            self.assertEqual(calls["bars"], 1)
+            again = displayExtras(store.dir, "20261110")["byCode"]["005930"]
+            self.assertFalse(again["newHigh"])
+            self.assertEqual(again["newHighLookback"], 10)
 
     def test_offscreen_yellow_cell(self):
         try:

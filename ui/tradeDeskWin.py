@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QStyle,
+    QStyleOptionViewItem,
     QStyledItemDelegate,
     QTabBar,
     QTableWidget,
@@ -523,6 +524,31 @@ class RsiDelegate(QStyledItemDelegate):
             opt.rect.adjusted(4, 0, -6, 0),
             int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
             text,
+        )
+        painter.restore()
+
+
+class SurgeNameDelegate(QStyledItemDelegate):
+    """종목명 앞에 신고가 배지. 셀 글자는 종목명만 남겨 복사·정렬이 배지를 포함하지 않는다."""
+
+    def paint(self, painter, option, index):
+        if index.data(Qt.ItemDataRole.UserRole) is not True:
+            super().paint(painter, option, index)
+            return
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        painter.save()
+        painter.fillRect(opt.rect, opt.backgroundBrush)
+        box = QRect(opt.rect.left() + 3, opt.rect.center().y() - 7, 14, 14)
+        painter.setPen(QPen(QColor("#212121")))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(box)
+        painter.drawText(box, int(Qt.AlignmentFlag.AlignCenter), "신")
+        painter.setPen(QColor("#212121"))
+        painter.drawText(
+            opt.rect.adjusted(20, 0, -4, 0),
+            int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
+            str(opt.text or ""),
         )
         painter.restore()
 
@@ -5145,6 +5171,8 @@ class TradeDeskWin(QMainWindow):
                 item = QTableWidgetItem(text)
                 if key == "name" and row.get("yellowName"):
                     item.setBackground(QBrush(QColor("#FFF59D")))
+                if key == "name":
+                    item.setData(Qt.ItemDataRole.UserRole, row.get("newHigh") is True)
                 if key == "rsi14":
                     rsiBg = rsiCellColor(val)
                     if rsiBg:
@@ -5164,6 +5192,11 @@ class TradeDeskWin(QMainWindow):
                         tip = tip + " " + str(details[0].get("sourceUrl") or "")
                     item.setToolTip(tip.strip())
                 table.setItem(r, c, item)
+        nameCol = next((i for i, (key, _label) in enumerate(TAB_COLUMNS) if key == "name"), None)
+        if nameCol is not None:
+            if getattr(self, "_surgeNameDel", None) is None:
+                self._surgeNameDel = SurgeNameDelegate(table)
+            table.setItemDelegateForColumn(nameCol, self._surgeNameDel)
         label = getattr(self, "_surgeStateLbl", None)
         if label is not None:
             stamp = view.get("queryLabel") or "조회일시 -"

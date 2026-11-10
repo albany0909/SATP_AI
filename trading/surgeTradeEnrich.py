@@ -18,6 +18,11 @@ from trading.surgeTradeData import (
 )
 from trading.surgeTradeInputs import tagFromTitle
 
+# 52주(거래일 250일) 고가. 당일 봉은 빼고 그 이전만 본다.
+NEW_HIGH_LOOKBACK = 250
+# 당일 1봉 + 이전 250봉. RSI 15봉과 같은 ka10081 을 이 길이까지 읽는다.
+NEW_HIGH_FETCH_BARS = NEW_HIGH_LOOKBACK + 1
+
 # 주도주 탭과 같은 짧은 이슈 단어. URL 이 있는 제목만 확인으로 본다.
 _LEADER_TAGS = (
     ("지분분쟁", "지분분쟁"),
@@ -31,6 +36,45 @@ _LEADER_TAGS = (
     ("코로나", "코로나"),
     ("팬데믹", "코로나"),
 )
+
+
+def dailyNewHigh(bars, todayPx, asof="", lookback=NEW_HIGH_LOOKBACK):
+    """
+    오늘 고가(또는 현재가)가 이전 lookback 거래일 고가의 최대 이상이면 True.
+    봉이 더 적으면 있는 봉만 쓴다. 이전 봉이 없으면 배지를 달지 않는다.
+    반환: (newHigh, lookbackUsed, priorHigh)
+    """
+    try:
+        px = float(todayPx)
+    except (TypeError, ValueError):
+        return False, 0, None
+    if px <= 0:
+        return False, 0, None
+    day = str(asof or "")[:8]
+    prior = []
+    for bar in bars or []:
+        if isinstance(bar, dict):
+            dt = str(bar.get("dt") or "")[:8]
+            raw = bar.get("high", bar.get("highPric", bar.get("close", bar.get("curPrc"))))
+            if day and dt and dt >= day:
+                continue
+        else:
+            dt = ""
+            raw = bar
+        try:
+            high = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if high <= 0:
+            continue
+        prior.append((dt, high))
+    if any(dt for dt, _high in prior):
+        prior.sort(key=lambda item: item[0])
+    window = prior[-int(lookback) :] if len(prior) > int(lookback) else prior
+    if not window:
+        return False, 0, None
+    priorHigh = max(high for _dt, high in window)
+    return px + 1e-9 >= priorHigh, len(window), priorHigh
 
 
 def marketLabel(name):
@@ -139,6 +183,8 @@ def displayExtras(directory, asof):
                 "flowStatus": row.get("flowStatus") or "",
             },
             "dataState": row.get("dataState") or "PARTIAL",
+            "newHigh": row.get("newHigh") is True,
+            "newHighLookback": int(row.get("newHighLookback") or 0),
         }
     return {"firstSurge": book, "byCode": byCode}
 
@@ -182,13 +228,18 @@ def enrichDisplayed(now, store, fetchers=None):
             change = ka00198ChangePct(row)
             if change is not None and change + 1e-9 >= TAB_MIN_DAILY_PCT:
                 codes.append(code)
+    prices = {}
+    for raw in snap.get("rows") or []:
+        code = str((raw or {}).get("stkCd") or "")
+        if code:
+            prices[code] = (raw or {}).get("price")
     cache = loadColumnCache(store.dir, asof)
     calls = {"ka10059": 0, "ka10081": 0, "ka10100": 0, "news": 0}
     newsFailures = 0
     for code in codes:
         row = dict(cache.get(code) or {})
         try:
-            if _fillCode(row, code, asof, now, fetchers, calls):
+            if _fillCode(row, code, asof, now, fetchers, calls, prices.get(code)):
                 newsFailures += 1
         except Exception:
             row["dataState"] = "PARTIAL"
@@ -216,7 +267,7 @@ def enrichDisplayed(now, store, fetchers=None):
     }
 
 
-def _fillCode(row, code, asof, now, fetchers, calls):
+def _fillCode(row, code, asof, now, fetchers, calls, price=None):
     getters = fetchers if isinstance(fetchers, dict) else {}
     if _need(row, now, "market", None):
         market = _call(getters, "market", code, calls, "ka10100")
@@ -245,11 +296,24 @@ def _fillCode(row, code, asof, now, fetchers, calls):
             row["flowStatus"] = parsed.get("flowStatus") or ""
         row["flowAt"] = now.strftime("%Y-%m-%dT%H:%M:%S")
     if _need(row, now, "rsi", None):
-        closes = _call(getters, "bars", code, calls, "ka10081")
-        value = rsi14(closes if isinstance(closes, list) else [], adjusted=True)
+        bars = _call(getters, "bars", code, calls, "ka10081")
+        closes = _closesOf(bars)
+        value = rsi14(closes, adjusted=True)
         if value is not None:
             row["rsi14"] = round(float(value), 2)
+        flag, used, prior = dailyNewHigh(bars if isinstance(bars, list) else [], price, asof)
+        row["newHigh"] = flag
+        row["newHighLookback"] = used
+        if prior is not None:
+            row["priorHigh"] = prior
         row["rsiAt"] = now.strftime("%Y-%m-%dT%H:%M:%S")
+    elif row.get("priorHigh") not in (None, ""):
+        flag, _used, _prior = dailyNewHigh(
+            [{"dt": "19000101", "high": row.get("priorHigh")}],
+            price,
+            asof,
+        )
+        row["newHigh"] = flag
     newsFailed = False
     if _need(row, now, "issue", None):
         raw = _call(getters, "news", code, calls, "news")
@@ -262,6 +326,19 @@ def _fillCode(row, code, asof, now, fetchers, calls):
         row["issueNote"] = found.get("note") or ""
         row["issueAt"] = now.strftime("%Y-%m-%dT%H:%M:%S")
     return newsFailed
+
+
+def _closesOf(bars):
+    if not isinstance(bars, list):
+        return []
+    out = []
+    for bar in bars:
+        raw = bar.get("close", bar.get("curPrc")) if isinstance(bar, dict) else bar
+        try:
+            out.append(float(raw))
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
 def _call(getters, name, code, calls, counter):
@@ -316,15 +393,15 @@ def _liveFetch(name):
                 code,
                 datetime.now().strftime("%Y%m%d"),
                 updStkpcTp="1",
-                minBars=15,
+                minBars=NEW_HIGH_FETCH_BARS,
                 tokenType=runtimeState.paperTokenType or "bearer",
                 isPaper=True,
             )
             if not gotBars.get("ok"):
                 return None
-            closes = [bar.get("curPrc") for bar in gotBars.get("bars") or []]
-            closes.reverse()
-            return closes
+            bars = list(gotBars.get("bars") or [])
+            bars.reverse()
+            return bars
         if name == "market":
             acquireTrSlot("ka10100", "paper")
             from api.getStkInfoByCd import fetchStkInfoByCd

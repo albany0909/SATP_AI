@@ -921,6 +921,7 @@ def buildTabRows(snap, asof, extras=None):
         item = {
             "code": code,
             "name": row.get("name") or "",
+            "newHigh": extra.get("newHigh") is True,
             "index": extra.get("market") or row.get("index") or "",
             "price": row.get("price"),
             "dailyPct": daily,

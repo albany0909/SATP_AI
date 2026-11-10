@@ -4,7 +4,7 @@
   "englishName": "Surge Trade",
   "name": "급등주매매",
   "status": "draft",
-  "version": 12,
+  "version": 13,
   "enabled": false,
   "timeframe": "D",
   "docPath": "strategies/docs/surgeTrade_v1.md",
@@ -66,5 +66,5 @@
     "closingAuctionTrdeTp": "0",
     "closingAuctionNote": "kt10000 documents no dedicated closing-auction code. 15:20-15:30 uses ordinary limit 0. Market 3 and after-hours 81 are not used in that window."
   },
-  "notes": "v12. RSI14 is light blue at 30 or below and light red at 70 or above. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
+  "notes": "v13. A visual 신 badge marks a 250-session high using the same ka10081 bars as RSI. The cell text stays the stock name. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
 }
