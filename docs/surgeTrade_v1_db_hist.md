@@ -400,7 +400,7 @@ v18 은 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-10`
 - SRC: `manual`
 - NOTE: `v18 현재가 콤마. 순매수는 ka10059 백만원을 억원으로. 주문 비활성.`
-- GIT_HASH: `PENDING_V18`
+- GIT_HASH: `dd46757308d3`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -408,7 +408,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 18, '2026-11-10',
    'v18 현재가 콤마. 순매수는 ka10059 백만원을 억원으로. 주문 비활성.',
-   'PENDING_V18', 'manual')
+   'dd46757308d3', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
