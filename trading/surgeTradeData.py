@@ -32,11 +32,11 @@ TAB_COLUMNS = (
     ("name", "종목명"),
     ("price", "현재가"),
     ("dailyPct", "일간%"),
+    ("rsi14", "RSI14"),
     ("turnoverEok", "거래대금(억)"),
     ("issues", "이슈"),
     ("orgnNetMillionKrw", "기관순매수"),
     ("frgnNetMillionKrw", "외국인순매수"),
-    ("rsi14", "RSI14"),
     ("firstSurgeVs", "첫급등대비"),
     ("dataState", "상태"),
 )

@@ -216,7 +216,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 10)
+        self.assertEqual(int(spec["version"]), 11)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -229,7 +229,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 10)
+        self.assertEqual(payload["algVer"], 11)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -756,6 +756,22 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertNotIn("yearLowRisePct", view["rows"][0])
         self.assertEqual(view["rows"][0]["firstSurgeVs"], "-")
         labels = [label for _key, label in TAB_COLUMNS]
+        self.assertEqual(
+            labels,
+            [
+                "코드",
+                "종목명",
+                "현재가",
+                "일간%",
+                "RSI14",
+                "거래대금(억)",
+                "이슈",
+                "기관순매수",
+                "외국인순매수",
+                "첫급등대비",
+                "상태",
+            ],
+        )
         self.assertNotIn("원순위", labels)
         self.assertNotIn("1년저점대비%", labels)
         self.assertNotIn("시장", labels)
