@@ -308,7 +308,7 @@ v14 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-10`
 - SRC: `manual`
 - NOTE: `v14 최근 20거래일 첫 급등 뉴 배지. 추가 TR 없음. 주문 비활성.`
-- GIT_HASH: `PENDING_V14`
+- GIT_HASH: `6e1484adfef6`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -316,7 +316,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 14, '2026-11-10',
    'v14 최근 20거래일 첫 급등 뉴 배지. 추가 TR 없음. 주문 비활성.',
-   'PENDING_V14', 'manual')
+   '6e1484adfef6', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
