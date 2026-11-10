@@ -35,8 +35,8 @@ TAB_COLUMNS = (
     ("rsi14", "RSI14"),
     ("turnoverEok", "거래대금(억)"),
     ("issues", "이슈"),
-    ("orgnNetMillionKrw", "기관순매수"),
-    ("frgnNetMillionKrw", "외국인순매수"),
+    ("orgnNetMillionKrw", "기관순매수(억)"),
+    ("frgnNetMillionKrw", "외국인순매수(억)"),
     ("firstSurgeVs", "첫급등대비"),
     ("dataState", "상태"),
 )
@@ -843,6 +843,49 @@ _ISSUE_PASTELS = (
     "#EEEEDC",
     "#E8F5C8",
 )
+
+
+def _truncInt(value):
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def formatGroupedInt(value):
+    """현재가·거래대금. 소수점 버리고 천 단위 콤마."""
+    num = _truncInt(value)
+    if num is None:
+        return "-"
+    return f"{num:,}"
+
+
+def formatNetEok(millionKrw):
+    """
+    ka10059 금액(amt_qty_tp=1)·순매수(trde_tp=0)의 orgn·frgnr_invsr.
+    명세 단위는 백만원. 100백만원 = 1억. 소수점 이하는 버린다.
+    반환: (표시문자열, up|down|"")
+    """
+    if millionKrw in (None, ""):
+        return "-", ""
+    try:
+        eok = float(millionKrw) / 100.0
+    except (TypeError, ValueError):
+        return "-", ""
+    num = int(eok)
+    if num > 0:
+        return f"+{num:,}억", "up"
+    if num < 0:
+        return f"{num:,}억", "down"
+    return "0억", ""
+
+
+def netFlowColor(sign):
+    if sign == "up":
+        return "#D32F2F"
+    if sign == "down":
+        return "#1565C0"
+    return ""
 
 
 def nameBadges(newHigh, newSurge):

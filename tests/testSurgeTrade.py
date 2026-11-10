@@ -216,7 +216,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 17)
+        self.assertEqual(int(spec["version"]), 18)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -229,7 +229,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 17)
+        self.assertEqual(payload["algVer"], 18)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -766,8 +766,8 @@ class SurgeTradeTest(unittest.TestCase):
                 "RSI14",
                 "거래대금(억)",
                 "이슈",
-                "기관순매수",
-                "외국인순매수",
+                "기관순매수(억)",
+                "외국인순매수(억)",
                 "첫급등대비",
                 "상태",
             ],
@@ -1657,6 +1657,18 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(nameBadges(False, True), "뉴")
         from trading.surgeTradeData import badgeFillColor
 
+        from trading.surgeTradeData import formatGroupedInt, formatNetEok, netFlowColor
+
+        self.assertEqual(formatGroupedInt(123400), "123,400")
+        self.assertEqual(formatGroupedInt(123400.9), "123,400")
+        self.assertEqual(formatGroupedInt(1234.9), "1,234")
+        self.assertEqual(formatNetEok(123400), ("+1,234억", "up"))
+        self.assertEqual(formatNetEok(-5600), ("-56억", "down"))
+        self.assertEqual(formatNetEok(50), ("0억", ""))
+        self.assertEqual(formatNetEok(None), ("-", ""))
+        self.assertEqual(netFlowColor("up"), "#D32F2F")
+        self.assertEqual(netFlowColor("down"), "#1565C0")
+        self.assertEqual(netFlowColor(""), "")
         self.assertEqual(badgeFillColor("신"), "#FFD6D6")
         self.assertEqual(badgeFillColor("뉴"), "#D4F5D4")
         self.assertEqual(badgeFillColor(""), "")

@@ -4,7 +4,7 @@
   "englishName": "Surge Trade",
   "name": "급등주매매",
   "status": "draft",
-  "version": 17,
+  "version": 18,
   "enabled": false,
   "timeframe": "D",
   "docPath": "strategies/docs/surgeTrade_v1.md",
@@ -66,5 +66,5 @@
     "closingAuctionTrdeTp": "0",
     "closingAuctionNote": "kt10000 documents no dedicated closing-auction code. 15:20-15:30 uses ordinary limit 0. Market 3 and after-hours 81 are not used in that window."
   },
-  "notes": "v17. The name cell has no background. 신 is light red and 뉴 is light green inside the small boxes. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
+  "notes": "v18. Price and turnover show grouped integers. Net flow from ka10059 amount mode is million KRW, shown as eok with a sign color. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
 }

@@ -528,6 +528,20 @@ class RsiDelegate(QStyledItemDelegate):
         painter.restore()
 
 
+class SurgeSortItem(QTableWidgetItem):
+    """표시는 콤마 문자열, 정렬은 UserRole+1 숫자."""
+
+    def __lt__(self, other):
+        av = self.data(Qt.ItemDataRole.UserRole + 1)
+        bv = other.data(Qt.ItemDataRole.UserRole + 1) if isinstance(other, QTableWidgetItem) else None
+        if av is None or bv is None:
+            return QTableWidgetItem.__lt__(self, other)
+        try:
+            return float(av) < float(bv)
+        except (TypeError, ValueError):
+            return QTableWidgetItem.__lt__(self, other)
+
+
 class SurgeNameDelegate(QStyledItemDelegate):
     """종목명 앞에 신·뉴 배지. 셀 글자는 종목명만 남겨 복사·정렬이 배지를 포함하지 않는다."""
 
@@ -5107,7 +5121,10 @@ class TradeDeskWin(QMainWindow):
             SnapStore,
             TAB_COLUMNS,
             buildTabRows,
+            formatGroupedInt,
+            formatNetEok,
             nameBadges,
+            netFlowColor,
             rsiCellColor,
             selectTabDisplay,
         )
@@ -5133,8 +5150,22 @@ class TradeDeskWin(QMainWindow):
         for r, row in enumerate(rows):
             for c, (key, _label) in enumerate(TAB_COLUMNS):
                 val = row.get(key)
-                text = "-" if val in (None, "") else str(val)
-                item = QTableWidgetItem(text)
+                sortNum = None
+                flowSign = ""
+                if key == "price":
+                    text = formatGroupedInt(val)
+                    sortNum = val
+                elif key == "turnoverEok":
+                    text = formatGroupedInt(val)
+                    sortNum = val
+                elif key in ("orgnNetMillionKrw", "frgnNetMillionKrw"):
+                    text, flowSign = formatNetEok(val)
+                    sortNum = val
+                else:
+                    text = "-" if val in (None, "") else str(val)
+                item = SurgeSortItem(text) if sortNum not in (None, "") else QTableWidgetItem(text)
+                if sortNum not in (None, ""):
+                    item.setData(Qt.ItemDataRole.UserRole + 1, sortNum)
                 if key == "name":
                     item.setData(
                         Qt.ItemDataRole.UserRole,
@@ -5148,6 +5179,9 @@ class TradeDeskWin(QMainWindow):
                 if key == "issues" and row.get("issueColor"):
                     item.setBackground(QBrush(QColor(str(row.get("issueColor")))))
                     item.setForeground(QBrush(QColor("#212121")))
+                flowFg = netFlowColor(flowSign)
+                if flowFg:
+                    item.setForeground(QBrush(QColor(flowFg)))
                 if key == "firstSurgeVs" and row.get("firstSurgeSign") == "up":
                     item.setForeground(QBrush(_PNL_PLUS))
                 elif key == "firstSurgeVs" and row.get("firstSurgeSign") == "down":
