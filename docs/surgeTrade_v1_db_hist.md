@@ -517,7 +517,7 @@ v23 은 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-11`
 - SRC: `manual`
 - NOTE: `v23 급등주 일·주·월봉을 차트에 적재. 주문 비활성.`
-- GIT_HASH: `PENDING_V23`
+- GIT_HASH: `abf88ef5979e`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -525,7 +525,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 23, '2026-11-11',
    'v23 급등주 일·주·월봉을 차트에 적재. 주문 비활성.',
-   'PENDING_V23', 'manual')
+   'abf88ef5979e', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
