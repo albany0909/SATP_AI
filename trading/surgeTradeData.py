@@ -845,6 +845,21 @@ _ISSUE_PASTELS = (
 )
 
 
+def rsiCellColor(value):
+    """RSI14 배경. 30 이하는 옅은 파랑, 70 이상은 옅은 빨강. 그 사이와 빈 값은 색 없음."""
+    if value in (None, ""):
+        return ""
+    try:
+        rsi = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if rsi <= 30:
+        return "#D6E8FF"
+    if rsi >= 70:
+        return "#FFD6D6"
+    return ""
+
+
 def issueTagColor(tag):
     """같은 이슈 단어는 항상 같은 옅은 배경. 빈 칸은 색 없음."""
     text = str(tag or "").strip()

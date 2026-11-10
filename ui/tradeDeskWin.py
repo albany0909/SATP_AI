@@ -5116,6 +5116,7 @@ class TradeDeskWin(QMainWindow):
             SnapStore,
             TAB_COLUMNS,
             buildTabRows,
+            rsiCellColor,
             selectTabDisplay,
         )
         from trading.surgeTradeEnrich import displayExtras
@@ -5144,6 +5145,11 @@ class TradeDeskWin(QMainWindow):
                 item = QTableWidgetItem(text)
                 if key == "name" and row.get("yellowName"):
                     item.setBackground(QBrush(QColor("#FFF59D")))
+                if key == "rsi14":
+                    rsiBg = rsiCellColor(val)
+                    if rsiBg:
+                        item.setBackground(QBrush(QColor(rsiBg)))
+                        item.setForeground(QBrush(QColor("#212121")))
                 if key == "issues" and row.get("issueColor"):
                     item.setBackground(QBrush(QColor(str(row.get("issueColor")))))
                     item.setForeground(QBrush(QColor("#212121")))

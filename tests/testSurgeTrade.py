@@ -216,7 +216,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 11)
+        self.assertEqual(int(spec["version"]), 12)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -229,7 +229,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 11)
+        self.assertEqual(payload["algVer"], 12)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -1460,6 +1460,16 @@ class SurgeTradeTest(unittest.TestCase):
         from trading.surgeTradeEnrich import enrichDisplayed, newsFailSummary
 
         self.assertEqual(issueTagColor(""), "")
+        from trading.surgeTradeData import rsiCellColor
+
+        self.assertEqual(rsiCellColor(30), "#D6E8FF")
+        self.assertEqual(rsiCellColor(29.99), "#D6E8FF")
+        self.assertEqual(rsiCellColor(70), "#FFD6D6")
+        self.assertEqual(rsiCellColor(70.01), "#FFD6D6")
+        self.assertEqual(rsiCellColor(30.01), "")
+        self.assertEqual(rsiCellColor(69.99), "")
+        self.assertEqual(rsiCellColor(None), "")
+        self.assertEqual(rsiCellColor(""), "")
         self.assertEqual(issueTagColor("지분분쟁"), "#E8F5C8")
         self.assertEqual(issueTagColor("관세"), "#D3E6FF")
         self.assertNotEqual(issueTagColor("지분분쟁"), issueTagColor("관세"))
