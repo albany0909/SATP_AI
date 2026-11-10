@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import time
 import urllib.request
@@ -215,6 +216,57 @@ def _parseNewsPage(html, stkCd, baseUrl):
         if len(items) >= 40:
             break
     return items
+
+
+def headlinesFromMobileBody(body):
+    """네이버 모바일 종목뉴스 JSON → 제목·기사 URL. 네트워크는 열지 않는다."""
+    from html import unescape
+
+    items = []
+    groups = body if isinstance(body, list) else []
+    for grp in groups:
+        if not isinstance(grp, dict):
+            continue
+        for it in grp.get("items") or []:
+            if not isinstance(it, dict):
+                continue
+            title = unescape(str(it.get("titleFull") or it.get("title") or "")).strip()
+            office = str(it.get("officeId") or "").strip()
+            article = str(it.get("articleId") or "").strip()
+            url = ""
+            if office and article:
+                url = f"https://n.news.naver.com/mnews/article/{office}/{article}"
+            day = str(it.get("datetime") or "")[:8]
+            if title:
+                items.append({"title": title, "newsUrl": url, "publishedAt": day})
+    return items
+
+
+def fetchMobileStkHeadlines(stkCd):
+    """
+    주도주 탭과 같은 모바일 종목뉴스.
+    https://m.stock.naver.com/api/news/stock/{code}
+    종목마다 로그를 남기지 않는다.
+    """
+    code = normStkCd(stkCd)
+    if not code:
+        return {"ok": False, "errMsg": "종목코드 없음", "items": [], "src": "NAVER_MOBILE"}
+    url = f"https://m.stock.naver.com/api/news/stock/{code}?pageSize=8&page=1"
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": _ua(), "Referer": "https://m.stock.naver.com/"},
+        )
+        with urllib.request.urlopen(req, timeout=8) as res:
+            body = json.loads(res.read().decode("utf-8", "replace"))
+    except Exception as err:
+        return {"ok": False, "errMsg": str(err), "stkCd": code, "items": [], "src": "NAVER_MOBILE"}
+    return {
+        "ok": True,
+        "stkCd": code,
+        "items": headlinesFromMobileBody(body),
+        "src": "NAVER_MOBILE",
+    }
 
 
 def fetchNaverStkNews(stkCd, pages=1):

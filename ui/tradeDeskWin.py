@@ -5144,6 +5144,9 @@ class TradeDeskWin(QMainWindow):
                 item = QTableWidgetItem(text)
                 if key == "name" and row.get("yellowName"):
                     item.setBackground(QBrush(QColor("#FFF59D")))
+                if key == "issues" and row.get("issueColor"):
+                    item.setBackground(QBrush(QColor(str(row.get("issueColor")))))
+                    item.setForeground(QBrush(QColor("#212121")))
                 if key == "firstSurgeVs" and row.get("firstSurgeSign") == "up":
                     item.setForeground(QBrush(_PNL_PLUS))
                 elif key == "firstSurgeVs" and row.get("firstSurgeSign") == "down":

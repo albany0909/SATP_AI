@@ -43,6 +43,19 @@ def marketLabel(name):
     return ""
 
 
+def newsFailSummary(count):
+    """한 번의 조회에서 실패한 종목 수만 적는다. 종목코드는 넣지 않는다."""
+    return f"[surgeNews] 헤드라인 실패 {int(count)}종목"
+
+
+def _splitNews(raw):
+    if isinstance(raw, dict):
+        return list(raw.get("items") or []), raw.get("ok") is False
+    if isinstance(raw, list):
+        return raw, False
+    return [], True
+
+
 def issueFromHeadlines(items):
     """제목과 URL 이 있을 때만 태그. 없으면 빈 칸과 이유를 남긴다."""
     sawTitle = False
@@ -171,12 +184,15 @@ def enrichDisplayed(now, store, fetchers=None):
                 codes.append(code)
     cache = loadColumnCache(store.dir, asof)
     calls = {"ka10059": 0, "ka10081": 0, "ka10100": 0, "news": 0}
+    newsFailures = 0
     for code in codes:
         row = dict(cache.get(code) or {})
         try:
-            _fillCode(row, code, asof, now, fetchers, calls)
+            if _fillCode(row, code, asof, now, fetchers, calls):
+                newsFailures += 1
         except Exception:
             row["dataState"] = "PARTIAL"
+            newsFailures += 1
         filled = any(
             row.get(key) not in (None, "")
             for key in ("market", "turnoverEok", "rsi14", "issues")
@@ -184,7 +200,20 @@ def enrichDisplayed(now, store, fetchers=None):
         row["dataState"] = "OK" if filled else "PARTIAL"
         cache[code] = row
     saveColumnCache(store.dir, asof, cache)
-    return {"orders": 0, "codes": len(codes), "calls": calls, "asof": asof}
+    if newsFailures:
+        try:
+            from utils.termLog import termLog
+
+            termLog(newsFailSummary(newsFailures))
+        except Exception:
+            pass
+    return {
+        "orders": 0,
+        "codes": len(codes),
+        "calls": calls,
+        "asof": asof,
+        "newsFailures": newsFailures,
+    }
 
 
 def _fillCode(row, code, asof, now, fetchers, calls):
@@ -221,15 +250,18 @@ def _fillCode(row, code, asof, now, fetchers, calls):
         if value is not None:
             row["rsi14"] = round(float(value), 2)
         row["rsiAt"] = now.strftime("%Y-%m-%dT%H:%M:%S")
+    newsFailed = False
     if _need(row, now, "issue", None):
-        items = _call(getters, "news", code, calls, "news")
-        found = issueFromHeadlines(items if isinstance(items, list) else [])
+        raw = _call(getters, "news", code, calls, "news")
+        items, newsFailed = _splitNews(raw)
+        found = issueFromHeadlines(items)
         row["issues"] = found.get("tag") or ""
         row["issueConfirmed"] = found.get("confirmed") is True
         row["issueUrl"] = found.get("sourceUrl") or ""
         row["issueDate"] = found.get("firstSurgeDate") or ""
         row["issueNote"] = found.get("note") or ""
         row["issueAt"] = now.strftime("%Y-%m-%dT%H:%M:%S")
+    return newsFailed
 
 
 def _call(getters, name, code, calls, counter):
@@ -304,10 +336,9 @@ def _liveFetch(name):
                 return ""
             return str((info.get("body") or {}).get("marketName") or "")
         if name == "news":
-            from research.naverStkNews import fetchNaverStkNews
+            from research.naverStkNews import fetchMobileStkHeadlines
 
-            news = fetchNaverStkNews(code, pages=1)
-            return news.get("items") or []
+            return fetchMobileStkHeadlines(code)
         return None
 
     return _run

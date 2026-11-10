@@ -823,6 +823,42 @@ def validateEventAudit(form, todayYmd, now=None):
     }
 
 
+_ISSUE_TAG_COLORS = {
+    "지분분쟁": "#E8F5C8",
+    "어닝서프라이즈": "#FFF3C4",
+    "전쟁": "#FFD6D6",
+    "코로나": "#FAD9EC",
+    "관세": "#D3E6FF",
+}
+_ISSUE_PASTELS = (
+    "#FFF3C4",
+    "#FFD6D6",
+    "#E4D9F7",
+    "#D3E6FF",
+    "#D6F2DD",
+    "#CFF1EF",
+    "#FAD9EC",
+    "#DCE2F8",
+    "#DCEFFA",
+    "#FFE2C6",
+    "#EEEEDC",
+    "#E8F5C8",
+)
+
+
+def issueTagColor(tag):
+    """같은 이슈 단어는 항상 같은 옅은 배경. 빈 칸은 색 없음."""
+    text = str(tag or "").strip()
+    if not text:
+        return ""
+    known = _ISSUE_TAG_COLORS.get(text)
+    if known:
+        return known
+    import zlib
+
+    return _ISSUE_PASTELS[zlib.crc32(text.encode("utf-8")) % len(_ISSUE_PASTELS)]
+
+
 def yellowName(confirmed, dailyPct, tradeYmd, firstSurgeYmd):
     """같은 이벤트의 최초 급등일에, 확인된 이슈와 일간 +10% 이상일 때만."""
     try:
@@ -877,6 +913,7 @@ def buildTabRows(snap, asof, extras=None):
             "turnoverEok": flow.get("turnoverEok"),
             "turnoverNote": flow.get("turnoverNote") or "N/A",
             "issues": tags if issue.get("confirmed") else "",
+            "issueColor": issueTagColor(tags if issue.get("confirmed") else ""),
             "issueDetails": issue.get("details") or ([] if not issue else [issue]),
             "orgnNetMillionKrw": flow.get("orgnNetMillionKrw"),
             "frgnNetMillionKrw": flow.get("frgnNetMillionKrw"),

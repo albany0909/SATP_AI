@@ -216,7 +216,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 8)
+        self.assertEqual(int(spec["version"]), 9)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -229,7 +229,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 8)
+        self.assertEqual(payload["algVer"], 9)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -1431,6 +1431,86 @@ class SurgeTradeTest(unittest.TestCase):
             self.assertIsNone(blank["rsi14"])
             self.assertEqual(blank["issue"]["tag"], "")
             self.assertEqual(blank["market"], "")
+
+    def test_issue_color_and_mobile_headlines(self):
+        from research.naverStkNews import headlinesFromMobileBody
+        from trading.surgeTradeData import issueTagColor
+        from trading.surgeTradeEnrich import enrichDisplayed, newsFailSummary
+
+        self.assertEqual(issueTagColor(""), "")
+        self.assertEqual(issueTagColor("지분분쟁"), "#E8F5C8")
+        self.assertEqual(issueTagColor("관세"), "#D3E6FF")
+        self.assertNotEqual(issueTagColor("지분분쟁"), issueTagColor("관세"))
+        self.assertEqual(issueTagColor("기타이슈"), issueTagColor("기타이슈"))
+        self.assertTrue(issueTagColor("기타이슈").startswith("#"))
+        colored = buildTabRows(
+            {
+                "state": "COLLECTED",
+                "rows": [
+                    {"stkCd": "000001", "name": "가", "price": 10, "baseCompChgr": 6, "originalRank": 1},
+                    {"stkCd": "000002", "name": "나", "price": 10, "baseCompChgr": 6, "originalRank": 2},
+                    {"stkCd": "000003", "name": "다", "price": 10, "baseCompChgr": 6, "originalRank": 3},
+                ],
+            },
+            "20261110",
+            {
+                "byCode": {
+                    "000001": {"issue": {"tag": "지분분쟁", "confirmed": True, "sourceUrl": "https://n.news.naver.com/a"}},
+                    "000002": {"issue": {"tag": "지분분쟁", "confirmed": True, "sourceUrl": "https://n.news.naver.com/b"}},
+                    "000003": {"issue": {"tag": "", "confirmed": False}},
+                }
+            },
+        )
+        self.assertEqual(colored["rows"][0]["issueColor"], colored["rows"][1]["issueColor"])
+        self.assertEqual(colored["rows"][2]["issueColor"], "")
+        self.assertNotEqual(colored["rows"][0]["issueColor"], "")
+        parsed = headlinesFromMobileBody(
+            [
+                {
+                    "items": [
+                        {
+                            "officeId": "001",
+                            "articleId": "0016432774",
+                            "title": "관세 영향 &quot;협상&quot;",
+                            "datetime": "202611101028",
+                        }
+                    ]
+                }
+            ]
+        )
+        self.assertEqual(parsed[0]["title"], '관세 영향 "협상"')
+        self.assertEqual(
+            parsed[0]["newsUrl"],
+            "https://n.news.naver.com/mnews/article/001/0016432774",
+        )
+        self.assertNotIn("005930", newsFailSummary(2))
+        now = datetime(2026, 11, 10, 10, 0)
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SnapStore(tmp)
+            store.save(
+                {
+                    "ok": True,
+                    "tradeYmd": "20261110",
+                    "slot": "1000",
+                    "state": "COLLECTED",
+                    "observedAt": "2026-11-10T10:00:00",
+                    "rows": [
+                        {"stkCd": "000001", "price": 10, "baseCompChgr": 6, "originalRank": 1},
+                        {"stkCd": "000002", "price": 10, "baseCompChgr": 7, "originalRank": 2},
+                    ],
+                }
+            )
+
+            def down(_code):
+                return {"ok": False, "items": [], "errMsg": "HTTP Error 410"}
+
+            failed = enrichDisplayed(
+                now,
+                store,
+                {"flow": lambda _c: None, "bars": lambda _c: [], "market": lambda _c: "", "news": down},
+            )
+            self.assertEqual(failed["newsFailures"], 2)
+            self.assertEqual(failed["orders"], 0)
 
     def test_offscreen_yellow_cell(self):
         try:
