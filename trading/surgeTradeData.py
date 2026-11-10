@@ -38,7 +38,7 @@ TAB_COLUMNS = (
     ("frgnNetMillionKrw", "외국인"),
     ("orgnNetMillionKrw", "기관"),
     ("penfndNetMillionKrw", "연기금"),
-    ("firstSurgeVs", "첫급등대비"),
+    ("yearRisePct", "최근1년"),
     ("dataState", "상태"),
 )
 FLOW_UNIT_MILLION_KRW = "백만원"
@@ -692,6 +692,83 @@ def rsi14(closes, adjusted=True):
     return float(series[-1])
 
 
+def recentYearLow(bars, asof="", lookback=250):
+    """
+    최근 1년 일봉 저가의 최저.
+    창은 오늘 봉이 있으면 그 저가와 직전 lookback 거래일이다.
+    상장이 그보다 짧으면 있는 저가만 쓴다. 종가로 저가를 만들지 않는다.
+    """
+    day = str(asof or "")[:8]
+    points = []
+    for bar in bars or []:
+        if isinstance(bar, dict):
+            dt = str(bar.get("dt") or "")[:8]
+            raw = bar.get("low", None)
+            if raw in (None, ""):
+                raw = bar.get("lowPric", None)
+        elif isinstance(bar, (list, tuple)) and len(bar) >= 2:
+            dt = str(bar[0] or "")[:8]
+            raw = bar[1]
+        else:
+            continue
+        if len(dt) != 8:
+            continue
+        if day and dt > day:
+            continue
+        try:
+            low = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if low <= 0:
+            continue
+        points.append((dt, low))
+    if not points:
+        return None
+    points.sort(key=lambda item: item[0])
+    collapsed = []
+    for dt, low in points:
+        if collapsed and collapsed[-1][0] == dt:
+            collapsed[-1] = (dt, min(collapsed[-1][1], low))
+        else:
+            collapsed.append((dt, low))
+    if not day:
+        day = collapsed[-1][0]
+    today = [low for dt, low in collapsed if dt == day]
+    prior = [low for dt, low in collapsed if dt < day]
+    window = prior[-int(lookback) :] if len(prior) > int(lookback) else list(prior)
+    window.extend(today)
+    if not window:
+        return None
+    return min(window)
+
+
+def yearRisePct(currentPx, yearLow):
+    """(현재가 / 일봉 저가 최저 - 1) × 100. 저가가 없으면 None."""
+    try:
+        px = float(currentPx)
+        low = float(yearLow)
+    except (TypeError, ValueError):
+        return None
+    if px <= 0 or low <= 0:
+        return None
+    return (px / low - 1.0) * 100.0
+
+
+def formatYearRisePct(pct):
+    """소수 1자리 %. 플러스 빨강, 마이너스 파랑에 쓸 부호."""
+    if pct in (None, ""):
+        return "-", ""
+    try:
+        shown = round(float(pct) + 1e-9, 1)
+    except (TypeError, ValueError):
+        return "-", ""
+    if shown > 0:
+        return f"+{shown:.1f}%", "up"
+    if shown < 0:
+        return f"{shown:.1f}%", "down"
+    return "+0.0%", ""
+
+
 def yearLowRisePct(currentPx, bars, asof, adjusted=True):
     """
     (현재가 / 직전 1년 최저가 - 1) * 100.
@@ -1062,6 +1139,7 @@ def buildTabRows(snap, asof, extras=None):
         vs, sign = ("-", "")
         if isinstance(ref, dict):
             vs, sign = formatFirstSurgeVs(row.get("price"), ref.get("price"))
+        rise = yearRisePct(row.get("price"), extra.get("yearLow"))
         item = {
             "code": code,
             "name": row.get("name") or "",
@@ -1082,6 +1160,8 @@ def buildTabRows(snap, asof, extras=None):
             "flowAsOf": flow.get("asof") or "",
             "flowStatus": flow.get("flowStatus") or "N/A",
             "rsi14": extra.get("rsi14"),
+            "yearRisePct": rise,
+            "yearRiseSign": "up" if isinstance(rise, float) and rise > 0 else ("down" if isinstance(rise, float) and rise < 0 else ""),
             "firstSurgeVs": vs,
             "firstSurgeSign": sign,
             "dataState": extra.get("dataState") or "PARTIAL",

@@ -4,7 +4,7 @@
   "englishName": "Surge Trade",
   "name": "급등주매매",
   "status": "draft",
-  "version": 19,
+  "version": 20,
   "enabled": false,
   "timeframe": "D",
   "docPath": "strategies/docs/surgeTrade_v1.md",
@@ -66,5 +66,5 @@
     "closingAuctionTrdeTp": "0",
     "closingAuctionNote": "kt10000 documents no dedicated closing-auction code. 15:20-15:30 uses ordinary limit 0. Market 3 and after-hours 81 are not used in that window."
   },
-  "notes": "v19. Columns are 외국인, 기관, and 연기금 from the same ka10059 amount read. penfnd_etc is pension in million KRW. Issue colors do not collide on one screen. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
+  "notes": "v20. The tab column 최근1년 is the rise from the lowest daily low in the prior 250 trading days plus today. firstSurge.json stays for entry and is not a column. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
 }

@@ -5123,6 +5123,7 @@ class TradeDeskWin(QMainWindow):
             buildTabRows,
             formatGroupedInt,
             formatNetEok,
+            formatYearRisePct,
             nameBadges,
             netFlowColor,
             rsiCellColor,
@@ -5161,6 +5162,9 @@ class TradeDeskWin(QMainWindow):
                 elif key in ("orgnNetMillionKrw", "frgnNetMillionKrw", "penfndNetMillionKrw"):
                     text, flowSign = formatNetEok(val)
                     sortNum = val
+                elif key == "yearRisePct":
+                    text, yearSign = formatYearRisePct(val)
+                    sortNum = val
                 else:
                     text = "-" if val in (None, "") else str(val)
                 item = SurgeSortItem(text) if sortNum not in (None, "") else QTableWidgetItem(text)
@@ -5182,9 +5186,9 @@ class TradeDeskWin(QMainWindow):
                 flowFg = netFlowColor(flowSign)
                 if flowFg:
                     item.setForeground(QBrush(QColor(flowFg)))
-                if key == "firstSurgeVs" and row.get("firstSurgeSign") == "up":
+                if key == "yearRisePct" and yearSign == "up":
                     item.setForeground(QBrush(_PNL_PLUS))
-                elif key == "firstSurgeVs" and row.get("firstSurgeSign") == "down":
+                elif key == "yearRisePct" and yearSign == "down":
                     item.setForeground(QBrush(_PNL_MINUS))
                 if key in ("issues", "orgnNetMillionKrw", "frgnNetMillionKrw", "penfndNetMillionKrw"):
                     tip = row.get("flowStatus") or ""

@@ -216,7 +216,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 19)
+        self.assertEqual(int(spec["version"]), 20)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -229,7 +229,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 19)
+        self.assertEqual(payload["algVer"], 20)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -769,7 +769,7 @@ class SurgeTradeTest(unittest.TestCase):
                 "외국인",
                 "기관",
                 "연기금",
-                "첫급등대비",
+                "최근1년",
                 "상태",
             ],
         )
@@ -777,7 +777,8 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertNotIn("1년저점대비%", labels)
         self.assertNotIn("시장", labels)
         self.assertIn("상태", labels)
-        self.assertIn("첫급등대비", labels)
+        self.assertIn("최근1년", labels)
+        self.assertNotIn("첫급등대비", labels)
         self.assertTrue(view["rows"][2]["yellowName"])
         morning = {
             "tradeYmd": "20261106",
@@ -1621,6 +1622,97 @@ class SurgeTradeTest(unittest.TestCase):
             again = displayExtras(store.dir, "20261110")["byCode"]["005930"]
             self.assertFalse(again["newHigh"])
             self.assertEqual(again["newHighLookback"], 10)
+
+    def test_recent_year_uses_daily_low_without_extra_fetch(self):
+        from trading.surgeTradeData import formatYearRisePct, recentYearLow, yearRisePct
+        from trading.surgeTradeEnrich import displayExtras, enrichDisplayed
+
+        self.assertEqual(formatYearRisePct(yearRisePct(335.4, 100)), ("+235.4%", "up"))
+        self.assertEqual(formatYearRisePct(yearRisePct(90, 100)), ("-10.0%", "down"))
+        self.assertEqual(formatYearRisePct(None), ("-", ""))
+        self.assertIsNone(recentYearLow([{"dt": "20261110", "close": 1, "high": 9}], "20261110"))
+        self.assertEqual(recentYearLow([{"dt": "20261110", "lowPric": 100, "close": 1}], "20261110"), 100)
+        short = [
+            {"dt": "20261101", "low": 50, "close": 999},
+            {"dt": "20261110", "low": 70, "close": 1},
+        ]
+        self.assertEqual(recentYearLow(short, "20261110"), 50)
+        self.assertIsNone(recentYearLow([], "20261110"))
+        day = datetime(2026, 11, 10)
+        bars = []
+        for i in range(251, 0, -1):
+            bars.append({"dt": (day - timedelta(days=i)).strftime("%Y%m%d"), "low": 10 if i == 251 else 80, "close": 1})
+        bars.append({"dt": "20261110", "low": 90, "close": 1})
+        self.assertEqual(recentYearLow(bars, "20261110"), 80)
+        shown = buildTabRows(
+            {
+                "state": "COLLECTED",
+                "rows": [{"stkCd": "005930", "name": "삼성전자", "price": 335.4, "baseCompChgr": 6, "originalRank": 1}],
+            },
+            "20261110",
+            {"byCode": {"005930": {"yearLow": 100}}, "firstSurge": {"005930": {"ymd": "20261101", "price": 200}}},
+        )
+        self.assertAlmostEqual(shown["rows"][0]["yearRisePct"], 235.4)
+        self.assertEqual(shown["rows"][0]["firstSurgeVs"], "+67.70")
+        blank = buildTabRows(
+            {
+                "state": "COLLECTED",
+                "rows": [{"stkCd": "005930", "name": "삼성전자", "price": 335.4, "baseCompChgr": 6, "originalRank": 1}],
+            },
+            "20261110",
+            {"byCode": {"005930": {}}},
+        )
+        self.assertIsNone(blank["rows"][0]["yearRisePct"])
+        calls = {"bars": 0}
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SnapStore(tmp)
+            (store.dir / "firstSurge.json").write_text(
+                '{"005930": {"ymd": "20261101", "price": 200, "source": "snapshot_1600"}}',
+                encoding="utf-8",
+            )
+            store.save(
+                {
+                    "ok": True,
+                    "tradeYmd": "20261110",
+                    "slot": "1000",
+                    "state": "COLLECTED",
+                    "observedAt": "2026-11-10T10:00:00",
+                    "rows": [{"stkCd": "005930", "name": "삼성전자", "price": 335.4, "baseCompChgr": 6, "originalRank": 1}],
+                }
+            )
+
+            def load_bars(_code):
+                calls["bars"] += 1
+                return short
+
+            enrichDisplayed(
+                datetime(2026, 11, 10, 10, 0),
+                store,
+                {"flow": lambda _c: None, "bars": load_bars, "market": lambda _c: "", "news": lambda _c: []},
+            )
+            cached = displayExtras(store.dir, "20261110")["byCode"]["005930"]
+            self.assertEqual(cached["yearLow"], 50)
+            self.assertEqual(calls["bars"], 1)
+            self.assertIn("005930", loadFirstSurgeBook(store.dir))
+            store.save(
+                {
+                    "ok": True,
+                    "tradeYmd": "20261110",
+                    "slot": "1015",
+                    "state": "COLLECTED",
+                    "observedAt": "2026-11-10T10:15:00",
+                    "rows": [{"stkCd": "005930", "name": "삼성전자", "price": 400, "baseCompChgr": 6, "originalRank": 1}],
+                }
+            )
+            enrichDisplayed(
+                datetime(2026, 11, 10, 10, 15),
+                store,
+                {"flow": lambda _c: None, "bars": load_bars, "market": lambda _c: "", "news": lambda _c: []},
+            )
+            self.assertEqual(calls["bars"], 1)
+            view = buildTabRows(store.latestForDay("20261110"), "20261110", displayExtras(store.dir, "20261110"))
+            self.assertEqual(formatYearRisePct(view["rows"][0]["yearRisePct"]), ("+700.0%", "up"))
+            self.assertEqual(view["rows"][0]["firstSurgeVs"], "+100.00")
 
     def test_new_surge_badge_window(self):
         from trading.surgeTradeData import nameBadges

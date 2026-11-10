@@ -12,6 +12,7 @@ from pathlib import Path
 from trading.surgeTradeData import (
     loadFirstSurgeBook,
     parseKa10059Flow,
+    recentYearLow,
     rsi14,
     selectTabDisplay,
     turnoverEok,
@@ -304,6 +305,7 @@ def displayExtras(directory, asof):
             "newHighLookback": int(row.get("newHighLookback") or 0),
             "newSurge": row.get("newSurge") is True,
             "firstSurgeYmd": row.get("firstSurgeYmd") or "",
+            "yearLow": row.get("yearLow"),
         }
     return {"firstSurge": book, "byCode": byCode}
 
@@ -451,14 +453,19 @@ def _fillCode(row, code, asof, now, fetchers, calls, price=None, todayPct=None, 
         if prior is not None:
             row["priorHigh"] = prior
         row["dayCloses"] = _dayCloses(barList)
+        row["dayLows"] = _dayLows(barList)
+        _storeYearLow(row, barList, asof)
         row["rsiAt"] = now.strftime("%Y-%m-%dT%H:%M:%S")
-    elif row.get("priorHigh") not in (None, ""):
-        flag, _used, _prior = dailyNewHigh(
-            [{"dt": "19000101", "high": row.get("priorHigh")}],
-            price,
-            asof,
-        )
-        row["newHigh"] = flag
+    else:
+        if row.get("priorHigh") not in (None, ""):
+            flag, _used, _prior = dailyNewHigh(
+                [{"dt": "19000101", "high": row.get("priorHigh")}],
+                price,
+                asof,
+            )
+            row["newHigh"] = flag
+        if row.get("dayLows"):
+            _storeYearLow(row, row.get("dayLows"), asof)
     newsFailed = False
     if issueNeedsFetch(row, now, forceIssue):
         raw = _call(getters, "news", code, calls, "news")
@@ -486,6 +493,41 @@ def _fillCode(row, code, asof, now, fetchers, calls, price=None, todayPct=None, 
     row["newSurge"] = fresh
     row["firstSurgeYmd"] = found
     return newsFailed
+
+
+def _storeYearLow(row, bars, asof):
+    low = recentYearLow(bars, asof)
+    if low is None:
+        row.pop("yearLow", None)
+    else:
+        row["yearLow"] = low
+
+
+def _dayLows(bars):
+    """캐시용 일봉 저가. 종가는 넣지 않는다. 예전 파일에 없으면 칸은 '-'."""
+    out = []
+    if not isinstance(bars, list):
+        return out
+    for bar in bars:
+        if isinstance(bar, dict):
+            dt = str(bar.get("dt") or "")[:8]
+            raw = bar.get("low", None)
+            if raw in (None, ""):
+                raw = bar.get("lowPric", None)
+        elif isinstance(bar, (list, tuple)) and len(bar) >= 2:
+            dt = str(bar[0] or "")[:8]
+            raw = bar[1]
+        else:
+            continue
+        if len(dt) != 8:
+            continue
+        try:
+            low = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if low > 0:
+            out.append([dt, low])
+    return out
 
 
 def _dayCloses(bars):
