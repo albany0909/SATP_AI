@@ -469,7 +469,7 @@ v21 은 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-11`
 - SRC: `manual`
 - NOTE: `v21 일간% 20% 연빨강, 10% 연노랑. 주문 비활성.`
-- GIT_HASH: `PENDING_V21`
+- GIT_HASH: `27fc9f454308`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -477,7 +477,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 21, '2026-11-11',
    'v21 일간% 20% 연빨강, 10% 연노랑. 주문 비활성.',
-   'PENDING_V21', 'manual')
+   '27fc9f454308', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
