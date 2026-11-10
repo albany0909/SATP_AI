@@ -216,7 +216,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 9)
+        self.assertEqual(int(spec["version"]), 10)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -229,7 +229,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 9)
+        self.assertEqual(payload["algVer"], 10)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -758,6 +758,8 @@ class SurgeTradeTest(unittest.TestCase):
         labels = [label for _key, label in TAB_COLUMNS]
         self.assertNotIn("원순위", labels)
         self.assertNotIn("1년저점대비%", labels)
+        self.assertNotIn("시장", labels)
+        self.assertIn("상태", labels)
         self.assertIn("첫급등대비", labels)
         self.assertTrue(view["rows"][2]["yellowName"])
         morning = {
@@ -1408,7 +1410,11 @@ class SurgeTradeTest(unittest.TestCase):
             filled = buildTabRows(
                 store.latestForDay("20261110"), "20261110", displayExtras(store.dir, "20261110")
             )["rows"][0]
-            self.assertEqual(filled["index"], "코스닥")
+            self.assertNotIn("index", [key for key, _label in TAB_COLUMNS])
+            self.assertEqual(
+                displayExtras(store.dir, "20261110")["byCode"]["180640"]["market"],
+                "코스닥",
+            )
             self.assertEqual(filled["turnoverEok"], 1.0)
             self.assertEqual(filled["orgnNetMillionKrw"], 10)
             self.assertEqual(filled["frgnNetMillionKrw"], -3)

@@ -30,7 +30,6 @@ FIRST_SURGE_FILE = "firstSurge.json"
 TAB_COLUMNS = (
     ("code", "코드"),
     ("name", "종목명"),
-    ("index", "시장"),
     ("price", "현재가"),
     ("dailyPct", "일간%"),
     ("turnoverEok", "거래대금(억)"),
