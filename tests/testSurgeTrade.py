@@ -216,7 +216,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 15)
+        self.assertEqual(int(spec["version"]), 16)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -229,7 +229,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 15)
+        self.assertEqual(payload["algVer"], 16)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -1416,7 +1416,7 @@ class SurgeTradeTest(unittest.TestCase):
                     "bars": bars,
                     "market": lambda _code: "KOSDAQ",
                     "news": lambda _code: [
-                        {"title": "관세 영향", "url": "https://news.example/a", "publishedAt": "20261110"}
+                        {"title": "한진칼 관세 영향", "url": "https://news.example/a", "publishedAt": "20261110"}
                     ],
                 },
             )
@@ -1671,17 +1671,50 @@ class SurgeTradeTest(unittest.TestCase):
         from trading.surgeTradeEnrich import enrichDisplayed, issueFromHeadlines, issueNeedsFetch
 
         self.assertEqual(leaderIssueTag("지분분쟁 격화"), "경영권분쟁")
+        named = issueFromHeadlines(
+            [
+                {"title": "코스피 반도체 훈풍", "url": "https://n.news.naver.com/m", "publishedAt": "202611101300"},
+                {"title": "한진칼 수주 확대", "url": "https://n.news.naver.com/s", "publishedAt": "202611101200"},
+                {"title": "한진칼 경영권 분쟁", "url": "https://n.news.naver.com/o", "publishedAt": "202611100900"},
+            ],
+            "한진칼",
+            "180640",
+        )
+        self.assertEqual(named["tag"], "지분분쟁")
+        self.assertEqual(named["kind"], "reason")
+        newer = issueFromHeadlines(
+            [
+                {"title": "한진칼 수주", "url": "https://n.news.naver.com/a", "publishedAt": "202611100800"},
+                {"title": "한진칼 공급계약", "url": "https://n.news.naver.com/b", "publishedAt": "202611101500"},
+            ],
+            "한진칼",
+        )
+        self.assertEqual(newer["tag"], "수주")
+        self.assertEqual(newer["firstSurgeDate"], "20261110")
+        theme = issueFromHeadlines(
+            [{"title": "한진칼 항공 부품", "url": "https://n.news.naver.com/t", "publishedAt": "20261110"}],
+            "한진칼",
+        )
+        self.assertEqual(theme["kind"], "theme")
+        self.assertEqual(theme["tag"], "우주항공")
+        skipped = issueFromHeadlines(
+            [{"title": "반도체 훈풍에 코스피 급등", "url": "https://n.news.naver.com/z", "publishedAt": "20261110"}],
+            "한진칼",
+        )
+        self.assertEqual(skipped["tag"], "")
+        self.assertIn("0건", skipped["note"])
         self.assertEqual(leaderIssueTag("대규모 수주 공시"), "수주")
         self.assertEqual(leaderIssueTag("관세 협상"), "관세")
         self.assertEqual(leaderIssueTag("어닝서프라이즈"), "어닝서프라이즈")
         blank = issueFromHeadlines(
             [
-                {"title": "날씨 맑음", "url": "https://n.news.naver.com/a"},
-                {"title": "주가 보합", "url": "https://n.news.naver.com/b"},
-            ]
+                {"title": "한진칼 날씨 맑음", "url": "https://n.news.naver.com/a"},
+                {"title": "한진칼 주가 보합", "url": "https://n.news.naver.com/b"},
+            ],
+            "한진칼",
         )
         self.assertEqual(blank["tag"], "")
-        self.assertIn("헤드라인 2건", blank["note"])
+        self.assertIn("2건", blank["note"])
         now = datetime(2026, 11, 10, 12, 44)
         self.assertTrue(
             issueNeedsFetch(
@@ -1734,7 +1767,7 @@ class SurgeTradeTest(unittest.TestCase):
                 calls["news"] += 1
                 return {
                     "ok": True,
-                    "items": [{"title": "경영권 분쟁", "url": "https://n.news.naver.com/x", "publishedAt": "20261110"}],
+                    "items": [{"title": "한진칼 경영권 분쟁", "url": "https://n.news.naver.com/x", "publishedAt": "20261110"}],
                 }
 
             enrichDisplayed(
@@ -1744,7 +1777,8 @@ class SurgeTradeTest(unittest.TestCase):
             )
             self.assertEqual(calls["news"], 1)
             saved = json.loads((store.dir / "columns_20261110.json").read_text(encoding="utf-8"))
-            self.assertEqual(saved["180640"]["issues"], "경영권분쟁")
+            self.assertEqual(saved["180640"]["issues"], "지분분쟁")
+            self.assertEqual(saved["180640"]["issueKind"], "reason")
 
     def test_offscreen_yellow_cell(self):
         try:

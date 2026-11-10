@@ -56,6 +56,74 @@ LEADER_ISSUE_MAP = (
 )
 
 
+# 급등 이유. 앞쪽이 우선. 주도주 탭은 이 표를 쓰지 않는다.
+REASON_MAP = (
+    ("지분분쟁", ("지분분쟁", "경영권분쟁", "경영권", "지분경쟁", "지분 경쟁")),
+    ("어닝서프라이즈", ("어닝서프라이즈", "어닝서프", "어닝 서프", "깜짝실적", "깜짝 실적", "실적호조", "호실적", "사상 최대", "최대실적", "최대 실적")),
+    ("흑자전환", ("흑자전환", "흑자 전환", "턴어라운드")),
+    ("어닝쇼크", ("어닝쇼크", "어닝 쇼크", "실적 부진", "적자전환", "적자 전환")),
+    ("수주", ("공급계약", "공급 계약", "계약 체결", "수주", "납품")),
+    ("인수합병", ("인수합병", "m&a", "인수", "합병", "매각")),
+    ("관세", ("관세",)),
+    ("전쟁", ("전쟁", "무력충돌", "무력 충돌")),
+    ("코로나", ("코로나", "코로나19", "팬데믹")),
+    ("임상", ("임상", "fda")),
+    ("승인", ("승인", "허가")),
+    ("자사주", ("자사주", "소각")),
+    ("배당", ("배당",)),
+    ("상장", ("공모", "상장")),
+    ("유상증자", ("유상증자",)),
+    ("무상증자", ("무상증자",)),
+    ("정부정책", ("정부정책", "정책", "정부")),
+    ("기술수출", ("기술수출", "기술이전", "라이선스", "라이센스")),
+)
+
+STOCK_ALIASES = {
+    "000660": ("하이닉스", "하닉"),
+    "005930": ("삼성전자", "삼전"),
+    "180640": ("한진칼",),
+    "267850": ("아시아나IDT", "아시아나 IDT"),
+    "181710": ("NHN",),
+}
+
+
+def stockNameKeys(name, code=""):
+    """제목에 있어야 하는 종목명·별칭. 두 글자 미만은 쓰지 않는다."""
+    keys = []
+    for raw in (name, *(STOCK_ALIASES.get(str(code) or "", ()))):
+        text = str(raw or "").strip()
+        if len(text) >= 2 and text not in keys:
+            keys.append(text)
+    return keys
+
+
+def _hit(title, words):
+    low = str(title or "").lower()
+    for word in words:
+        if str(word).lower() in low:
+            return True
+    return False
+
+
+def reasonTag(title):
+    """이유 단어의 대표 태그. 없으면 빈 문자열. 우선순위는 표 순서."""
+    for canon, words in REASON_MAP:
+        if _hit(title, words):
+            return canon
+    return ""
+
+
+def themeTag(title):
+    """종목명 헤드라인에서 테마 단어. 이유 표에 없을 때만 급등주가 쓴다."""
+    low = str(title or "").lower()
+    if not low:
+        return ""
+    for key, lab in LEADER_ISSUE_MAP:
+        if str(key).lower() in low:
+            return lab
+    return ""
+
+
 def leaderIssueTag(title):
     """제목에서 주도주와 같은 첫 단어를 고른다. 없으면 빈 문자열."""
     low = str(title or "").lower()

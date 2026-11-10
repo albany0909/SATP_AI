@@ -16,8 +16,7 @@ from trading.surgeTradeData import (
     selectTabDisplay,
     turnoverEok,
 )
-from trading.leaderIssueWords import leaderIssueTag
-from trading.surgeTradeInputs import tagFromTitle
+from trading.leaderIssueWords import REASON_MAP, reasonTag, stockNameKeys, themeTag
 
 # 52주(거래일 250일) 고가. 당일 봉은 빼고 그 이전만 본다.
 NEW_HIGH_LOOKBACK = 250
@@ -156,36 +155,86 @@ def _splitNews(raw):
     return [], True
 
 
-def issueFromHeadlines(items):
-    """제목과 URL 이 있을 때만 태그. 없으면 빈 칸과 확인한 건수를 남긴다."""
-    checked = 0
+def _titleOf(item):
+    return str((item or {}).get("title") or (item or {}).get("reportNm") or "")
+
+
+def _urlOf(item):
+    return str((item or {}).get("url") or (item or {}).get("newsUrl") or (item or {}).get("sourceUrl") or "")
+
+
+def _whenOf(item):
+    return str((item or {}).get("publishedAt") or (item or {}).get("datetime") or "")
+
+
+def _namesTitle(title, keys):
+    if not keys:
+        return False
+    low = str(title or "").lower()
+    return any(str(key).lower() in low for key in keys)
+
+
+def issueFromHeadlines(items, name="", code=""):
+    """
+    종목명이 들어간 제목만 본다.
+    이유 단어를 우선순위·최신순으로 고르고, 없으면 테마 단어, 둘 다 없으면 빈 칸.
+    """
+    keys = stockNameKeys(name, code)
+    eligible = []
     for item in items or []:
         if not isinstance(item, dict):
             continue
-        title = str(item.get("title") or item.get("reportNm") or "")
-        url = str(item.get("url") or item.get("newsUrl") or item.get("sourceUrl") or "")
-        if title:
-            checked += 1
-        if not url.startswith("http"):
+        title = _titleOf(item)
+        if not title or not _namesTitle(title, keys):
             continue
-        tag = leaderIssueTag(title) or tagFromTitle(title)
-        if tag:
-            return {
-                "tag": tag,
-                "confirmed": True,
-                "sourceUrl": url,
-                "firstSurgeDate": str(item.get("publishedAt") or "")[:8],
-                "note": "headline+url",
-                "checked": checked,
-            }
+        eligible.append(item)
+    checked = len(eligible)
+    reasonBest = None
+    themeBest = None
+    for item in eligible:
+        if not _urlOf(item).startswith("http"):
+            continue
+        title = _titleOf(item)
+        when = _whenOf(item)
+        reason = reasonTag(title)
+        if reason:
+            rank = next(i for i, (canon, _words) in enumerate(REASON_MAP) if canon == reason)
+            cand = (rank, when, item, reason)
+            if reasonBest is None or cand[0] < reasonBest[0] or (cand[0] == reasonBest[0] and cand[1] > reasonBest[1]):
+                reasonBest = cand
+            continue
+        if themeBest is None or when > themeBest[0]:
+            theme = themeTag(title)
+            if theme:
+                themeBest = (when, item, theme)
+    picked = reasonBest or themeBest
+    if reasonBest:
+        _rank, _when, item, tag = reasonBest
+        kind = "reason"
+    elif themeBest:
+        _when, item, tag = themeBest
+        kind = "theme"
+    else:
+        item, tag, kind = None, "", ""
+    if item is not None:
+        return {
+            "tag": tag,
+            "kind": kind,
+            "confirmed": True,
+            "sourceUrl": _urlOf(item),
+            "firstSurgeDate": _whenOf(item)[:8],
+            "note": "headline+url",
+            "checked": checked,
+        }
     if checked:
         return {
             "tag": "",
+            "kind": "",
             "confirmed": False,
-            "note": f"헤드라인 {checked}건, 맞는 단어 없음",
+            "note": f"종목 헤드라인 {checked}건, 맞는 단어 없음",
             "checked": checked,
         }
-    return {"tag": "", "confirmed": False, "note": "확인된 제목·URL 이 없다", "checked": 0}
+    return {"tag": "", "kind": "", "confirmed": False, "note": "종목명 포함 헤드라인 0건", "checked": 0}
 
 
 def issueNeedsFetch(row, now, force=False):
@@ -234,6 +283,7 @@ def displayExtras(directory, asof):
             "sourceUrl": row.get("issueUrl") or "",
             "firstSurgeDate": row.get("issueDate") or "",
             "note": row.get("issueNote") or "",
+            "kind": row.get("issueKind") or "",
         }
         byCode[str(code)] = {
             "market": row.get("market") or "",
@@ -300,11 +350,13 @@ def enrichDisplayed(now, store, fetchers=None, forceIssue=False):
 
     prices = {}
     pcts = {}
+    names = {}
     for raw in snap.get("rows") or []:
         code = str((raw or {}).get("stkCd") or "")
         if code:
             prices[code] = (raw or {}).get("price")
             pcts[code] = ka00198ChangePct(raw)
+            names[code] = (raw or {}).get("name") or (raw or {}).get("stkNm") or ""
     book = loadFirstSurgeBook(store.dir)
     cache = loadColumnCache(store.dir, asof)
     calls = {"ka10059": 0, "ka10081": 0, "ka10100": 0, "news": 0}
@@ -327,6 +379,7 @@ def enrichDisplayed(now, store, fetchers=None, forceIssue=False):
                 pcts.get(code),
                 bookYmd,
                 forceIssue,
+                names.get(code) or "",
             ):
                 newsFailures += 1
         except Exception:
@@ -355,7 +408,7 @@ def enrichDisplayed(now, store, fetchers=None, forceIssue=False):
     }
 
 
-def _fillCode(row, code, asof, now, fetchers, calls, price=None, todayPct=None, bookYmd="", forceIssue=False):
+def _fillCode(row, code, asof, now, fetchers, calls, price=None, todayPct=None, bookYmd="", forceIssue=False, name=""):
     getters = fetchers if isinstance(fetchers, dict) else {}
     if _need(row, now, "market", None):
         market = _call(getters, "market", code, calls, "ka10100")
@@ -413,11 +466,13 @@ def _fillCode(row, code, asof, now, fetchers, calls, price=None, todayPct=None, 
             row["issueConfirmed"] = False
             row["issueUrl"] = ""
             row["issueFailed"] = True
+            row["issueKind"] = ""
             row["issueNote"] = "헤드라인 조회 실패"
             row["issueAt"] = ""
         else:
-            found = issueFromHeadlines(items)
+            found = issueFromHeadlines(items, name, code)
             row["issues"] = found.get("tag") or ""
+            row["issueKind"] = found.get("kind") or ""
             row["issueConfirmed"] = found.get("confirmed") is True
             row["issueUrl"] = found.get("sourceUrl") or ""
             row["issueDate"] = found.get("firstSurgeDate") or ""

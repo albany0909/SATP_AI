@@ -346,6 +346,29 @@ ON DUPLICATE KEY UPDATE
   SRC=VALUES(SRC);
 ```
 
-현재 이벤트 행의 `ALG_VER` 는 15 이다. 헬퍼는 `strategies.impl.surgeTrade.buildAlgVerEvent` 이며 DB 를 열지 않는다.
+v16 은 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `16`
+- YMD: `2026-11-10`
+- SRC: `manual`
+- NOTE: `v16 이슈는 종목명 헤드라인의 이유 태그 우선. 테마는 없을 때만. 주문 비활성.`
+- GIT_HASH: `PENDING_V16`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 16, '2026-11-10',
+   'v16 이슈는 종목명 헤드라인의 이유 태그 우선. 테마는 없을 때만. 주문 비활성.',
+   'PENDING_V16', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+현재 이벤트 행의 `ALG_VER` 는 16 이다. 헬퍼는 `strategies.impl.surgeTrade.buildAlgVerEvent` 이며 DB 를 열지 않는다.
 
 순위 스냅샷과 이슈 확인 표는 `sql/surgeTrade.sql` 이다. 같은 이유로 운영 DB 에 실행하지 않는다.
