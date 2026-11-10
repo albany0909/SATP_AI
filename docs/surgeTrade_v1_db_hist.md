@@ -423,7 +423,7 @@ v19 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-10`
 - SRC: `manual`
 - NOTE: `v19 외국인·기관·연기금. penfnd_etc 백만원. 이슈 색 구분. 주문 비활성.`
-- GIT_HASH: `PENDING_V19`
+- GIT_HASH: `3e17be51393d`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -431,7 +431,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 19, '2026-11-10',
    'v19 외국인·기관·연기금. penfnd_etc 백만원. 이슈 색 구분. 주문 비활성.',
-   'PENDING_V19', 'manual')
+   '3e17be51393d', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
