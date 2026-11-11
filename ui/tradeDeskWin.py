@@ -1981,6 +1981,7 @@ class TradeDeskWin(QMainWindow):
         self._chartStkCd = cd
         self._chartStkNm = nm
         self._chartFetchTried = set()
+        self._subscribeChartQuote(cd)
         if action == "reload":
             self._reloadDeskChart()
             return
@@ -1988,6 +1989,19 @@ class TradeDeskWin(QMainWindow):
         if btn is not None and not btn.isChecked():
             btn.setChecked(True)
         self._onSideTab("chart", True)
+
+    def _subscribeChartQuote(self, code):
+        """차트로 연 종목은 0B 구독에 넣는다. 주문은 내지 않는다."""
+        if not code:
+            return
+        try:
+            from trading.watchRtMonitor import addWatchRtCodes
+
+            addWatchRtCodes([code], "차트")
+        except Exception as err:
+            from utils.termLog import termLog
+
+            termLog(f"[deskChart] 시세 구독 실패 {code}: {err}")
 
     def _openDeskChart(self):
         """차트 탭을 열 때: 선택 종목 일·주·월봉 로드 + 1초 라이브만."""
@@ -2015,6 +2029,7 @@ class TradeDeskWin(QMainWindow):
         self._chartStkCd = cd
         self._chartStkNm = nm
         self._chartFetchTried = set()
+        self._subscribeChartQuote(cd)
         self._reloadDeskChart()
         if not self._chartLiveTimer.isActive():
             self._chartLiveTimer.start(1000)
@@ -2191,10 +2206,13 @@ class TradeDeskWin(QMainWindow):
             info = peekWatchLastPx(cd) or {}
         except Exception:
             return
-        px = info.get("curPrc") or info.get("krxPrc") or info.get("nxtPrc")
+        from utils.chartBarPlan import unifiedLivePx
+
+        today = datetime.now().strftime("%Y%m%d")
+        px = unifiedLivePx(info, today)
         if px is None:
             return
-        self.deskChart.applyLivePx(px)
+        self.deskChart.applyLivePx(px, tickYmd=info.get("tickYmd"))
 
     def _titleText(self, text):
         """섹션 제목 표시. 표 헤더와 구분되도록 감싼다."""

@@ -71,22 +71,24 @@ def loadStoredDayBars(stkCd, endYmd=None):
 
 
 def loadDeskChartBundle(stkCd, endYmd=None):
-    """DB 에 있는 일·주·월봉. 실패는 로그하고 그 주기만 비운다."""
-    bundle = {"day": [], "week": [], "month": [], "errors": []}
-    try:
-        bundle["day"] = list(loadStoredDayBars(stkCd, endYmd=endYmd) or [])
-    except Exception as err:
-        termLog(f"[deskChart] 일봉 DB 실패 {stkCd}: {err}")
-        bundle["errors"].append(f"day:{err}")
-    try:
-        from utils.poleStkPrcStore import loadPoleBars
+    """차트 통합봉만 읽는다. 매매용 AI_DAY_STK_PRC 는 보지 않는다."""
+    from datetime import timedelta
 
-        end = str(endYmd or datetime.now().strftime("%Y%m%d"))[:8]
-        bundle["week"] = list(loadPoleBars(stkCd, "week", endDt=end) or [])
-        bundle["month"] = list(loadPoleBars(stkCd, "month", endDt=end) or [])
-    except Exception as err:
-        termLog(f"[deskChart] 주월봉 DB 실패 {stkCd}: {err}")
-        bundle["errors"].append(f"pole:{err}")
+    from utils.chartBarPlan import CHART_LOOKBACK_DAYS
+    from utils.chartUnifStore import loadUnifBars
+
+    bundle = {"day": [], "week": [], "month": [], "errors": []}
+    end = str(endYmd or datetime.now().strftime("%Y%m%d"))[:8]
+    try:
+        start = (datetime.strptime(end, "%Y%m%d") - timedelta(days=CHART_LOOKBACK_DAYS)).strftime("%Y%m%d")
+    except ValueError:
+        start = "19900101"
+    for key in ("day", "week", "month"):
+        try:
+            bundle[key] = list(loadUnifBars(stkCd, key, startDt=start, endDt=end) or [])
+        except Exception as err:
+            termLog(f"[deskChart] 통합 {key} 실패 {stkCd}: {err}")
+            bundle["errors"].append(f"{key}:{err}")
     return bundle
 
 
@@ -198,37 +200,19 @@ def loadWeekMonthForCodes(stkCds, refetch=False, endDt=None, onProgress=None):
 
 
 def ensureChartBars(stkCd, months=None, refetch=True):
-    """한 종목의 일·주·월봉을 같이 받아 저장한다."""
-    from utils.rankDayPrcLoad import DEFAULT_MONTHS, loadDayPrcForRankStks
+    """한 종목의 통합 일·주·월봉. 매매 일봉 테이블은 건드리지 않는다."""
+    from utils.chartUnifFetch import refreshUnifiedCharts
 
-    span = DEFAULT_MONTHS if months is None else months
-    day = loadDayPrcForRankStks(
-        [stkCd],
-        months=span,
-        skipIfEnough=not refetch,
-        refetchLastDay=True,
-    ) or {}
-    pole = loadWeekMonthForCodes([stkCd], refetch=refetch) or {}
-    fails = []
-    if not day.get("ok"):
-        fails.append(str(day.get("errMsg") or "일봉 실패"))
-    if int(day.get("failCnt") or 0) > 0:
-        fails.extend(day.get("fails") or [])
-    if not pole.get("ok"):
-        fails.append(str(pole.get("errMsg") or "주월봉 실패"))
-    if int(pole.get("failCnt") or 0) > 0:
-        fails.extend(pole.get("fails") or [])
-    err = "; ".join(str(item) for item in fails if item)[:180]
+    got = refreshUnifiedCharts([stkCd], backfill=True) or {}
     return {
-        "ok": not err,
-        "failCnt": int(day.get("failCnt") or 0) + int(pole.get("failCnt") or 0),
-        "upsertCnt": int(day.get("upsertCnt") or 0) + int(pole.get("upsertCnt") or 0),
-        "startDt": day.get("startDt") or "",
-        "endDt": day.get("endDt") or "",
-        "errMsg": err,
+        "ok": bool(got.get("ok")),
+        "failCnt": int(got.get("failCnt") or 0),
+        "upsertCnt": int(got.get("upsertCnt") or 0),
+        "startDt": got.get("startDt") or "",
+        "endDt": got.get("endDt") or "",
+        "errMsg": got.get("errMsg") or "",
         "periods": list(CHART_PERIODS),
-        "day": day,
-        "pole": pole,
+        "unified": got,
     }
 
 
@@ -238,26 +222,18 @@ _surgeLoadPending = None
 
 
 def runSurgeChartLoad(codes, reason="surge"):
-    """표시 종목의 일·주·월봉. 충분하면 건너뛰고, 실패는 로그한다. 주문은 내지 않는다."""
+    """표시 종목의 통합 일·주·월봉. 오늘 봉은 다시 덮어쓴다. 매매 일봉은 쓰지 않는다."""
     from utils.chartBarPlan import mergeLoadCodes
-    from utils.rankDayPrcLoad import DEFAULT_MONTHS, loadDayPrcForRankStks
+    from utils.chartUnifFetch import refreshUnifiedCharts
 
     wanted = mergeLoadCodes(codes)
     termLog(f"[deskChart] 급등주 장중 적재 시작 {len(wanted)}종 ({reason})")
     if not wanted:
         return {"ok": True, "stkCnt": 0, "reason": reason, "summary": "대상 없음"}
-    day = loadDayPrcForRankStks(
-        wanted,
-        months=DEFAULT_MONTHS,
-        skipIfEnough=True,
-        refetchLastDay=False,
-    ) or {}
-    if not day.get("ok"):
-        termLog(f"[deskChart] 일봉 적재 실패 ({reason}): {day.get('errMsg')}")
-    pole = loadWeekMonthForCodes(wanted, refetch=False) or {}
-    if not pole.get("ok"):
-        termLog(f"[deskChart] 주월봉 적재 실패 ({reason}): {pole.get('errMsg')}")
-    return {"ok": bool(day.get("ok")) and bool(pole.get("ok")), "day": day, "pole": pole, "reason": reason}
+    got = refreshUnifiedCharts(wanted, backfill=True) or {}
+    if not got.get("ok"):
+        termLog(f"[deskChart] 통합봉 적재 실패 ({reason}): {got.get('errMsg')}")
+    return {"ok": bool(got.get("ok")), "unified": got, "reason": reason}
 
 
 def requestSurgeChartBars(codes, reason="startup"):

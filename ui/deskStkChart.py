@@ -512,6 +512,15 @@ class CandleChartView(QChartView):
             return
         super().mouseDoubleClickEvent(ev)
 
+    def wheelEvent(self, ev):
+        delta = ev.angleDelta().y()
+        fn = getattr(self, "zoomWheel", None)
+        if delta and fn:
+            fn(delta)
+            ev.accept()
+            return
+        super().wheelEvent(ev)
+
     def drawForeground(self, painter, rect):
         super().drawForeground(painter, rect)
         self._drawPriceLabels(painter)
@@ -606,6 +615,78 @@ class CandleChartView(QChartView):
             painter.restore()
 
 
+class RsiPane(QWidget):
+    """가격 차트와 거래량 사이 RSI14. 보이는 구간만 그린다."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._vals = []
+        self._label = ""
+        self._left = 52
+        self._right = 8
+        self.setMinimumHeight(72)
+        self.setMaximumHeight(96)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def setPad(self, left, right):
+        self._left = max(8, int(left))
+        self._right = max(4, int(right))
+        self.update()
+
+    def setSeries(self, vals, label=""):
+        self._vals = list(vals or [])
+        self._label = str(label or "")
+        self.update()
+
+    def wheelEvent(self, ev):
+        delta = ev.angleDelta().y()
+        fn = getattr(self, "zoomWheel", None)
+        if delta and fn:
+            fn(delta)
+            ev.accept()
+            return
+        super().wheelEvent(ev)
+
+    def paintEvent(self, ev):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor("#FFFFFF"))
+        vals = [v for v in self._vals]
+        p.setFont(QFont(self.font().family(), 8))
+        p.setPen(QColor("#616161"))
+        p.drawText(4, 12, "RSI14")
+        if self._label:
+            p.setPen(QColor("#E65100"))
+            p.drawText(self.rect().adjusted(0, 0, -6, 0), int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop), self._label)
+        nums = [float(v) for v in vals if v is not None]
+        if len(nums) < 2:
+            return
+        left = self._left
+        right = self._right
+        top = 16
+        h = max(self.height() - top - 6, 8)
+        w = max(self.width() - left - right, 8)
+        n = len(vals)
+
+        def y_of(val):
+            return top + (100.0 - float(val)) / 100.0 * h
+
+        p.setPen(QColor("#EEEEEE"))
+        for mark in (30, 70):
+            y = y_of(mark)
+            p.drawLine(int(left), int(y), int(left + w), int(y))
+        p.setPen(QPen(QColor("#7E57C2"), 1.5))
+        prev = None
+        for i, val in enumerate(vals):
+            if val is None:
+                prev = None
+                continue
+            x = left + (i + 0.5) * w / float(n)
+            y = y_of(val)
+            if prev is not None:
+                p.drawLine(int(prev[0]), int(prev[1]), int(x), int(y))
+            prev = (x, y)
+
+
 class VolBarView(QWidget):
     """일봉 바로 아래 거래량. Qt 막대(카테고리 많으면 폭 0) 대신 직접 그린다."""
 
@@ -617,6 +698,15 @@ class VolBarView(QWidget):
         self.setMinimumHeight(88)
         self.setMaximumHeight(120)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def wheelEvent(self, ev):
+        delta = ev.angleDelta().y()
+        fn = getattr(self, "zoomWheel", None)
+        if delta and fn:
+            fn(delta)
+            ev.accept()
+            return
+        super().wheelEvent(ev)
 
     def setPlotPad(self, left, right):
         self._left = max(8, int(left))
@@ -777,8 +867,14 @@ class DeskStkChartPane(QWidget):
         self.candleView.srLineDeleted.connect(self._onSrLineDeleted)
         self.candleChart.plotAreaChanged.connect(self._onPlotArea)
         lay.addWidget(self.candleView, 1)
+        self.candleView.zoomWheel = self._onZoomWheel
+
+        self.rsiView = RsiPane()
+        self.rsiView.zoomWheel = self._onZoomWheel
+        lay.addWidget(self.rsiView, 0)
 
         self.volView = VolBarView()
+        self.volView.zoomWheel = self._onZoomWheel
         lay.addWidget(self.volView, 0)
 
         self.srHdr = QLabel("지지선 · 차트에서 드래그 이동, 더블클릭 삭제")
@@ -854,6 +950,8 @@ class DeskStkChartPane(QWidget):
             self.headLbl.setText(f"{self._stkNm}({self._stkCd}) {self._barTpNm()} 없음")
             self.candleChart.removeAllSeries()
             self.volView.setRows([])
+            if getattr(self, "rsiView", None) is not None:
+                self.rsiView.setSeries([], "")
             self.barsMissing.emit(tp)
             return
         self._redraw()
@@ -866,19 +964,33 @@ class DeskStkChartPane(QWidget):
         return list(self._bars[-n:])
 
     def _zoomMore(self):
-        """+ : 화면에 더 많은 봉 (기간 확대)."""
+        """+ 와 휠 아래: 더 긴 과거. 상한은 저장된 봉이며 최대 30년치다."""
+        self._setShowCount(True)
+
+    def _zoomLess(self):
+        """− 와 휠 위: 최근 봉만 크게."""
+        self._setShowCount(False)
+
+    def _setShowCount(self, zoomOut):
+        from utils.chartBarPlan import nextShowCount
+
         total = len(self._bars)
         if total <= 0:
             return
         cfg = self._showCfg()
-        self._showN = min(total, int(self._showN) + int(cfg["step"]))
+        nxt = nextShowCount(
+            self._showN, total, zoomOut, step=cfg["step"], minShow=cfg["min"]
+        )
+        if nxt == int(self._showN):
+            return
+        self._showN = nxt
         self._redraw()
 
-    def _zoomLess(self):
-        """− : 최근 봉만 (기간 축소)."""
-        cfg = self._showCfg()
-        self._showN = max(int(cfg["min"]), int(self._showN) - int(cfg["step"]))
-        self._redraw()
+    def _onZoomWheel(self, deltaY):
+        if deltaY > 0:
+            self._zoomLess()
+        elif deltaY < 0:
+            self._zoomMore()
 
     def _toggleSrPick(self, on):
         self.candleView.pickSr = bool(on)
@@ -979,6 +1091,9 @@ class DeskStkChartPane(QWidget):
         left = int(topLeft.x())
         right = int(view.width() - botRight.x())
         self.volView.setPlotPad(left, max(right, 4))
+        rsi = getattr(self, "rsiView", None)
+        if rsi is not None:
+            rsi.setPad(left, max(right, 4))
         # 첫 표시 때 plotArea 가 늦게 잡히면 월 눈금이 한쪽으로 갔다가 돌아온다.
         # 영역이 확정된 뒤에만 월 글자를 그리고, 뷰를 다시 칠한다.
         vw = max(view.viewport().width(), view.width(), 1)
@@ -998,6 +1113,8 @@ class DeskStkChartPane(QWidget):
         for ax in list(self.candleChart.axes()):
             self.candleChart.removeAxis(ax)
         self.volView.setRows([])
+        if getattr(self, "rsiView", None) is not None:
+            self.rsiView.setSeries([], "")
         self.srList.clear()
         self.candleView.setSrHits([])
         self.candleView.setXTicks(0, [])
@@ -1021,7 +1138,7 @@ class DeskStkChartPane(QWidget):
         for key in ("day", "week", "month"):
             if key in data:
                 self._byTp[key] = [dict(b) for b in (data.get(key) or [])]
-        self._dayBars = list(self._byTp.get("day") or [])
+        self._dayBars = self._byTp.get("day") or []
         self._rebuildBars()
         note = str(data.get("note") or "").strip()
         if not self._bars:
@@ -1032,6 +1149,8 @@ class DeskStkChartPane(QWidget):
             self.headLbl.setText(title)
             self.candleChart.removeAllSeries()
             self.volView.setRows([])
+            if getattr(self, "rsiView", None) is not None:
+                self.rsiView.setSeries([], "")
             self._fillSrList()
             return
         self._setHeadTitle()
@@ -1040,40 +1159,47 @@ class DeskStkChartPane(QWidget):
         self._fillSrList()
         self._redraw()
 
-    def applyLivePx(self, pxRaw):
+    def applyLivePx(self, pxRaw, tickYmd=None):
         """
-        당일 일봉만 갱신한 뒤 주·월·년봉을 다시 묶는다.
-        0B 명세에 거래량 FID 가 없어 당일 거래량은 일봉값을 유지한다.
+        오늘 통합 시세로 당일 봉의 종가·고저만 고친다.
+        날짜가 오늘이 아니거나 오늘 봉이 없으면 건드리지 않는다.
         """
-        px = _absPx(pxRaw)
-        if px is None or not self._dayBars or not self._stkCd:
+        from utils.chartBarPlan import applyChartLive
+
+        updated = applyChartLive(self._dayBars, self._liveYmd, pxRaw, tickYmd)
+        if not updated:
             return False
-        last = self._dayBars[-1]
-        lastDt = str(last.get("tradeDt") or "")[:8]
-        if lastDt == self._liveYmd and abs(float(last.get("close") or 0) - px) < 0.5:
-            return False
-        if lastDt == self._liveYmd:
-            last["close"] = px
-            last["high"] = max(float(last.get("high") or px), px)
-            lo = float(last.get("low") or 0)
-            last["low"] = px if lo <= 0 else min(lo, px)
-            if float(last.get("open") or 0) <= 0:
-                last["open"] = px
-        else:
-            fresh = {
-                "tradeDt": self._liveYmd,
-                "open": px,
-                "high": px,
-                "low": px,
-                "close": px,
-                "qty": 0,
-            }
-            self._dayBars.append(fresh)
+        self._dayBars = updated
+        if isinstance(getattr(self, "_byTp", None), dict):
+            self._byTp["day"] = self._dayBars
         if self._barTp != "day":
             return True
         self._rebuildBars()
         self._redraw()
         return True
+
+    def _paintRsi(self, allBars, visStart, visCount):
+        view = getattr(self, "rsiView", None)
+        if view is None:
+            return
+        closes = []
+        for bar in allBars or []:
+            try:
+                closes.append(float(bar.get("close") or 0))
+            except (TypeError, ValueError):
+                closes.append(0.0)
+        from strategies.indicators import calcRsiSeries
+
+        series = calcRsiSeries(closes, 14) if len(closes) > 14 else []
+        start = max(0, int(visStart))
+        count = max(0, int(visCount))
+        visible = series[start:start + count] if series else []
+        current = ""
+        for val in reversed(series):
+            if val is not None:
+                current = f"{float(val):.2f}"
+                break
+        view.setSeries(visible, current)
 
     def _redraw(self):
         allBars = self._bars
@@ -1108,6 +1234,7 @@ class DeskStkChartPane(QWidget):
             volRows.append({"qty": q, "up": c >= o})
 
         self.volView.setRows(volRows)
+        self._paintRsi(allBars, visStart, len(vis))
 
         self.candleChart.removeAllSeries()
         for ax in list(self.candleChart.axes()):

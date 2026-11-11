@@ -28,12 +28,127 @@ def chartFetchExpired(startedMono, nowMono, timeoutSec=CHART_FETCH_TIMEOUT_SEC):
         return False
 
 
+def unifiedStkCd(code):
+    """키움 SOR 통합 코드. 명세 예: 039490_AL. ka00001 이 아니다."""
+    from utils.stkCdUtil import normStkCd
+
+    text = normStkCd(code).upper()
+    if text.endswith("_AL"):
+        text = text[:-3]
+    if text.endswith("_NX"):
+        text = text[:-3]
+    digits = ""
+    for ch in text:
+        if ch.isdigit():
+            digits += ch
+        else:
+            break
+    if len(digits) < 6:
+        return ""
+    return digits[-6:] + UNIFIED_STK_SUFFIX
+
+
+def chartTailNeedsRefresh(maxDt, today):
+    """마지막 봉이 없거나 오늘 이하면 꼬리를 다시 받는다. 장중 미완성 봉을 덮어쓴다."""
+    day = str(today or "")[:8]
+    last = str(maxDt or "")[:8]
+    if len(day) != 8:
+        return False
+    if len(last) != 8:
+        return True
+    return last <= day
+
+
+def applyChartLive(bars, liveYmd, px, tickYmd):
+    """통합 현재가로 오늘 봉의 종가·고가·저가만 갱신한다. 시가는 유지한다.
+
+    tick 날짜가 오늘이 아니거나 오늘 봉이 없으면 None. 가짜 도지는 만들지 않는다.
+    """
+    day = str(liveYmd or "")[:8]
+    tick = str(tickYmd or "")[:8]
+    if len(day) != 8 or tick != day or not bars:
+        return None
+    try:
+        price = abs(float(px))
+    except (TypeError, ValueError):
+        return None
+    if price <= 0:
+        return None
+    out = [dict(bar) for bar in bars]
+    last = out[-1]
+    if str(last.get("tradeDt") or "")[:8] != day:
+        return None
+    last["close"] = price
+    try:
+        high = float(last.get("high") or 0)
+    except (TypeError, ValueError):
+        high = 0.0
+    last["high"] = price if high <= 0 else max(high, price)
+    try:
+        low = float(last.get("low") or 0)
+    except (TypeError, ValueError):
+        low = 0.0
+    last["low"] = price if low <= 0 else min(low, price)
+    try:
+        opened = float(last.get("open") or 0)
+    except (TypeError, ValueError):
+        opened = 0.0
+    if opened <= 0:
+        last["open"] = price
+    return out
+
+
+def unifiedLivePx(info, today):
+    """오늘 0B 만. KRX·NXT 중 시각이 늦은 가격을 통합 현재가로 본다."""
+    row = info or {}
+    if str(row.get("tickYmd") or "")[:8] != str(today or "")[:8]:
+        return None
+
+    def _px(raw):
+        try:
+            val = abs(float(str(raw).replace(",", "").replace("+", "")))
+        except (TypeError, ValueError):
+            return None
+        return val if val > 0 else None
+
+    krxTm = str(row.get("krxTm") or "")
+    nxtTm = str(row.get("nxtTm") or "")
+    nxtPx = _px(row.get("nxtPrc"))
+    krxPx = _px(row.get("krxPrc"))
+    if nxtPx is not None and nxtTm and (not krxTm or nxtTm >= krxTm):
+        return nxtPx
+    if krxPx is not None:
+        return krxPx
+    if nxtPx is not None:
+        return nxtPx
+    return _px(row.get("curPrc"))
+
+
+def nextShowCount(showN, total, zoomOut, step=20, minShow=20):
+    """zoomOut 이면 더 긴 과거. 상한은 저장된 봉 수이며 없는 봉은 만들지 않는다."""
+    try:
+        shown = int(showN)
+        bars = int(total)
+        jump = max(int(step), max(1, shown // 10))
+        floor = int(minShow)
+    except (TypeError, ValueError):
+        return 20
+    if bars <= 0:
+        return max(floor, 0)
+    if zoomOut:
+        return min(bars, shown + jump)
+    return max(min(floor, bars), shown - jump)
+
+
 def intradayChartWanted(reason):
     return str(reason or "") in INTRADAY_CHART_REASONS
 
 
 # 차트 금액축. 국내 시세 화면처럼 오른쪽에 둔다.
 CHART_PRICE_AXIS_RIGHT = True
+# 차트 통합봉 조회·표시 상한. 상장이 짧거나 원천에 없으면 있는 봉만 쓴다.
+CHART_LOOKBACK_DAYS = 365 * 30
+UNIFIED_STK_SUFFIX = "_AL"
 DESK_SPLIT_MIN_LEFT = 360
 DESK_SPLIT_MIN_RIGHT = 300
 DESK_SPLIT_MIN_CHART = 380

@@ -709,6 +709,15 @@ def _monCodes():
     except Exception as err:
         termLog(f"[watchRt] 관리종목 병합 실패: {err}")
     try:
+        from utils.chartBarPlan import collectSurgeChartCds
+
+        for cd in collectSurgeChartCds() or []:
+            if cd and cd not in seen and len(codes) < _MAX_STK:
+                seen.add(cd)
+                codes.append(cd)
+    except Exception as err:
+        termLog(f"[watchRt] 급등주 구독 병합 실패: {err}")
+    try:
         from trading.surgeTradeInputs import srgQuoteCodes
 
         for cd in srgQuoteCodes():

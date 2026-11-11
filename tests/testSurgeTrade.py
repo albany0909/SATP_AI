@@ -218,7 +218,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 28)
+        self.assertEqual(int(spec["version"]), 29)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -231,7 +231,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 28)
+        self.assertEqual(payload["algVer"], 29)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -1774,6 +1774,42 @@ class SurgeTradeTest(unittest.TestCase):
         from utils.chartBarPlan import CHART_PRICE_AXIS_RIGHT
 
         self.assertTrue(CHART_PRICE_AXIS_RIGHT)
+        from strategies.indicators import calcRsiSeries
+        from utils.chartBarPlan import (
+            CHART_LOOKBACK_DAYS,
+            applyChartLive,
+            chartTailNeedsRefresh,
+            nextShowCount,
+            unifiedLivePx,
+            unifiedStkCd,
+        )
+
+        self.assertEqual(unifiedStkCd("222800"), "222800_AL")
+        self.assertEqual(CHART_LOOKBACK_DAYS, 365 * 30)
+        todayBar = [{"tradeDt": "20261111", "open": 108000, "high": 110000, "low": 107600, "close": 109000, "qty": 10}]
+        live = applyChartLive(todayBar, "20261111", 123300, "20261111")
+        self.assertEqual(live[0]["open"], 108000)
+        self.assertEqual(live[0]["close"], 123300)
+        self.assertEqual(live[0]["high"], 123300)
+        self.assertEqual(live[0]["low"], 107600)
+        self.assertIsNone(applyChartLive(todayBar, "20261111", 97700, "20261106"))
+        self.assertIsNone(applyChartLive(
+            [{"tradeDt": "20261110", "open": 1, "high": 1, "low": 1, "close": 1, "qty": 1}],
+            "20261111", 123300, "20261111",
+        ))
+        self.assertTrue(chartTailNeedsRefresh("20261111", "20261111"))
+        self.assertTrue(chartTailNeedsRefresh("", "20261111"))
+        self.assertIsNone(unifiedLivePx({"tickYmd": "20261106", "curPrc": 97700}, "20261111"))
+        self.assertEqual(
+            unifiedLivePx({"tickYmd": "20261111", "krxPrc": 123600, "krxTm": "153000", "nxtPrc": 123300, "nxtTm": "181700"}, "20261111"),
+            123300,
+        )
+        self.assertEqual(nextShowCount(60, 7500, True, step=20, minShow=20), 80)
+        self.assertEqual(nextShowCount(60, 7500, False, step=20, minShow=20), 40)
+        self.assertEqual(nextShowCount(7400, 7500, True, step=20, minShow=20), 7500)
+        closes = [float(100 + i) for i in range(20)]
+        self.assertEqual(calcRsiSeries(closes[:10], 14), [None] * 10)
+        self.assertIsNotNone(calcRsiSeries(closes, 14)[-1])
 
     def test_recent_year_uses_daily_low_without_extra_fetch(self):
         from trading.surgeTradeData import formatYearRisePct, recentYearLow, yearRisePct
