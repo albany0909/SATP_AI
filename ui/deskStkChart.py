@@ -18,6 +18,7 @@ from PySide6.QtCharts import (
 from PySide6.QtCore import QMargins, QRectF, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QButtonGroup,
+    QCheckBox,
 )
 
 _MA_PERIODS = (5, 10, 20, 60, 120)
@@ -1063,6 +1065,7 @@ class DeskStkChartPane(QWidget):
         self.headLbl = QLabel("관심종목에서 종목을 선택하세요")
         self.headLbl.setStyleSheet("font-weight: 700; font-size: 13px; color: #111;")
         self.headLbl.setWordWrap(True)
+        self.headLbl.setMaximumWidth(168)
         self.btnAddSr = QToolButton()
         self.btnAddSr.setText("지지선")
         self.btnAddSr.setToolTip("켠 뒤 차트 위로 마우스를 올리면 선이 따라가고, 클릭한 자리에 넣습니다")
@@ -1100,7 +1103,29 @@ class DeskStkChartPane(QWidget):
         top.addWidget(self.btnRefresh)
         top.addWidget(self.btnAddSr)
         lay.addLayout(top)
-        lay.addWidget(self.headLbl)
+        from utils.chartBarPlan import CHART_SIGNAL_GROUPS, chartSignalDefaults
+
+        nameRow = QHBoxLayout()
+        nameRow.setSpacing(6)
+        nameRow.addWidget(self.headLbl, 0, Qt.AlignmentFlag.AlignTop)
+        self._sigOn = chartSignalDefaults()
+        self._sigBoxes = {}
+        sigGrid = QGridLayout()
+        sigGrid.setContentsMargins(0, 0, 0, 0)
+        sigGrid.setHorizontalSpacing(8)
+        sigGrid.setVerticalSpacing(0)
+        for i, (key, label) in enumerate(CHART_SIGNAL_GROUPS):
+            box = QCheckBox(label)
+            box.setChecked(True)
+            box.setProperty("sigKey", key)
+            box.setStyleSheet("QCheckBox { font-size: 11px; spacing: 2px; }")
+            box.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+            box.toggled.connect(self._onSignalToggled)
+            self._sigBoxes[key] = box
+            sigGrid.addWidget(box, i // 2, i % 2)
+        nameRow.addLayout(sigGrid, 0)
+        nameRow.addStretch(1)
+        lay.addLayout(nameRow)
 
         self.candleChart = QChart()
         self.candleChart.legend().setVisible(True)
@@ -1168,6 +1193,16 @@ class DeskStkChartPane(QWidget):
 
     def _barTpNm(self):
         return _BAR_TP_NM.get(self._barTp) or "일봉"
+
+    def _onSignalToggled(self, checked):
+        """표시만 바꾼다. 다시 받지 않고, 창이 열려 있는 동안 유지한다."""
+        box = self.sender()
+        key = str(box.property("sigKey") or "") if box is not None else ""
+        from utils.chartBarPlan import setChartSignal
+
+        self._sigOn = setChartSignal(getattr(self, "_sigOn", None), key, checked)
+        if self._bars:
+            self._redraw()
 
     def _setHeadTitle(self):
         if self._stkNm and self._stkCd:
@@ -1472,7 +1507,10 @@ class DeskStkChartPane(QWidget):
         count = max(0, int(visCount))
         visible = series[start:start + count] if series else []
         visSig = signal[start:start + count] if signal else []
-        visMarks = marks[start:start + count] if marks else []
+        from utils.chartBarPlan import filterCrossMarks, signalFlags
+
+        showRsi = signalFlags(getattr(self, "_sigOn", None))["rsi"]
+        visMarks = filterCrossMarks(marks[start:start + count] if marks else [], showRsi)
         current = ""
         for val in reversed(series):
             if val is not None:
@@ -1505,11 +1543,14 @@ class DeskStkChartPane(QWidget):
             if val is not None:
                 sigNow = f"S {float(val):.2f}"
                 break
+        from utils.chartBarPlan import filterCrossMarks, signalFlags
+
+        showMacd = signalFlags(getattr(self, "_sigOn", None))["macd"]
         view.setSeries(
             macd[start:start + count],
             current,
             signal=signal[start:start + count],
-            marks=marks[start:start + count],
+            marks=filterCrossMarks(marks[start:start + count], showMacd),
             signalLabel=sigNow,
         )
 
@@ -1588,7 +1629,12 @@ class DeskStkChartPane(QWidget):
         self.volView.setRows(volRows)
         self._paintRsi(allBars, visStart, len(vis))
         self._paintMacd(allClose, visStart, len(vis))
-        timing = self._timingRows(allBars, allClose, visStart, len(vis))
+        from utils.chartBarPlan import filterPriceSignalMarks
+
+        timing = filterPriceSignalMarks(
+            self._timingRows(allBars, allClose, visStart, len(vis)),
+            getattr(self, "_sigOn", None),
+        )
 
         self.candleChart.removeAllSeries()
         for ax in list(self.candleChart.axes()):

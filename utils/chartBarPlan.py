@@ -152,6 +152,61 @@ UNIFIED_STK_SUFFIX = "_AL"
 DESK_SPLIT_MIN_LEFT = 360
 DESK_SPLIT_MIN_RIGHT = 300
 DESK_SPLIT_MIN_CHART = 380
+# 차트 시그널 표시. 세션 안에서만 켜고 끈다. 선과 칸은 남긴다.
+CHART_SIGNAL_GROUPS = (
+    ("ma", "이평크로스"),
+    ("brk", "돌파"),
+    ("rsi", "RSI크로스"),
+    ("macd", "MACD크로스"),
+)
+
+
+def chartSignalDefaults():
+    """네 표시는 기본으로 켜 둔다."""
+    return {key: True for key, _label in CHART_SIGNAL_GROUPS}
+
+
+def signalFlags(flags):
+    """없는 키는 기본 켜짐. 모르는 키는 넣지 않는다."""
+    out = chartSignalDefaults()
+    if isinstance(flags, dict):
+        for key, _label in CHART_SIGNAL_GROUPS:
+            if key in flags:
+                out[key] = bool(flags[key])
+    return out
+
+
+def setChartSignal(flags, key, checked):
+    """한 그룹만 바꾼다. 나머지는 유지한다."""
+    out = signalFlags(flags)
+    if key in out:
+        out[key] = bool(checked)
+    return out
+
+
+def filterPriceSignalMarks(rows, flags):
+    """이평 삼각과 돌파 꺾쇠만 숨긴다. 입력 목록은 바꾸지 않는다."""
+    on = signalFlags(flags)
+    kept = []
+    for row in rows or []:
+        kind = str((row or {}).get("kind") or "")
+        if kind in ("maGolden", "maDead"):
+            if on["ma"]:
+                kept.append(row)
+        elif kind in ("brkHigh", "brkLow"):
+            if on["brk"]:
+                kept.append(row)
+        elif row:
+            kept.append(row)
+    return kept
+
+
+def filterCrossMarks(marks, shown):
+    """끄면 자리 수는 유지하고 표시만 지운다."""
+    seq = list(marks or [])
+    if shown:
+        return seq
+    return [None] * len(seq)
 
 
 def deskSideSplitSizes(total, saved=None, chartOpen=False):

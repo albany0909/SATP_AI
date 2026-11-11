@@ -218,7 +218,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 31)
+        self.assertEqual(int(spec["version"]), 32)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -231,7 +231,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 31)
+        self.assertEqual(payload["algVer"], 32)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -2287,6 +2287,63 @@ class SurgeTradeTest(unittest.TestCase):
         lows = [1.0] + [5.0] * 20 + [4.0]
         self.assertEqual(breakoutMarks(highs, lows, 20)[-1], "both")
         self.assertIsNone(breakoutMarks([10.0, 9.0], [4.0, 4.0], 20)[1])
+
+    def test_chart_signal_toggle_state(self):
+        from utils.chartBarPlan import (
+            CHART_SIGNAL_GROUPS,
+            chartSignalDefaults,
+            filterCrossMarks,
+            filterPriceSignalMarks,
+            setChartSignal,
+        )
+
+        flags = chartSignalDefaults()
+        self.assertEqual([key for key, _label in CHART_SIGNAL_GROUPS], ["ma", "brk", "rsi", "macd"])
+        self.assertEqual([label for _key, label in CHART_SIGNAL_GROUPS], ["이평크로스", "돌파", "RSI크로스", "MACD크로스"])
+        self.assertTrue(all(flags.values()))
+        rows = [
+            {"i": 1, "kind": "maGolden", "px": 10},
+            {"i": 2, "kind": "brkHigh", "px": 12},
+            {"i": 3, "kind": "maDead", "px": 9},
+            {"i": 4, "kind": "brkLow", "px": 8},
+        ]
+        hiddenMa = filterPriceSignalMarks(rows, setChartSignal(flags, "ma", False))
+        self.assertEqual([row["kind"] for row in hiddenMa], ["brkHigh", "brkLow"])
+        self.assertEqual(len(rows), 4)
+        hiddenBrk = filterPriceSignalMarks(rows, setChartSignal(flags, "brk", False))
+        self.assertEqual([row["kind"] for row in hiddenBrk], ["maGolden", "maDead"])
+        again = setChartSignal(setChartSignal(flags, "rsi", False), "rsi", True)
+        self.assertTrue(again["rsi"])
+        self.assertTrue(again["macd"])
+        marks = ["golden", None, "dead"]
+        self.assertEqual(filterCrossMarks(marks, False), [None, None, None])
+        self.assertEqual(filterCrossMarks(marks, True), marks)
+        self.assertEqual(marks, ["golden", None, "dead"])
+        self.assertEqual(setChartSignal(flags, "nope", False), flags)
+
+    def test_chart_signal_checkbox_session(self):
+        try:
+            import os
+
+            os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+            from PySide6.QtWidgets import QApplication
+            from ui.deskStkChart import DeskStkChartPane
+        except Exception as err:
+            self.skipTest(f"PySide6 offscreen unavailable: {err}")
+        app = QApplication.instance() or QApplication([])
+        pane = DeskStkChartPane()
+        self.assertTrue(all(box.isChecked() for box in pane._sigBoxes.values()))
+        pane._sigBoxes["ma"].setChecked(False)
+        pane.setChartBundle(
+            "222800",
+            "심텍",
+            {"day": [{"tradeDt": "20261111", "open": 1, "high": 2, "low": 1, "close": 2, "qty": 1}]},
+        )
+        self.assertFalse(pane._sigOn["ma"])
+        self.assertTrue(pane._sigOn["brk"])
+        self.assertTrue(pane._sigOn["rsi"])
+        self.assertTrue(pane._sigOn["macd"])
+        app.processEvents()
 
     def test_offscreen_yellow_cell(self):
         try:
