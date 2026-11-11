@@ -563,7 +563,7 @@ v25 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-11`
 - SRC: `manual`
 - NOTE: `v25 급등주 장중 일·주·월봉. 차트 조회 시간 초과. 주문 비활성.`
-- GIT_HASH: `PENDING_V25`
+- GIT_HASH: `68823af65106`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -571,7 +571,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 25, '2026-11-11',
    'v25 급등주 장중 일·주·월봉. 차트 조회 시간 초과. 주문 비활성.',
-   'PENDING_V25', 'manual')
+   '68823af65106', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
