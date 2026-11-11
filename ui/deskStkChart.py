@@ -539,7 +539,10 @@ class CandleChartView(QChartView):
         painter.drawLine(int(p0.x()), int(y), int(p1.x()), int(y))
         painter.setPen(QColor(_SR_COLOR))
         painter.setFont(QFont(self.font().family(), 9))
-        painter.drawText(int(p0.x()) + 4, int(y) - 4, _fmtWon(self._draftPx))
+        if getattr(self, "_priceOnRight", True):
+            painter.drawText(int(p1.x()) + 6, int(y) - 4, _fmtWon(self._draftPx))
+        else:
+            painter.drawText(int(p0.x()) + 4, int(y) - 4, _fmtWon(self._draftPx))
 
     def _drawPriceLabels(self, painter):
         """기본 축 숫자(콤마 없음) 대신 금액 콤마 라벨을 같은 자리에 그린다."""
@@ -557,16 +560,18 @@ class CandleChartView(QChartView):
         n = max(int(ax.tickCount() or 5), 2)
         painter.setPen(QColor("#424242"))
         painter.setFont(QFont(self.font().family(), 8))
+        onRight = getattr(self, "_priceOnRight", True)
         for i in range(n):
             val = y1 + (y0 - y1) * i / float(n - 1)
             ratio = (y0 - val) / (y0 - y1)
             y = p0.y() + ratio * (p1.y() - p0.y())
-            box = QRectF(p0.x() - 78, y - 8, 74, 16)
-            painter.drawText(
-                box,
-                int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
-                _fmtWon(val),
-            )
+            if onRight:
+                box = QRectF(p1.x() + 6, y - 8, 78, 16)
+                align = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            else:
+                box = QRectF(p0.x() - 78, y - 8, 74, 16)
+                align = int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            painter.drawText(box, align, _fmtWon(val))
 
     def _drawMonthLabels(self, painter):
         """plotArea 아래 YYYY-MM, 기울여 비율 간격. 겹치면 건너뛴다."""
@@ -759,7 +764,7 @@ class DeskStkChartPane(QWidget):
         self.candleChart.legend().setVisible(True)
         self.candleChart.legend().setAlignment(Qt.AlignmentFlag.AlignTop)
         self.candleChart.setBackgroundRoundness(0)
-        self.candleChart.setMargins(QMargins(0, 0, 10, 52))
+        self.candleChart.setMargins(QMargins(48, 0, 8, 52))
         self.candleView = CandleChartView(self.candleChart)
         self.candleView.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.candleView.setMinimumHeight(200)
@@ -1123,10 +1128,18 @@ class DeskStkChartPane(QWidget):
             axY.setRange(max(0.0, lo - pad), hi + pad)
         self._yAxis = axY
         self.candleView._yAxis = axY
+        from utils.chartBarPlan import CHART_PRICE_AXIS_RIGHT
+
+        self.candleView._priceOnRight = bool(CHART_PRICE_AXIS_RIGHT)
+        priceSide = (
+            Qt.AlignmentFlag.AlignRight
+            if self.candleView._priceOnRight
+            else Qt.AlignmentFlag.AlignLeft
+        )
 
         self.candleChart.addSeries(candle)
         self.candleChart.addAxis(axX, Qt.AlignmentFlag.AlignBottom)
-        self.candleChart.addAxis(axY, Qt.AlignmentFlag.AlignLeft)
+        self.candleChart.addAxis(axY, priceSide)
         candle.attachAxis(axX)
         candle.attachAxis(axY)
         for mk in self.candleChart.legend().markers(candle):

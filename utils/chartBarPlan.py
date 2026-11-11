@@ -32,6 +32,8 @@ def intradayChartWanted(reason):
     return str(reason or "") in INTRADAY_CHART_REASONS
 
 
+# 차트 금액축. 국내 시세 화면처럼 오른쪽에 둔다.
+CHART_PRICE_AXIS_RIGHT = True
 DESK_SPLIT_MIN_LEFT = 360
 DESK_SPLIT_MIN_RIGHT = 300
 DESK_SPLIT_MIN_CHART = 380

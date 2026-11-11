@@ -218,7 +218,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 27)
+        self.assertEqual(int(spec["version"]), 28)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -231,7 +231,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 27)
+        self.assertEqual(payload["algVer"], 28)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -1771,6 +1771,9 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertGreaterEqual(narrow[0], 360)
         self.assertGreaterEqual(narrow[1], 300)
         self.assertLess(narrow[1], wide[1])
+        from utils.chartBarPlan import CHART_PRICE_AXIS_RIGHT
+
+        self.assertTrue(CHART_PRICE_AXIS_RIGHT)
 
     def test_recent_year_uses_daily_low_without_extra_fetch(self):
         from trading.surgeTradeData import formatYearRisePct, recentYearLow, yearRisePct
