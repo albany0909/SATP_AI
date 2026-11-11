@@ -586,7 +586,7 @@ v26 은 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-11`
 - SRC: `manual`
 - NOTE: `v26 관심종목 클릭 시 차트 탭. 주문 비활성.`
-- GIT_HASH: `PENDING_V26`
+- GIT_HASH: `e6f9cbd3dbac`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -594,7 +594,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 26, '2026-11-11',
    'v26 관심종목 클릭 시 차트 탭. 주문 비활성.',
-   'PENDING_V26', 'manual')
+   'e6f9cbd3dbac', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
