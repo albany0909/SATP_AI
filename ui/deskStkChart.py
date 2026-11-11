@@ -616,7 +616,7 @@ class CandleChartView(QChartView):
 
 
 class RsiPane(QWidget):
-    """가격 차트와 거래량 사이 RSI14. 보이는 구간만 그린다."""
+    """거래량 아래 칸의 RSI14. 보이는 구간만 그린다."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -777,7 +777,7 @@ class VolBarView(QWidget):
 
 
 class DeskStkChartPane(QWidget):
-    """일·주·월봉 + 바로 아래 거래량 + SMA + 지지선."""
+    """일·주·월봉, 그 아래 거래량, 그 아래 RSI14, 그리고 지지선."""
 
     barsMissing = Signal(str)
 
@@ -869,13 +869,13 @@ class DeskStkChartPane(QWidget):
         lay.addWidget(self.candleView, 1)
         self.candleView.zoomWheel = self._onZoomWheel
 
-        self.rsiView = RsiPane()
-        self.rsiView.zoomWheel = self._onZoomWheel
-        lay.addWidget(self.rsiView, 0)
-
         self.volView = VolBarView()
         self.volView.zoomWheel = self._onZoomWheel
         lay.addWidget(self.volView, 0)
+
+        self.rsiView = RsiPane()
+        self.rsiView.zoomWheel = self._onZoomWheel
+        lay.addWidget(self.rsiView, 0)
 
         self.srHdr = QLabel("지지선 · 차트에서 드래그 이동, 더블클릭 삭제")
         self.srHdr.setStyleSheet("font-size: 11px; color: #555;")
@@ -885,6 +885,8 @@ class DeskStkChartPane(QWidget):
         self.srList.setToolTip("더블클릭하면 지지선을 지웁니다")
         self.srList.itemDoubleClicked.connect(self._delSrItem)
         lay.addWidget(self.srList)
+        self.srHdr.setVisible(False)
+        self.srList.setVisible(False)
 
     def showEvent(self, ev):
         super().showEvent(ev)
@@ -1069,6 +1071,9 @@ class DeskStkChartPane(QWidget):
             it = QListWidgetItem(f"{_fmtWon(r['px'])}  {r.get('note') or '지지'}")
             it.setData(Qt.ItemDataRole.UserRole, r.get("id"))
             self.srList.addItem(it)
+        has = self.srList.count() > 0
+        self.srHdr.setVisible(has)
+        self.srList.setVisible(has)
 
     def _srRows(self):
         if not self._stkCd:
@@ -1116,6 +1121,8 @@ class DeskStkChartPane(QWidget):
         if getattr(self, "rsiView", None) is not None:
             self.rsiView.setSeries([], "")
         self.srList.clear()
+        self.srHdr.setVisible(False)
+        self.srList.setVisible(False)
         self.candleView.setSrHits([])
         self.candleView.setXTicks(0, [])
 

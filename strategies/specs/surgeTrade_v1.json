@@ -67,5 +67,5 @@
     "closingAuctionTrdeTp": "0",
     "closingAuctionNote": "kt10000 documents no dedicated closing-auction code. 15:20-15:30 uses ordinary limit 0. Market 3 and after-hours 81 are not used in that window."
   },
-  "notes": "v29. The desk chart uses SOR unified bars (stk_cd _AL) stored apart from AI_DAY_STK_PRC, with RSI14 under the price and zoom out to 30 years of stored bars. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
+  "notes": "v29. The desk chart uses SOR unified bars (stk_cd _AL) stored apart from AI_DAY_STK_PRC. Order is price, volume, then RSI14 in the box under the volume. Zoom out reaches 30 years of stored bars. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
 }
