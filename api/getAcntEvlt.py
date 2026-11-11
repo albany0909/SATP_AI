@@ -33,6 +33,11 @@ def getAcntEvlt(
         "qry_tp": str(qryTp),
         "dmst_stex_tp": dmstStexTp,
     }
+    from utils.trRateLimit import acquireTrSlot
+
+    host = str(hostUrl or "").lower()
+    mode = "paper" if "mock" in host else "real"
+    acquireTrSlot("kt00004", mode=mode)
     return requests.post(url, headers=headers, json=data, timeout=30)
 
 

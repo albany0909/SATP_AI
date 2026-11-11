@@ -18,6 +18,32 @@ _PAPER_TR_GAP_SEC = 1.05
 # 실전 조회: 1초 5회 → 0.25초 간격 + 초당 4회로 여유 1회 남김
 _REAL_GAP_SEC = 0.25
 _REAL_MAX_PER_SEC = 4
+# 2026-11-12 18:00 KST 이후 국내주식 계좌 TR 19종: 초당 5회 → 초당 1회.
+# 모의/실전 구분 없음. 여유 0.05초. ka00001 은 이 목록이 아니다.
+_ACCT_TR_GAP_SEC = 1.05
+ACCT_TR_IDS_1SEC = frozenset(
+    {
+        "kt00001",
+        "kt00002",
+        "kt00003",
+        "kt00004",
+        "kt00005",
+        "kt00007",
+        "kt00008",
+        "kt00009",
+        "kt00013",
+        "kt00015",
+        "kt00016",
+        "kt00017",
+        "kt00018",
+        "kt50020",
+        "kt50021",
+        "kt50030",
+        "kt50031",
+        "kt50032",
+        "kt50075",
+    }
+)
 
 _lock = threading.Lock()
 # apiId → 마지막 호출 시각
@@ -41,20 +67,24 @@ def acquireTrSlot(apiId, mode="paper"):
     """
     key = str(apiId or "").strip() or "unknown"
     isPaper = str(mode or "paper").lower() != "real"
+    acctLimited = key in ACCT_TR_IDS_1SEC
     waited = 0.0
     with _lock:
         while True:
             now = time.time()
             _pruneRecent(now)
-            gapNeed = _PAPER_TR_GAP_SEC if isPaper else _REAL_GAP_SEC
+            if acctLimited:
+                gapNeed = _ACCT_TR_GAP_SEC
+            else:
+                gapNeed = _PAPER_TR_GAP_SEC if isPaper else _REAL_GAP_SEC
             waits = []
 
-            # 1) 같은 TR 간격
+            # 1) 같은 TR 간격. 계좌 TR 19종은 모의·실전 모두 1.05초.
             lastAt = float(_lastAtByTr.get(key) or 0)
             if lastAt:
                 waits.append(gapNeed - (now - lastAt))
-            # 2) 실전은 조회 TR 합산 초당 개수도 본다
-            if (not isPaper) and len(_recentAt) >= _REAL_MAX_PER_SEC:
+            # 2) 실전 일반 조회는 합산 초당 개수도 본다. 계좌 19종은 TR별 1회가 더 좁다.
+            if (not isPaper) and (not acctLimited) and len(_recentAt) >= _REAL_MAX_PER_SEC:
                 waits.append(1.0 - (now - _recentAt[0]))
 
             need = max(waits) if waits else 0.0
@@ -64,6 +94,13 @@ def acquireTrSlot(apiId, mode="paper"):
                 return waited
             time.sleep(need)
             waited += need
+
+
+def resetTrSlotsForTest():
+    """테스트 전용. 프로세스 게이트 시각을 비운다."""
+    with _lock:
+        _lastAtByTr.clear()
+        _recentAt.clear()
 
 
 def peekTrLastAt(apiId):
