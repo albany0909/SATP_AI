@@ -632,7 +632,7 @@ v28 은 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-11`
 - SRC: `manual`
 - NOTE: `v28 차트 금액축을 오른쪽에 표시. 주문 비활성.`
-- GIT_HASH: `PENDING_V28`
+- GIT_HASH: `e06df74987e7`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -640,7 +640,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 28, '2026-11-11',
    'v28 차트 금액축을 오른쪽에 표시. 주문 비활성.',
-   'PENDING_V28', 'manual')
+   'e06df74987e7', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
