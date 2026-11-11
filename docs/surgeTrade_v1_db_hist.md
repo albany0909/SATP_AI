@@ -703,7 +703,7 @@ v31 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-11`
 - SRC: `manual`
 - NOTE: `v31 차트 이평·MACD 크로스와 고저 돌파. 주문 비활성.`
-- GIT_HASH: `PENDING_V31`
+- GIT_HASH: `c81044b98b53`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -711,7 +711,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 31, '2026-11-11',
    'v31 차트 이평·MACD 크로스와 고저 돌파. 주문 비활성.',
-   'PENDING_V31', 'manual')
+   'c81044b98b53', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
