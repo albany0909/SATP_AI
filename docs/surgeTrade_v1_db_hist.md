@@ -680,7 +680,7 @@ v30 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-11`
 - SRC: `manual`
 - NOTE: `v30 차트 RSI 시그널 9·골든/데드 크로스. 주문 비활성.`
-- GIT_HASH: `PENDING_V30`
+- GIT_HASH: `3f4513282261`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -688,7 +688,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 30, '2026-11-11',
    'v30 차트 RSI 시그널 9·골든/데드 크로스. 주문 비활성.',
-   'PENDING_V30', 'manual')
+   '3f4513282261', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
