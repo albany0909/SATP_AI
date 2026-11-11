@@ -21,8 +21,10 @@ SOURCE_CAP_NOTE = (
     "페이지가 더 있거나 원천이 상한을 두면 sourceTruncated 로만 표시한다."
 )
 # ka00198 base_comp_chgr: 기준가 대비 등락율(%). '+10.50' 은 +10.50, '--' 는 값 없음.
-# 탭은 5% 이상. SRG01 매수 후보는 10% 이상. 둘을 같은 값으로 두지 않는다.
-TAB_MIN_DAILY_PCT = 5.0
+# 탭은 0% 이상(보합 포함). SRG01 매수 후보는 10% 이상. 둘을 같은 값으로 두지 않는다.
+TAB_MIN_DAILY_PCT = 0.0
+# 09:00 전 스냅은 전부 0% 인 경우가 있다. 그 조회가 전일 목록을 가리지 않게 5% 이상이 있을 때만 당일 목록으로 본다.
+PREOPEN_NAMED_PCT = 5.0
 ENTRY_MIN_DAILY_PCT = 10.0
 MIN_DAILY_PCT = ENTRY_MIN_DAILY_PCT
 DAILY_BASIS_KA00198 = "ka00198_base_comp_chgr"
@@ -158,7 +160,7 @@ def selectTabDisplay(store, now):
             named = [
                 s
                 for s in collected
-                if tabRankRows(s.get("rows") or []).get("keptCount", 0) > 0
+                if filterRankRows(s.get("rows") or [], PREOPEN_NAMED_PCT).get("keptCount", 0) > 0
             ]
             if named:
                 chosen = latestDisplaySnapshot(named)
@@ -454,7 +456,7 @@ def snapComplete(snap):
 def filterRankRows(rows, minPct=ENTRY_MIN_DAILY_PCT):
     """
     원천 순위를 유지하고, ka00198 base_comp_chgr 가 minPct 이상인 행만 남긴다.
-    기본값은 SRG01 매수 기준 10%. 탭은 tabRankRows 로 5% 를 쓴다.
+    기본값은 SRG01 매수 기준 10%. 탭은 tabRankRows 로 0% 를 쓴다.
     명부·전일종가 계산은 쓰지 않는다. 등락이 없으면 버린다.
     """
     kept = []
@@ -479,12 +481,12 @@ def filterRankRows(rows, minPct=ENTRY_MIN_DAILY_PCT):
 
 
 def tabRankRows(rows):
-    """급등주 탭. base_comp_chgr >= 5. 매수 후보가 아니다."""
+    """급등주 탭. base_comp_chgr >= 0. 보합은 포함하고 음수는 버린다. 매수 후보가 아니다."""
     return filterRankRows(rows, TAB_MIN_DAILY_PCT)
 
 
 def entryUniverseRows(rows):
-    """SRG01 후보. base_comp_chgr >= 10. 탭의 5% 목록과 분리한다."""
+    """SRG01 후보. base_comp_chgr >= 10. 탭의 0% 목록과 분리한다."""
     return filterRankRows(rows, ENTRY_MIN_DAILY_PCT)
 
 

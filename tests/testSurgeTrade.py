@@ -45,8 +45,10 @@ from trading.deskLiveAlgs import (
     visibleMonitorTabs,
 )
 from trading.surgeTradeData import (
+    ENTRY_MIN_DAILY_PCT,
     SnapStore,
     TAB_COLUMNS,
+    TAB_MIN_DAILY_PCT,
     absorbFirstSurge,
     buildTabRows,
     dueSlot,
@@ -216,7 +218,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 23)
+        self.assertEqual(int(spec["version"]), 24)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -229,7 +231,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 23)
+        self.assertEqual(payload["algVer"], 24)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -668,11 +670,15 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual([r["originalRank"] for r in kept["rows"]], [2, 8])
         shown = tabRankRows(
             [
-                {"originalRank": 1, "stkCd": "000009", "baseCompChgr": 4.99, "price": 1},
-                {"originalRank": 2, "stkCd": "000008", "baseCompChgr": 5.0, "price": 1},
+                {"originalRank": 1, "stkCd": "000009", "baseCompChgr": -0.01, "price": 1},
+                {"originalRank": 2, "stkCd": "000008", "baseCompChgr": 0.0, "price": 1},
+                {"originalRank": 3, "stkCd": "000007", "baseCompChgr": 4.99, "price": 1},
+                {"originalRank": 4, "stkCd": "000006", "baseCompChgr": "--", "price": 1},
             ]
         )
-        self.assertEqual([r["stkCd"] for r in shown["rows"]], ["000008"])
+        self.assertEqual([r["stkCd"] for r in shown["rows"]], ["000008", "000007"])
+        self.assertEqual(TAB_MIN_DAILY_PCT, 0.0)
+        self.assertEqual(ENTRY_MIN_DAILY_PCT, 10.0)
         self.assertEqual(kept["rows"][0]["dailyBasis"], "ka00198_base_comp_chgr")
         self.assertAlmostEqual(kept["rows"][1]["dailyPct"], 10.01)
         self.assertEqual(kept["sourceCount"], 5)
@@ -1360,8 +1366,9 @@ class SurgeTradeTest(unittest.TestCase):
             self.assertFalse(opened["fallback"])
             self.assertEqual(opened["queryLabel"], "조회일시 2026-11-10 09:15")
             openedView = buildTabRows(opened["snap"], opened["asof"], {})
-            self.assertEqual(openedView["state"], "EMPTY")
-            self.assertEqual(openedView["rows"], [])
+            self.assertEqual(openedView["state"], "READY")
+            self.assertEqual(openedView["rows"][0]["code"], "000660")
+            self.assertEqual(openedView["rows"][0]["dailyPct"], 0.0)
             weekend = SnapStore(tmp + "-weekend")
             weekend.save(snap("20261112", "2026-11-12T22:25:06", "ADHOC", [priorRow]))
             sat = selectTabDisplay(weekend, datetime(2026, 11, 14, 10, 0))
@@ -1652,7 +1659,7 @@ class SurgeTradeTest(unittest.TestCase):
 
         rows = [
             {"stkCd": "003490", "baseCompChgr": 11, "price": 100, "originalRank": 1},
-            {"stkCd": "000001", "baseCompChgr": 4, "price": 10, "originalRank": 2},
+            {"stkCd": "000001", "baseCompChgr": -1, "price": 10, "originalRank": 2},
             {"stkCd": "267850", "baseCompChgr": 6, "price": 20, "originalRank": 3},
         ]
         surge = codesFromSurgeRows(rows)
