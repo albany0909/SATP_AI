@@ -726,7 +726,7 @@ v32 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-11`
 - SRC: `manual`
 - NOTE: `v32 차트 시그널 표시 체크. 주문 비활성.`
-- GIT_HASH: `PENDING_V32`
+- GIT_HASH: `5cf3d562f98e`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -734,7 +734,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 32, '2026-11-11',
    'v32 차트 시그널 표시 체크. 주문 비활성.',
-   'PENDING_V32', 'manual')
+   '5cf3d562f98e', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
