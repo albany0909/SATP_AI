@@ -76,6 +76,57 @@ def calcRsiSeries(closes, period=14):
     return out
 
 
+def rsiSignalSeries(rsiValues, period=9):
+    """RSI 시그널. 키움 eavg(지수이동평균): 첫 period 개 단순평균 시드, 이후 승수 2/(period+1).
+
+    앞쪽 None 은 건너뛰고, 그 다음 연속된 RSI 값에만 calcEmaSeries 를 적용한다.
+    유효 RSI 가 period 미만이면 전부 None. 봉을 만들지 않는다.
+    """
+    values = list(rsiValues or [])
+    n = len(values)
+    out = [None] * n
+    p = int(period or 0)
+    if p <= 0 or n == 0:
+        return out
+    start = 0
+    while start < n and values[start] is None:
+        start += 1
+    tail = []
+    for raw in values[start:]:
+        if raw is None:
+            break
+        tail.append(float(raw))
+    ema = calcEmaSeries(tail, p)
+    for i, val in enumerate(ema):
+        out[start + i] = val
+    return out
+
+
+def rsiCrossMarks(rsiValues, signalValues):
+    """골든/데드 크로스. 현재 봉이 시그널을 넘어간 경우만.
+
+    골든: 직전 RSI <= 직전 시그널 이고 현재 RSI > 현재 시그널.
+    데드: 직전 RSI >= 직전 시그널 이고 현재 RSI < 현재 시그널.
+    닿기만 하고 넘지 않으면 None. 값이 없으면 None.
+    """
+    rsi = list(rsiValues or [])
+    sig = list(signalValues or [])
+    n = max(len(rsi), len(sig))
+    out = [None] * n
+    for i in range(1, n):
+        prevR = rsi[i - 1] if i - 1 < len(rsi) else None
+        curR = rsi[i] if i < len(rsi) else None
+        prevS = sig[i - 1] if i - 1 < len(sig) else None
+        curS = sig[i] if i < len(sig) else None
+        if prevR is None or curR is None or prevS is None or curS is None:
+            continue
+        if prevR <= prevS and curR > curS:
+            out[i] = "golden"
+        elif prevR >= prevS and curR < curS:
+            out[i] = "dead"
+    return out
+
+
 def isDownFractal(lows, idx, left=2, right=2):
     """
     idx 시점이 다운 프랙탈(매수 신호)인지.

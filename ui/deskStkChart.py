@@ -16,7 +16,7 @@ from PySide6.QtCharts import (
     QValueAxis,
 )
 from PySide6.QtCore import QMargins, QRectF, QTimer, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -616,12 +616,15 @@ class CandleChartView(QChartView):
 
 
 class RsiPane(QWidget):
-    """거래량 아래 칸의 RSI14. 보이는 구간만 그린다."""
+    """거래량 아래 RSI14·시그널 9. 보이는 구간만 그린다."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._vals = []
+        self._signal = []
+        self._marks = []
         self._label = ""
+        self._sigLabel = ""
         self._left = 52
         self._right = 8
         self.setMinimumHeight(72)
@@ -633,9 +636,12 @@ class RsiPane(QWidget):
         self._right = max(4, int(right))
         self.update()
 
-    def setSeries(self, vals, label=""):
+    def setSeries(self, vals, label="", signal=None, marks=None, signalLabel=""):
         self._vals = list(vals or [])
+        self._signal = list(signal or [])
+        self._marks = list(marks or [])
         self._label = str(label or "")
+        self._sigLabel = str(signalLabel or "")
         self.update()
 
     def wheelEvent(self, ev):
@@ -654,37 +660,81 @@ class RsiPane(QWidget):
         p.setFont(QFont(self.font().family(), 8))
         p.setPen(QColor("#616161"))
         p.drawText(4, 12, "RSI14")
+        if self._sigLabel:
+            p.setPen(QColor("#00897B"))
+            sigBox = self.rect().adjusted(0, 0, -6, 0)
+            if self._label:
+                sigBox = sigBox.adjusted(0, 0, -(len(self._label) * 6 + 10), 0)
+            p.drawText(sigBox, int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop), self._sigLabel)
         if self._label:
             p.setPen(QColor("#E65100"))
             p.drawText(self.rect().adjusted(0, 0, -6, 0), int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop), self._label)
         nums = [float(v) for v in vals if v is not None]
-        if len(nums) < 2:
+        sigNums = [float(v) for v in self._signal if v is not None]
+        if len(nums) < 1 and len(sigNums) < 1 and not any(self._marks):
             return
         left = self._left
         right = self._right
         top = 16
         h = max(self.height() - top - 6, 8)
         w = max(self.width() - left - right, 8)
-        n = len(vals)
+        n = max(len(vals), len(self._signal), len(self._marks), 1)
 
         def y_of(val):
             return top + (100.0 - float(val)) / 100.0 * h
 
+        def x_of(i):
+            return left + (i + 0.5) * w / float(n)
+
         p.setPen(QColor("#EEEEEE"))
-        for mark in (30, 70):
-            y = y_of(mark)
+        for level in (30, 70):
+            y = y_of(level)
             p.drawLine(int(left), int(y), int(left + w), int(y))
-        p.setPen(QPen(QColor("#7E57C2"), 1.5))
-        prev = None
-        for i, val in enumerate(vals):
-            if val is None:
-                prev = None
+        if len(sigNums) >= 2:
+            p.setPen(QPen(QColor("#00897B"), 1.4))
+            prev = None
+            for i, val in enumerate(self._signal):
+                if val is None:
+                    prev = None
+                    continue
+                x = x_of(i)
+                y = y_of(val)
+                if prev is not None:
+                    p.drawLine(int(prev[0]), int(prev[1]), int(x), int(y))
+                prev = (x, y)
+        if len(nums) >= 2:
+            p.setPen(QPen(QColor("#7E57C2"), 1.5))
+            prev = None
+            for i, val in enumerate(vals):
+                if val is None:
+                    prev = None
+                    continue
+                x = x_of(i)
+                y = y_of(val)
+                if prev is not None:
+                    p.drawLine(int(prev[0]), int(prev[1]), int(x), int(y))
+                prev = (x, y)
+        for i, kind in enumerate(self._marks):
+            if kind not in ("golden", "dead"):
                 continue
-            x = left + (i + 0.5) * w / float(n)
-            y = y_of(val)
-            if prev is not None:
-                p.drawLine(int(prev[0]), int(prev[1]), int(x), int(y))
-            prev = (x, y)
+            if i >= len(vals) or vals[i] is None:
+                continue
+            x = x_of(i)
+            y = y_of(vals[i])
+            up = kind == "golden"
+            color = QColor("#C62828" if up else "#1565C0")
+            tip = 5.0
+            path = QPainterPath()
+            if up:
+                path.moveTo(x, y - tip)
+                path.lineTo(x - tip, y + tip * 0.7)
+                path.lineTo(x + tip, y + tip * 0.7)
+            else:
+                path.moveTo(x, y + tip)
+                path.lineTo(x - tip, y - tip * 0.7)
+                path.lineTo(x + tip, y - tip * 0.7)
+            path.closeSubpath()
+            p.fillPath(path, color)
 
 
 class VolBarView(QWidget):
@@ -1195,18 +1245,27 @@ class DeskStkChartPane(QWidget):
                 closes.append(float(bar.get("close") or 0))
             except (TypeError, ValueError):
                 closes.append(0.0)
-        from strategies.indicators import calcRsiSeries
+        from strategies.indicators import calcRsiSeries, rsiCrossMarks, rsiSignalSeries
 
-        series = calcRsiSeries(closes, 14) if len(closes) > 14 else []
+        series = calcRsiSeries(closes, 14) if len(closes) > 14 else [None] * len(closes)
+        signal = rsiSignalSeries(series, 9)
+        marks = rsiCrossMarks(series, signal)
         start = max(0, int(visStart))
         count = max(0, int(visCount))
         visible = series[start:start + count] if series else []
+        visSig = signal[start:start + count] if signal else []
+        visMarks = marks[start:start + count] if marks else []
         current = ""
         for val in reversed(series):
             if val is not None:
                 current = f"{float(val):.2f}"
                 break
-        view.setSeries(visible, current)
+        sigNow = ""
+        for val in reversed(signal):
+            if val is not None:
+                sigNow = f"S9 {float(val):.2f}"
+                break
+        view.setSeries(visible, current, signal=visSig, marks=visMarks, signalLabel=sigNow)
 
     def _redraw(self):
         allBars = self._bars

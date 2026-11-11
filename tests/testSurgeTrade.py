@@ -218,7 +218,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 29)
+        self.assertEqual(int(spec["version"]), 30)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -231,7 +231,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 29)
+        self.assertEqual(payload["algVer"], 30)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -2186,6 +2186,55 @@ class SurgeTradeTest(unittest.TestCase):
             saved = json.loads((store.dir / "columns_20261110.json").read_text(encoding="utf-8"))
             self.assertEqual(saved["180640"]["issues"], "지분분쟁")
             self.assertEqual(saved["180640"]["issueKind"], "reason")
+
+    def test_rsi_signal9_ema_and_crosses(self):
+        from strategies.indicators import calcEmaSeries, calcRsiSeries, rsiCrossMarks, rsiSignalSeries
+
+        short = calcRsiSeries([float(100 + i) for i in range(14)], 14)
+        self.assertEqual(rsiSignalSeries(short, 9), [None] * len(short))
+        self.assertEqual(rsiCrossMarks(short, rsiSignalSeries(short, 9)), [None] * len(short))
+
+        closes = [float(100 + i) for i in range(23)]
+        rsi = calcRsiSeries(closes, 14)
+        signal = rsiSignalSeries(rsi, 9)
+        valid = [v for v in rsi if v is not None]
+        self.assertEqual(len(valid), 9)
+        ema = calcEmaSeries(valid, 9)
+        self.assertEqual(signal[:14], [None] * 14)
+        self.assertEqual(signal[14:22], [None] * 8)
+        self.assertAlmostEqual(signal[22], ema[8])
+        self.assertIsNone(rsiCrossMarks(rsi, signal)[22])
+
+        stillBelow = rsiCrossMarks([20.0, 30.0], [40.0, 35.0])
+        self.assertEqual(stillBelow, [None, None])
+
+        golden = rsiCrossMarks(
+            [30.0, 55.0],
+            [40.0, 50.0],
+        )
+        self.assertEqual(golden, [None, "golden"])
+        dead = rsiCrossMarks(
+            [60.0, 40.0],
+            [50.0, 48.0],
+        )
+        self.assertEqual(dead, [None, "dead"])
+        equalTouch = rsiCrossMarks([30.0, 48.0], [40.0, 48.0])
+        self.assertEqual(equalTouch, [None, None])
+        stayAbove = rsiCrossMarks([60.0, 62.0], [50.0, 51.0])
+        self.assertEqual(stayAbove, [None, None])
+        fromEqual = rsiCrossMarks([40.0, 41.0], [40.0, 40.0])
+        self.assertEqual(fromEqual, [None, "golden"])
+
+        rising = [100.0 + i for i in range(30)]
+        base = calcRsiSeries(rising, 14)
+        baseSig = rsiSignalSeries(base, 9)
+        jumped = list(rising)
+        jumped[-1] = 90.0
+        live = calcRsiSeries(jumped, 14)
+        liveSig = rsiSignalSeries(live, 9)
+        self.assertNotEqual(round(live[-1], 4), round(base[-1], 4))
+        self.assertNotEqual(round(liveSig[-1], 4), round(baseSig[-1], 4))
+        self.assertEqual(len(rsiCrossMarks(live, liveSig)), len(live))
 
     def test_offscreen_yellow_cell(self):
         try:
