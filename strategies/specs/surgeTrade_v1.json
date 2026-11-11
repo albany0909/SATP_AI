@@ -4,7 +4,7 @@
   "englishName": "Surge Trade",
   "name": "급등주매매",
   "status": "draft",
-  "version": 30,
+  "version": 31,
   "enabled": false,
   "timeframe": "D",
   "docPath": "strategies/docs/surgeTrade_v1.md",
@@ -67,5 +67,5 @@
     "closingAuctionTrdeTp": "0",
     "closingAuctionNote": "kt10000 documents no dedicated closing-auction code. 15:20-15:30 uses ordinary limit 0. Market 3 and after-hours 81 are not used in that window."
   },
-  "notes": "v30. The RSI pane under volume also draws Signal 9 (EMA of RSI14) and golden/dead crosses. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
+  "notes": "v31. The price pane marks 5/20 SMA crosses and 20-bar high/low breakouts. A MACD 12-26-9 pane sits under RSI. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
 }

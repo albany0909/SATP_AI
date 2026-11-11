@@ -336,11 +336,17 @@ class CandleChartView(QChartView):
         self._xBarN = 0
         self._xTicks = []
         self._plotReady = False
+        self._timingMarks = []
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
 
     def setSrHits(self, rows):
         self._srHits = list(rows or [])
+
+    def setTimingMarks(self, rows):
+        """보이는 봉 인덱스 기준. i 는 화면 왼쪽부터."""
+        self._timingMarks = list(rows or [])
+        self.viewport().update()
 
     def setXTicks(self, barN, ticks):
         """월 눈금. Qt 카테고리 라벨은 폭이 줄어 안 보이므로 직접 그린다."""
@@ -526,6 +532,7 @@ class CandleChartView(QChartView):
         self._drawPriceLabels(painter)
         if self._plotReady:
             self._drawMonthLabels(painter)
+        self._drawTimingMarks(painter)
         if self._draftPx is None or self._yAxis is None:
             return
         ch = self.chart()
@@ -613,6 +620,71 @@ class CandleChartView(QChartView):
             painter.setPen(QColor("#616161"))
             painter.drawText(0, 0, text)
             painter.restore()
+
+    def _barScenePoint(self, index, price):
+        ch = self.chart()
+        ax = self._yAxis
+        n = int(self._xBarN or 0)
+        if ch is None or ax is None or n <= 0:
+            return None
+        area = ch.plotArea()
+        y0 = ax.max()
+        y1 = ax.min()
+        if area.width() <= 1 or area.height() <= 1 or y0 == y1:
+            return None
+        p0 = ch.mapToScene(area.topLeft())
+        p1 = ch.mapToScene(area.bottomRight())
+        x = p0.x() + (int(index) + 0.5) * (p1.x() - p0.x()) / float(n)
+        ratio = (y0 - float(price)) / (y0 - y1)
+        y = p0.y() + ratio * (p1.y() - p0.y())
+        return x, y
+
+    def _drawTimingMarks(self, painter):
+        """이평 크로스는 채워진 삼각, 고저 돌파는 빈 꺾쇠. 봉 중심에 맞춘다."""
+        if not self._timingMarks:
+            return
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        for row in self._timingMarks:
+            pt = self._barScenePoint(row.get("i"), row.get("px"))
+            if pt is None:
+                continue
+            x, y = pt
+            kind = str(row.get("kind") or "")
+            if kind == "maGolden":
+                self._fillTri(painter, x, y, True, "#C62828")
+            elif kind == "maDead":
+                self._fillTri(painter, x, y, False, "#1565C0")
+            elif kind == "brkHigh":
+                self._strokeChevron(painter, x, y - 8, True, "#C62828")
+            elif kind == "brkLow":
+                self._strokeChevron(painter, x, y + 8, False, "#1565C0")
+
+    def _fillTri(self, painter, x, y, up, color):
+        tip = 4.0
+        path = QPainterPath()
+        if up:
+            path.moveTo(x, y - tip)
+            path.lineTo(x - tip, y + tip * 0.75)
+            path.lineTo(x + tip, y + tip * 0.75)
+        else:
+            path.moveTo(x, y + tip)
+            path.lineTo(x - tip, y - tip * 0.75)
+            path.lineTo(x + tip, y - tip * 0.75)
+        path.closeSubpath()
+        painter.fillPath(path, QColor(color))
+
+    def _strokeChevron(self, painter, x, y, up, color):
+        pen = QPen(QColor(color))
+        pen.setWidth(2)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        wing = 5.0
+        if up:
+            painter.drawLine(int(x - wing), int(y + wing), int(x), int(y))
+            painter.drawLine(int(x), int(y), int(x + wing), int(y + wing))
+        else:
+            painter.drawLine(int(x - wing), int(y - wing), int(x), int(y))
+            painter.drawLine(int(x), int(y), int(x + wing), int(y - wing))
 
 
 class RsiPane(QWidget):
@@ -737,6 +809,136 @@ class RsiPane(QWidget):
             p.fillPath(path, color)
 
 
+class MacdPane(QWidget):
+    """RSI 아래 MACD 12·26·9. 보이는 구간만 그린다."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._macd = []
+        self._signal = []
+        self._marks = []
+        self._label = ""
+        self._sigLabel = ""
+        self._left = 52
+        self._right = 8
+        self.setMinimumHeight(68)
+        self.setMaximumHeight(88)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def setPad(self, left, right):
+        self._left = max(8, int(left))
+        self._right = max(4, int(right))
+        self.update()
+
+    def setSeries(self, macd, label="", signal=None, marks=None, signalLabel=""):
+        self._macd = list(macd or [])
+        self._signal = list(signal or [])
+        self._marks = list(marks or [])
+        self._label = str(label or "")
+        self._sigLabel = str(signalLabel or "")
+        self.update()
+
+    def wheelEvent(self, ev):
+        delta = ev.angleDelta().y()
+        fn = getattr(self, "zoomWheel", None)
+        if delta and fn:
+            fn(delta)
+            ev.accept()
+            return
+        super().wheelEvent(ev)
+
+    def paintEvent(self, ev):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor("#FFFFFF"))
+        p.setFont(QFont(self.font().family(), 8))
+        p.setPen(QColor("#616161"))
+        p.drawText(4, 12, "MACD")
+        if self._sigLabel:
+            p.setPen(QColor("#E65100"))
+            box = self.rect().adjusted(0, 0, -6, 0)
+            if self._label:
+                box = box.adjusted(0, 0, -(len(self._label) * 6 + 10), 0)
+            p.drawText(box, int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop), self._sigLabel)
+        if self._label:
+            p.setPen(QColor("#1565C0"))
+            p.drawText(self.rect().adjusted(0, 0, -6, 0), int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop), self._label)
+        nums = [float(v) for v in self._macd if v is not None]
+        sigNums = [float(v) for v in self._signal if v is not None]
+        if len(nums) < 1 and len(sigNums) < 1:
+            return
+        left = self._left
+        right = self._right
+        top = 16
+        h = max(self.height() - top - 6, 8)
+        w = max(self.width() - left - right, 8)
+        n = max(len(self._macd), len(self._signal), len(self._marks), 1)
+        span = nums + sigNums
+        lo = min(span)
+        hi = max(span)
+        if hi == lo:
+            hi += 1.0
+            lo -= 1.0
+        pad = (hi - lo) * 0.08
+        lo -= pad
+        hi += pad
+        if lo > 0:
+            lo = 0.0
+        if hi < 0:
+            hi = 0.0
+
+        def y_of(val):
+            return top + (hi - float(val)) / (hi - lo) * h
+
+        def x_of(i):
+            return left + (i + 0.5) * w / float(n)
+
+        zero = y_of(0.0)
+        p.setPen(QColor("#EEEEEE"))
+        p.drawLine(int(left), int(zero), int(left + w), int(zero))
+        if len(sigNums) >= 2:
+            p.setPen(QPen(QColor("#E65100"), 1.3))
+            prev = None
+            for i, val in enumerate(self._signal):
+                if val is None:
+                    prev = None
+                    continue
+                x = x_of(i)
+                y = y_of(val)
+                if prev is not None:
+                    p.drawLine(int(prev[0]), int(prev[1]), int(x), int(y))
+                prev = (x, y)
+        if len(nums) >= 2:
+            p.setPen(QPen(QColor("#1565C0"), 1.5))
+            prev = None
+            for i, val in enumerate(self._macd):
+                if val is None:
+                    prev = None
+                    continue
+                x = x_of(i)
+                y = y_of(val)
+                if prev is not None:
+                    p.drawLine(int(prev[0]), int(prev[1]), int(x), int(y))
+                prev = (x, y)
+        for i, kind in enumerate(self._marks):
+            if kind not in ("golden", "dead") or i >= len(self._macd) or self._macd[i] is None:
+                continue
+            x = x_of(i)
+            y = y_of(self._macd[i])
+            up = kind == "golden"
+            tip = 4.5
+            path = QPainterPath()
+            if up:
+                path.moveTo(x, y - tip)
+                path.lineTo(x - tip, y + tip * 0.7)
+                path.lineTo(x + tip, y + tip * 0.7)
+            else:
+                path.moveTo(x, y + tip)
+                path.lineTo(x - tip, y - tip * 0.7)
+                path.lineTo(x + tip, y - tip * 0.7)
+            path.closeSubpath()
+            p.fillPath(path, QColor("#C62828" if up else "#1565C0"))
+
+
 class VolBarView(QWidget):
     """일봉 바로 아래 거래량. Qt 막대(카테고리 많으면 폭 0) 대신 직접 그린다."""
 
@@ -827,7 +1029,7 @@ class VolBarView(QWidget):
 
 
 class DeskStkChartPane(QWidget):
-    """일·주·월봉, 그 아래 거래량, 그 아래 RSI14, 그리고 지지선."""
+    """일·주·월봉, 거래량, RSI14, MACD, 그리고 지지선."""
 
     barsMissing = Signal(str)
 
@@ -927,6 +1129,10 @@ class DeskStkChartPane(QWidget):
         self.rsiView.zoomWheel = self._onZoomWheel
         lay.addWidget(self.rsiView, 0)
 
+        self.macdView = MacdPane()
+        self.macdView.zoomWheel = self._onZoomWheel
+        lay.addWidget(self.macdView, 0)
+
         self.srHdr = QLabel("지지선 · 차트에서 드래그 이동, 더블클릭 삭제")
         self.srHdr.setStyleSheet("font-size: 11px; color: #555;")
         lay.addWidget(self.srHdr)
@@ -1004,6 +1210,9 @@ class DeskStkChartPane(QWidget):
             self.volView.setRows([])
             if getattr(self, "rsiView", None) is not None:
                 self.rsiView.setSeries([], "")
+            if getattr(self, "macdView", None) is not None:
+                self.macdView.setSeries([], "")
+            self.candleView.setTimingMarks([])
             self.barsMissing.emit(tp)
             return
         self._redraw()
@@ -1149,6 +1358,9 @@ class DeskStkChartPane(QWidget):
         rsi = getattr(self, "rsiView", None)
         if rsi is not None:
             rsi.setPad(left, max(right, 4))
+        macd = getattr(self, "macdView", None)
+        if macd is not None:
+            macd.setPad(left, max(right, 4))
         # 첫 표시 때 plotArea 가 늦게 잡히면 월 눈금이 한쪽으로 갔다가 돌아온다.
         # 영역이 확정된 뒤에만 월 글자를 그리고, 뷰를 다시 칠한다.
         vw = max(view.viewport().width(), view.width(), 1)
@@ -1170,6 +1382,9 @@ class DeskStkChartPane(QWidget):
         self.volView.setRows([])
         if getattr(self, "rsiView", None) is not None:
             self.rsiView.setSeries([], "")
+        if getattr(self, "macdView", None) is not None:
+            self.macdView.setSeries([], "")
+        self.candleView.setTimingMarks([])
         self.srList.clear()
         self.srHdr.setVisible(False)
         self.srList.setVisible(False)
@@ -1208,6 +1423,9 @@ class DeskStkChartPane(QWidget):
             self.volView.setRows([])
             if getattr(self, "rsiView", None) is not None:
                 self.rsiView.setSeries([], "")
+            if getattr(self, "macdView", None) is not None:
+                self.macdView.setSeries([], "")
+            self.candleView.setTimingMarks([])
             self._fillSrList()
             return
         self._setHeadTitle()
@@ -1267,6 +1485,74 @@ class DeskStkChartPane(QWidget):
                 break
         view.setSeries(visible, current, signal=visSig, marks=visMarks, signalLabel=sigNow)
 
+    def _paintMacd(self, closes, visStart, visCount):
+        view = getattr(self, "macdView", None)
+        if view is None:
+            return
+        from strategies.indicators import macdSeries, seriesCrossMarks
+
+        macd, signal = macdSeries(closes)
+        marks = seriesCrossMarks(macd, signal)
+        start = max(0, int(visStart))
+        count = max(0, int(visCount))
+        current = ""
+        for val in reversed(macd):
+            if val is not None:
+                current = f"{float(val):.2f}"
+                break
+        sigNow = ""
+        for val in reversed(signal):
+            if val is not None:
+                sigNow = f"S {float(val):.2f}"
+                break
+        view.setSeries(
+            macd[start:start + count],
+            current,
+            signal=signal[start:start + count],
+            marks=marks[start:start + count],
+            signalLabel=sigNow,
+        )
+
+    def _timingRows(self, allBars, closes, visStart, visCount):
+        from strategies.indicators import breakoutMarks, calcSmaSeries, seriesCrossMarks
+
+        sma5 = calcSmaSeries(closes, 5)
+        sma20 = calcSmaSeries(closes, 20)
+        crosses = seriesCrossMarks(sma5, sma20)
+        highs = []
+        lows = []
+        for bar in allBars or []:
+            try:
+                close = float(bar.get("close") or 0)
+            except (TypeError, ValueError):
+                close = 0.0
+            try:
+                high = float(bar.get("high") or close)
+            except (TypeError, ValueError):
+                high = close
+            try:
+                low = float(bar.get("low") or close)
+            except (TypeError, ValueError):
+                low = close
+            highs.append(high)
+            lows.append(low)
+        breaks = breakoutMarks(highs, lows, 20)
+        rows = []
+        start = max(0, int(visStart))
+        for j in range(max(0, int(visCount))):
+            i = start + j
+            kind = crosses[i] if i < len(crosses) else None
+            if kind == "golden" and i < len(sma5) and sma5[i] is not None:
+                rows.append({"i": j, "kind": "maGolden", "px": sma5[i]})
+            elif kind == "dead" and i < len(sma5) and sma5[i] is not None:
+                rows.append({"i": j, "kind": "maDead", "px": sma5[i]})
+            brk = breaks[i] if i < len(breaks) else None
+            if brk in ("high", "both") and i < len(highs):
+                rows.append({"i": j, "kind": "brkHigh", "px": highs[i]})
+            if brk in ("low", "both") and i < len(lows):
+                rows.append({"i": j, "kind": "brkLow", "px": lows[i]})
+        return rows
+
     def _redraw(self):
         allBars = self._bars
         if not allBars:
@@ -1301,6 +1587,8 @@ class DeskStkChartPane(QWidget):
 
         self.volView.setRows(volRows)
         self._paintRsi(allBars, visStart, len(vis))
+        self._paintMacd(allClose, visStart, len(vis))
+        timing = self._timingRows(allBars, allClose, visStart, len(vis))
 
         self.candleChart.removeAllSeries()
         for ax in list(self.candleChart.axes()):
@@ -1395,4 +1683,5 @@ class DeskStkChartPane(QWidget):
                     axY.setMax(px * 1.005)
         self.candleView.setSrHits(hits)
         self.candleView.setXTicks(len(vis), xTicks)
+        self.candleView.setTimingMarks(timing)
         QTimer.singleShot(0, self._refreshAxisPaint)

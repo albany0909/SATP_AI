@@ -102,28 +102,90 @@ def rsiSignalSeries(rsiValues, period=9):
     return out
 
 
-def rsiCrossMarks(rsiValues, signalValues):
-    """골든/데드 크로스. 현재 봉이 시그널을 넘어간 경우만.
+def seriesCrossMarks(fastValues, slowValues):
+    """빠른 선이 느린 선을 넘은 봉만. 닿기만 하면 None.
 
-    골든: 직전 RSI <= 직전 시그널 이고 현재 RSI > 현재 시그널.
-    데드: 직전 RSI >= 직전 시그널 이고 현재 RSI < 현재 시그널.
-    닿기만 하고 넘지 않으면 None. 값이 없으면 None.
+    골든: 직전 빠른 값 <= 직전 느린 값 이고 현재 빠른 값 > 현재 느린 값.
+    데드: 직전 빠른 값 >= 직전 느린 값 이고 현재 빠른 값 < 현재 느린 값.
     """
-    rsi = list(rsiValues or [])
-    sig = list(signalValues or [])
-    n = max(len(rsi), len(sig))
+    fast = list(fastValues or [])
+    slow = list(slowValues or [])
+    n = max(len(fast), len(slow))
     out = [None] * n
     for i in range(1, n):
-        prevR = rsi[i - 1] if i - 1 < len(rsi) else None
-        curR = rsi[i] if i < len(rsi) else None
-        prevS = sig[i - 1] if i - 1 < len(sig) else None
-        curS = sig[i] if i < len(sig) else None
-        if prevR is None or curR is None or prevS is None or curS is None:
+        prevF = fast[i - 1] if i - 1 < len(fast) else None
+        curF = fast[i] if i < len(fast) else None
+        prevS = slow[i - 1] if i - 1 < len(slow) else None
+        curS = slow[i] if i < len(slow) else None
+        if prevF is None or curF is None or prevS is None or curS is None:
             continue
-        if prevR <= prevS and curR > curS:
+        if prevF <= prevS and curF > curS:
             out[i] = "golden"
-        elif prevR >= prevS and curR < curS:
+        elif prevF >= prevS and curF < curS:
             out[i] = "dead"
+    return out
+
+
+def rsiCrossMarks(rsiValues, signalValues):
+    """RSI 가 시그널을 넘은 봉. seriesCrossMarks 와 같다."""
+    return seriesCrossMarks(rsiValues, signalValues)
+
+
+def macdSeries(closes, fast=12, slow=26, signal=9):
+    """MACD 12·26·9. 선은 EMA(fast)-EMA(slow), 시그널은 그 선의 eavg.
+
+    느린 EMA 가 생기기 전에는 None. 봉을 만들지 않는다.
+    """
+    vals = []
+    for raw in closes or []:
+        try:
+            vals.append(float(raw))
+        except (TypeError, ValueError):
+            vals.append(0.0)
+    fastE = calcEmaSeries(vals, int(fast or 12))
+    slowE = calcEmaSeries(vals, int(slow or 26))
+    macd = [None] * len(vals)
+    for i in range(len(vals)):
+        if fastE[i] is None or slowE[i] is None:
+            continue
+        macd[i] = fastE[i] - slowE[i]
+    return macd, rsiSignalSeries(macd, int(signal or 9))
+
+
+def breakoutMarks(highs, lows, lookback=20):
+    """현재 봉을 뺀 직전 구간 고가·저가 돌파. 직전이 없으면 None.
+
+    고가 돌파: 현재 고가 > 직전 고가의 최대. 저가 돌파: 현재 저가 < 직전 저가의 최소.
+    직전이 lookback 보다 짧으면 있는 봉만 본다. 같으면 돌파가 아니다.
+    """
+    hi = list(highs or [])
+    lo = list(lows or [])
+    n = max(len(hi), len(lo))
+    out = [None] * n
+    span = int(lookback or 0)
+    if span < 1 or n == 0:
+        return out
+    for i in range(n):
+        start = max(0, i - span)
+        prevH = []
+        prevL = []
+        for j in range(start, i):
+            if j < len(hi) and hi[j] is not None:
+                prevH.append(float(hi[j]))
+            if j < len(lo) and lo[j] is not None:
+                prevL.append(float(lo[j]))
+        highBrk = False
+        lowBrk = False
+        if i < len(hi) and hi[i] is not None and prevH and float(hi[i]) > max(prevH):
+            highBrk = True
+        if i < len(lo) and lo[i] is not None and prevL and float(lo[i]) < min(prevL):
+            lowBrk = True
+        if highBrk and lowBrk:
+            out[i] = "both"
+        elif highBrk:
+            out[i] = "high"
+        elif lowBrk:
+            out[i] = "low"
     return out
 
 

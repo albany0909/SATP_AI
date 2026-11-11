@@ -218,7 +218,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 30)
+        self.assertEqual(int(spec["version"]), 31)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -231,7 +231,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 30)
+        self.assertEqual(payload["algVer"], 31)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -2235,6 +2235,58 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertNotEqual(round(live[-1], 4), round(base[-1], 4))
         self.assertNotEqual(round(liveSig[-1], 4), round(baseSig[-1], 4))
         self.assertEqual(len(rsiCrossMarks(live, liveSig)), len(live))
+
+    def test_ma_macd_and_breakout_marks(self):
+        from strategies.indicators import (
+            breakoutMarks,
+            calcEmaSeries,
+            calcSmaSeries,
+            macdSeries,
+            seriesCrossMarks,
+        )
+
+        short = [10.0] * 19
+        sma5 = calcSmaSeries(short, 5)
+        sma20 = calcSmaSeries(short, 20)
+        self.assertTrue(all(v is None for v in sma20))
+        self.assertEqual(seriesCrossMarks(sma5, sma20), [None] * 19)
+
+        crossed = [10.0] * 20 + [20.0]
+        marks = seriesCrossMarks(calcSmaSeries(crossed, 5), calcSmaSeries(crossed, 20))
+        self.assertEqual(marks[20], "golden")
+        self.assertTrue(all(v is None for v in marks[:20]))
+        self.assertEqual(seriesCrossMarks([1.0, 2.0], [2.0, 2.0]), [None, None])
+        self.assertEqual(seriesCrossMarks([3.0, 1.0], [2.0, 2.0]), [None, "dead"])
+        self.assertEqual(seriesCrossMarks([3.0, 4.0], [2.0, 2.0]), [None, None])
+
+        tooFew = [float(100 + i) for i in range(25)]
+        macd, sig = macdSeries(tooFew)
+        self.assertTrue(all(v is None for v in macd))
+        self.assertTrue(all(v is None for v in sig))
+        self.assertEqual(seriesCrossMarks(macd, sig), [None] * 25)
+        wave = [100.0 + (i % 5) for i in range(40)]
+        macd, sig = macdSeries(wave)
+        fast = calcEmaSeries(wave, 12)
+        slow = calcEmaSeries(wave, 26)
+        self.assertAlmostEqual(macd[25], fast[25] - slow[25])
+        self.assertIsNone(macd[24])
+        self.assertIsNone(sig[32])
+        self.assertIsNotNone(sig[33])
+        self.assertEqual(seriesCrossMarks([1.0, 2.0], [3.0, 2.0]), [None, None])
+        moved = list(wave)
+        moved[-1] = 80.0
+        live, liveSig = macdSeries(moved)
+        self.assertNotEqual(round(live[-1], 5), round(macd[-1], 5))
+        self.assertEqual(len(seriesCrossMarks(live, liveSig)), len(live))
+
+        self.assertEqual(breakoutMarks([10.0], [9.0], 20), [None])
+        self.assertEqual(breakoutMarks([10.0, 10.0], [8.0, 8.0], 20), [None, None])
+        self.assertEqual(breakoutMarks([5.0, 6.0], [4.0, 4.0], 20)[1], "high")
+        self.assertEqual(breakoutMarks([5.0, 5.0], [4.0, 3.0], 20)[1], "low")
+        highs = [100.0] + [10.0] * 20 + [50.0]
+        lows = [1.0] + [5.0] * 20 + [4.0]
+        self.assertEqual(breakoutMarks(highs, lows, 20)[-1], "both")
+        self.assertIsNone(breakoutMarks([10.0, 9.0], [4.0, 4.0], 20)[1])
 
     def test_offscreen_yellow_cell(self):
         try:
