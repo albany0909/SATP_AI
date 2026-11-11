@@ -4,7 +4,7 @@
   "englishName": "Surge Trade",
   "name": "급등주매매",
   "status": "draft",
-  "version": 26,
+  "version": 27,
   "enabled": false,
   "timeframe": "D",
   "docPath": "strategies/docs/surgeTrade_v1.md",
@@ -67,5 +67,5 @@
     "closingAuctionTrdeTp": "0",
     "closingAuctionNote": "kt10000 documents no dedicated closing-auction code. 15:20-15:30 uses ordinary limit 0. Market 3 and after-hours 81 are not used in that window."
   },
-  "notes": "v26. A user click on a 관심종목 row, including the surge list, opens the chart side tab and shows that stock. Table refresh does not. The tab still shows daily change >= 0. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
+  "notes": "v27. The user can drag the divider between 관심종목 and the chart so the chart can take most of the window. A click on a 관심종목 row still opens the chart. The tab still shows daily change >= 0. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
 }

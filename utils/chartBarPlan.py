@@ -32,6 +32,48 @@ def intradayChartWanted(reason):
     return str(reason or "") in INTRADAY_CHART_REASONS
 
 
+DESK_SPLIT_MIN_LEFT = 360
+DESK_SPLIT_MIN_RIGHT = 300
+DESK_SPLIT_MIN_CHART = 380
+
+
+def deskSideSplitSizes(total, saved=None, chartOpen=False):
+    """관심종목(왼쪽)과 차트(오른쪽) 너비. 저장값이 있으면 그 비율을 유지한다."""
+    try:
+        width = int(total or 0)
+    except (TypeError, ValueError):
+        width = 0
+    minRight = DESK_SPLIT_MIN_CHART if chartOpen else DESK_SPLIT_MIN_RIGHT
+    minLeft = DESK_SPLIT_MIN_LEFT
+    if width <= 0:
+        return [minLeft, minRight]
+    if width <= minLeft:
+        return [width, 0]
+    if width < minLeft + minRight:
+        return [minLeft, width - minLeft]
+
+    pair = None
+    if isinstance(saved, (list, tuple)) and len(saved) == 2:
+        try:
+            left0 = int(saved[0])
+            right0 = int(saved[1])
+        except (TypeError, ValueError):
+            left0 = right0 = 0
+        if left0 >= minLeft and right0 >= minRight:
+            pair = (left0, right0)
+    if pair:
+        span = pair[0] + pair[1]
+        left = int(round(width * pair[0] / span))
+    elif chartOpen:
+        right = max(minRight, int(width * 0.62))
+        left = width - min(right, width - minLeft)
+    else:
+        right = min(minRight + 120, width - minLeft)
+        left = width - max(minRight, right)
+    left = max(minLeft, min(left, width - minRight))
+    return [left, width - left]
+
+
 def chartActionForWatchPick(userPick, code, currentCode="", refreshBusy=False, syncBusy=False, chartOpen=False):
     """관심종목 행 선택 때 차트 탭을 열지 결정한다.
 

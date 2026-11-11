@@ -218,7 +218,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 26)
+        self.assertEqual(int(spec["version"]), 27)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -231,7 +231,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 26)
+        self.assertEqual(payload["algVer"], 27)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -1758,6 +1758,19 @@ class SurgeTradeTest(unittest.TestCase):
             chartActionForWatchPick(True, "002320", syncBusy=True, chartOpen=False),
             "ignore",
         )
+        from utils.chartBarPlan import deskSideSplitSizes
+
+        wide = deskSideSplitSizes(1400, chartOpen=True)
+        self.assertGreater(wide[1], wide[0])
+        self.assertGreaterEqual(wide[0], 360)
+        self.assertGreaterEqual(wide[1], 380)
+        kept = deskSideSplitSizes(1600, saved=[400, 1000], chartOpen=True)
+        self.assertGreater(kept[1], kept[0])
+        self.assertEqual(sum(kept), 1600)
+        narrow = deskSideSplitSizes(1400, chartOpen=False)
+        self.assertGreaterEqual(narrow[0], 360)
+        self.assertGreaterEqual(narrow[1], 300)
+        self.assertLess(narrow[1], wide[1])
 
     def test_recent_year_uses_daily_low_without_extra_fetch(self):
         from trading.surgeTradeData import formatYearRisePct, recentYearLow, yearRisePct

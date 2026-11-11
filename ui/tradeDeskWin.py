@@ -1087,7 +1087,6 @@ class TradeDeskWin(QMainWindow):
         outer.addWidget(body, 1)
 
         mainSplit = QSplitter(Qt.Orientation.Horizontal)
-        bodyLay.addWidget(mainSplit, 1)
 
         holdPane = QWidget()
         holdLay = QVBoxLayout(holdPane)
@@ -1357,11 +1356,15 @@ class TradeDeskWin(QMainWindow):
         mainSplit.setStretchFactor(0, 1)
         mainSplit.setStretchFactor(1, 1)
         mainSplit.setSizes([700, 700])
+        mainSplit.setMinimumWidth(360)
+        self.mainSplit = mainSplit
 
         # 오른쪽 탭: 기본은 접힘. 계좌·로그는 눌렀을 때만 탭 왼쪽에 펼친다.
         self.sidePanel = QWidget()
         self.sidePanel.setMinimumWidth(300)
-        self.sidePanel.setMaximumWidth(560)
+        self.sidePanel.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         sideLay = QVBoxLayout(self.sidePanel)
         sideLay.setContentsMargins(0, 0, 0, 0)
         self.sideTitle = self._sectionTitle("계좌")
@@ -1523,7 +1526,20 @@ class TradeDeskWin(QMainWindow):
         self._loadTradeExchCmb()
 
         self.sidePanel.hide()
-        bodyLay.addWidget(self.sidePanel)
+        self.deskBodySplit = QSplitter(Qt.Orientation.Horizontal)
+        self.deskBodySplit.setChildrenCollapsible(False)
+        self.deskBodySplit.setHandleWidth(8)
+        self.deskBodySplit.setStyleSheet(
+            "QSplitter::handle { background: #d0d0d0; }"
+            "QSplitter::handle:hover { background: #1565c0; }"
+        )
+        self.deskBodySplit.addWidget(mainSplit)
+        self.deskBodySplit.addWidget(self.sidePanel)
+        self.deskBodySplit.setStretchFactor(0, 1)
+        self.deskBodySplit.setStretchFactor(1, 2)
+        self.deskBodySplit.splitterMoved.connect(self._onDeskBodySplitMoved)
+        self._deskBodySizes = None
+        bodyLay.addWidget(self.deskBodySplit, 1)
 
         rail = QFrame()
         rail.setObjectName("sideRail")
@@ -1796,6 +1812,7 @@ class TradeDeskWin(QMainWindow):
         }
         if not checked:
             if not any(b.isChecked() for b in tabs.values()):
+                self._rememberDeskBodySplit()
                 self._sideKey = ""
                 self.sidePanel.hide()
                 self._stopDeskChart()
@@ -1826,11 +1843,10 @@ class TradeDeskWin(QMainWindow):
         self._sideKey = key
         if key == "chart":
             self.sidePanel.setMinimumWidth(380)
-            self.sidePanel.setMaximumWidth(720)
         else:
             self.sidePanel.setMinimumWidth(300)
-            self.sidePanel.setMaximumWidth(560)
         self.sidePanel.show()
+        QTimer.singleShot(0, self._applyDeskBodySplit)
         if key == "strat":
             self._rebuildStratAlgTabs()
             self.refreshStratInfo()
@@ -1844,6 +1860,36 @@ class TradeDeskWin(QMainWindow):
             self._openDeskChart()
         else:
             self._stopDeskChart()
+
+    def _rememberDeskBodySplit(self):
+        split = getattr(self, "deskBodySplit", None)
+        panel = getattr(self, "sidePanel", None)
+        if split is None or panel is None or not panel.isVisible():
+            return
+        sizes = split.sizes()
+        if len(sizes) == 2 and sizes[0] > 0 and sizes[1] > 0:
+            self._deskBodySizes = [int(sizes[0]), int(sizes[1])]
+
+    def _onDeskBodySplitMoved(self, _pos, _index):
+        self._rememberDeskBodySplit()
+
+    def _applyDeskBodySplit(self):
+        """관심종목과 차트 사이 핸들. 한 번 조절한 너비는 이 창이 열려 있는 동안 유지한다."""
+        from utils.chartBarPlan import deskSideSplitSizes
+
+        split = getattr(self, "deskBodySplit", None)
+        panel = getattr(self, "sidePanel", None)
+        if split is None or panel is None or not panel.isVisible():
+            return
+        total = sum(int(n) for n in split.sizes())
+        if total < 200:
+            total = max(800, int(self.width() or 0) - 60)
+        sizes = deskSideSplitSizes(
+            total,
+            getattr(self, "_deskBodySizes", None),
+            chartOpen=getattr(self, "_sideKey", "") == "chart",
+        )
+        split.setSizes(sizes)
 
     def _selectedWatchStk(self):
         """관심종목 선택 행 → (stkCd, stkNm). 없으면 빈 값."""
