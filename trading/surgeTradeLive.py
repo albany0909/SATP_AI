@@ -290,8 +290,12 @@ def beginManualRankRefresh(session, store, now, transport):
                 from trading.surgeTradeEnrich import enrichDisplayed
 
                 enrichDisplayed(now, store, forceIssue=True)
-            except Exception:
-                pass
+            except Exception as err:
+                from utils.termLog import termLog
+
+                termLog(f"[급등주] 수동 칸 채우기 실패: {err}")
+            if result.get("ok"):
+                _queueSurgeChartBars(now, store, "manual")
         except Exception as err:
             result = {
                 "ok": False,
@@ -564,6 +568,37 @@ def collectRankTick(now, store, isTrading, session, transport):
     return result
 
 
+_chartBoot = False
+
+
+def _chartBooted():
+    """프로세스당 한 번만 기동 직후 적재를 연다."""
+    global _chartBoot
+    if _chartBoot:
+        return True
+    _chartBoot = True
+    return False
+
+
+def _queueSurgeChartBars(now, store, reason):
+    """표시 중인 급등주 일·주·월봉. 주문 스레드와 분리한다."""
+    if not reason:
+        return {"started": False, "reason": ""}
+    try:
+        from trading.surgeTradeData import selectTabDisplay
+        from utils.chartBarLoad import requestSurgeChartBars
+        from utils.chartBarPlan import codesFromSurgeRows
+
+        picked = selectTabDisplay(store, now)
+        codes = codesFromSurgeRows(((picked or {}).get("snap") or {}).get("rows") or [])
+        return requestSurgeChartBars(codes, reason)
+    except Exception as err:
+        from utils.termLog import termLog
+
+        termLog(f"[deskChart] 급등주 장중 적재 예약 실패 ({reason}): {err}")
+        return {"started": False, "reason": str(err)}
+
+
 def _rankLoop():
     """SRG01 매매와 별개. 급등주 탭이 보이는 동안만 모의 조회를 저장한다."""
     import time
@@ -581,21 +616,31 @@ def _rankLoop():
             session = got.get("session")
             store = _rankStore()
             if got.get("ok") and session and isTradingDay(now):
-                collectRankTick(
+                saved = collectRankTick(
                     now,
                     store,
                     True,
                     session,
                     paperRankTransport(session),
                 )
+            else:
+                saved = {}
             try:
                 from trading.surgeTradeEnrich import enrichDisplayed
 
                 enrichDisplayed(now, store)
+            except Exception as err:
+                from utils.termLog import termLog
+
+                termLog(f"[급등주] 칸 채우기 실패: {err}")
+            _queueSurgeChartBars(now, store, "startup" if not _chartBooted() else ("slot" if saved.get("reason") == "SAVED" else ""))
+        except Exception as err:
+            try:
+                from utils.termLog import termLog
+
+                termLog(f"[급등주] 조회 루프 오류: {err}")
             except Exception:
                 pass
-        except Exception:
-            pass
         time.sleep(RANK_POLL_SEC)
 
 

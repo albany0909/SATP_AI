@@ -4,7 +4,7 @@
   "englishName": "Surge Trade",
   "name": "급등주매매",
   "status": "draft",
-  "version": 24,
+  "version": 25,
   "enabled": false,
   "timeframe": "D",
   "docPath": "strategies/docs/surgeTrade_v1.md",
@@ -67,5 +67,5 @@
     "closingAuctionTrdeTp": "0",
     "closingAuctionNote": "kt10000 documents no dedicated closing-auction code. 15:20-15:30 uses ordinary limit 0. Market 3 and after-hours 81 are not used in that window."
   },
-  "notes": "v24. The tab shows daily change >= 0, including unchanged names, and still hides negatives and blanks. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
+  "notes": "v25. While the market is open, displayed surge names load day, week, and month bars in the background. Chart open and refresh log immediately and time out instead of staying on 조회. The tab still shows daily change >= 0. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
 }

@@ -307,20 +307,10 @@ def _aggBars(dayBars, barTp):
 
 
 def loadDeskDayBars(stkCd, endYmd=None):
-    """워커 스레드에서 호출. 주·월·년봉은 이 일봉을 합쳐 그린다."""
-    from backtest.engine import loadDayBars
-    from utils.stkCdUtil import normStkCd
+    """저장된 일봉. 차트 워커는 이 UI 모듈을 거치지 않고 utils.chartBarLoad 를 쓴다."""
+    from utils.chartBarLoad import loadStoredDayBars
 
-    cd = normStkCd(stkCd)
-    if not cd:
-        return []
-    end = str(endYmd or datetime.now().strftime("%Y%m%d"))[:8]
-    try:
-        startDt = datetime.strptime(end, "%Y%m%d") - timedelta(days=_LOOKBACK_DAYS)
-        start = startDt.strftime("%Y%m%d")
-    except ValueError:
-        start = end
-    return loadDayBars(cd, start, end) or []
+    return loadStoredDayBars(stkCd, endYmd=endYmd) or []
 
 
 class CandleChartView(QChartView):

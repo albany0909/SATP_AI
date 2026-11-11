@@ -1939,6 +1939,14 @@ class TradeDeskWin(QMainWindow):
         tok = self._chartLoadTok
         period = str(getattr(self.deskChart, "_barTp", "") or "day")
         self.deskChart.headLbl.setText(f"{nm}({cd}) 차트 조회…")
+        from utils.chartBarPlan import CHART_FETCH_TIMEOUT_SEC, chartFetchStartLine
+        from utils.termLog import termLog
+
+        termLog(chartFetchStartLine(cd, "조회"))
+        QTimer.singleShot(
+            int(CHART_FETCH_TIMEOUT_SEC * 1000),
+            lambda tok=tok, code=cd, name=nm: self._expireDeskChart(tok, code, name, "조회"),
+        )
 
         def _job():
             from utils.chartBarLoad import ensureChartBars, loadDeskChartBundle
@@ -1969,6 +1977,9 @@ class TradeDeskWin(QMainWindow):
                     note = str(got.get("errMsg") or "일·주·월봉을 받지 못했습니다")
                     bundle["note"] = note
                     termLog(f"[deskChart] {cd} {period} 없음 · {note}")
+            if not any(bundle.get(key) for key in ("day", "week", "month")) and not bundle.get("note"):
+                errs = bundle.get("errors") or []
+                bundle["note"] = str(errs[0]) if errs else "데이터 없음"
             if tok != getattr(self, "_chartLoadTok", 0):
                 return
             self.chartBarsOk.emit(cd, bundle, nm)
@@ -1981,6 +1992,21 @@ class TradeDeskWin(QMainWindow):
             return
         self._reloadDeskChart(allowFetch=True)
 
+    def _expireDeskChart(self, tok, code, name, kind):
+        """조회가 끝나지 않으면 헤더를 되돌린다. 늦은 결과는 버린다."""
+        if int(tok or 0) != int(getattr(self, "_chartLoadTok", 0) or 0):
+            return
+        self._chartLoadTok = int(tok or 0) + 1
+        from utils.termLog import termLog
+
+        termLog(f"[deskChart] {kind} 시간 초과 {code}")
+        title = f"{name}({code})" if name else str(code)
+        self.deskChart.headLbl.setText(f"{title} {kind} 시간 초과")
+        btn = getattr(self.deskChart, "btnRefresh", None)
+        if btn is not None:
+            btn.setEnabled(True)
+            btn.setText("차트 최신화")
+
     def _onChartRefreshClick(self):
         """차트 최신화: 선택 종목 일봉 증분+마지막날 재조회 → DB 적재 → 차트 다시 읽기."""
         cd = str(getattr(self, "_chartStkCd", "") or "")
@@ -1992,6 +2018,16 @@ class TradeDeskWin(QMainWindow):
         btn.setEnabled(False)
         btn.setText("갱신 중…")
         self.deskChart.headLbl.setText(f"{nm}({cd}) 일·주·월봉 최신화 중…")
+        self._chartLoadTok = int(getattr(self, "_chartLoadTok", 0) or 0) + 1
+        tok = self._chartLoadTok
+        from utils.chartBarPlan import CHART_FETCH_TIMEOUT_SEC, chartFetchStartLine
+        from utils.termLog import termLog
+
+        termLog(chartFetchStartLine(cd, "최신화"))
+        QTimer.singleShot(
+            int(CHART_FETCH_TIMEOUT_SEC * 1000),
+            lambda tok=tok, code=cd, name=nm: self._expireDeskChart(tok, code, name, "최신화"),
+        )
 
         def _job():
             try:
@@ -2003,6 +2039,8 @@ class TradeDeskWin(QMainWindow):
 
                 termLog(f"[deskChart] 최신화 실패 {cd}: {e}")
                 res = {"ok": False, "errMsg": str(e), "failCnt": 1}
+            if tok != getattr(self, "_chartLoadTok", 0):
+                return
             self.chartRefreshDone.emit(cd, res)
 
         threading.Thread(target=_job, daemon=True).start()

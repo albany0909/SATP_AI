@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from datetime import datetime
 
@@ -15,13 +16,65 @@ from utils.termLog import termLog
 _MIN_BARS = {"week": 60, "month": 36}
 
 
+def loadStoredDayBars(stkCd, endYmd=None):
+    """AI_DAY_STK_PRC 일봉. UI·백테스트 엔진을 불러오지 않는다."""
+    from datetime import timedelta
+
+    from utils.dbConn import openDbConn
+    from utils.stkCdUtil import normStkCd
+
+    cd = normStkCd(stkCd)
+    if not cd:
+        return []
+    end = str(endYmd or datetime.now().strftime("%Y%m%d"))[:8]
+    try:
+        start = (datetime.strptime(end, "%Y%m%d") - timedelta(days=365 * 20)).strftime("%Y%m%d")
+    except ValueError:
+        start = end
+    conn = None
+    try:
+        conn = openDbConn()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT TRADE_DT, OPEN_PRC, HIGH_PRC, LOW_PRC, CLOSE_PRC, TRDE_QTY
+                FROM AI_DAY_STK_PRC
+                WHERE STK_CD=%s AND INDC_TP='0'
+                  AND TRADE_DT BETWEEN %s AND %s
+                ORDER BY TRADE_DT ASC
+                """,
+                (cd, start, end),
+            )
+            rows = cur.fetchall() or []
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    bars = []
+    for row in rows:
+        if row.get("CLOSE_PRC") is None:
+            continue
+        dt = str(row.get("TRADE_DT") or "")[:8]
+        bars.append(
+            {
+                "tradeDt": dt,
+                "open": float(row.get("OPEN_PRC") or 0),
+                "high": float(row.get("HIGH_PRC") or 0),
+                "low": float(row.get("LOW_PRC") or 0),
+                "close": float(row.get("CLOSE_PRC") or 0),
+                "qty": int(row.get("TRDE_QTY") or 0),
+            }
+        )
+    return bars
+
+
 def loadDeskChartBundle(stkCd, endYmd=None):
     """DB 에 있는 일·주·월봉. 실패는 로그하고 그 주기만 비운다."""
     bundle = {"day": [], "week": [], "month": [], "errors": []}
     try:
-        from ui.deskStkChart import loadDeskDayBars
-
-        bundle["day"] = list(loadDeskDayBars(stkCd, endYmd=endYmd) or [])
+        bundle["day"] = list(loadStoredDayBars(stkCd, endYmd=endYmd) or [])
     except Exception as err:
         termLog(f"[deskChart] 일봉 DB 실패 {stkCd}: {err}")
         bundle["errors"].append(f"day:{err}")
@@ -177,3 +230,65 @@ def ensureChartBars(stkCd, months=None, refetch=True):
         "day": day,
         "pole": pole,
     }
+
+
+_surgeLoadLock = threading.Lock()
+_surgeLoadBusy = False
+_surgeLoadPending = None
+
+
+def runSurgeChartLoad(codes, reason="surge"):
+    """표시 종목의 일·주·월봉. 충분하면 건너뛰고, 실패는 로그한다. 주문은 내지 않는다."""
+    from utils.chartBarPlan import mergeLoadCodes
+    from utils.rankDayPrcLoad import DEFAULT_MONTHS, loadDayPrcForRankStks
+
+    wanted = mergeLoadCodes(codes)
+    termLog(f"[deskChart] 급등주 장중 적재 시작 {len(wanted)}종 ({reason})")
+    if not wanted:
+        return {"ok": True, "stkCnt": 0, "reason": reason, "summary": "대상 없음"}
+    day = loadDayPrcForRankStks(
+        wanted,
+        months=DEFAULT_MONTHS,
+        skipIfEnough=True,
+        refetchLastDay=False,
+    ) or {}
+    if not day.get("ok"):
+        termLog(f"[deskChart] 일봉 적재 실패 ({reason}): {day.get('errMsg')}")
+    pole = loadWeekMonthForCodes(wanted, refetch=False) or {}
+    if not pole.get("ok"):
+        termLog(f"[deskChart] 주월봉 적재 실패 ({reason}): {pole.get('errMsg')}")
+    return {"ok": bool(day.get("ok")) and bool(pole.get("ok")), "day": day, "pole": pole, "reason": reason}
+
+
+def requestSurgeChartBars(codes, reason="startup"):
+    """장중 백그라운드 1건. 이미 돌면 끝난 뒤 한 번 더 받는다."""
+    global _surgeLoadBusy, _surgeLoadPending
+    from utils.chartBarPlan import intradayChartWanted, mergeLoadCodes
+
+    if not intradayChartWanted(reason):
+        return {"started": False, "reason": "SKIP"}
+    wanted = mergeLoadCodes(codes)
+    with _surgeLoadLock:
+        if _surgeLoadBusy:
+            _surgeLoadPending = (wanted, reason)
+            termLog(f"[deskChart] 급등주 장중 적재 진행 중 — {reason} {len(wanted)}종은 이어서")
+            return {"started": False, "reason": "BUSY", "codes": wanted}
+        _surgeLoadBusy = True
+    termLog(f"[deskChart] 급등주 장중 적재 예약 {len(wanted)}종 ({reason})")
+
+    def _run(batch, why):
+        global _surgeLoadBusy, _surgeLoadPending
+        try:
+            runSurgeChartLoad(batch, why)
+        except Exception as err:
+            termLog(f"[deskChart] 급등주 장중 적재 실패 ({why}): {err}")
+        finally:
+            with _surgeLoadLock:
+                _surgeLoadBusy = False
+                pending = _surgeLoadPending
+                _surgeLoadPending = None
+        if pending:
+            requestSurgeChartBars(pending[0], pending[1])
+
+    threading.Thread(target=_run, args=(wanted, reason), name="surgeChartBars", daemon=True).start()
+    return {"started": True, "reason": reason, "codes": wanted}

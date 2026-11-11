@@ -11,6 +11,25 @@ POLE_API = {
     "week": "ka10082",
     "month": "ka10083",
 }
+# 차트 조회·최신화가 이 시간을 넘기면 헤더를 실패로 바꾼다.
+CHART_FETCH_TIMEOUT_SEC = 120
+INTRADAY_CHART_REASONS = ("startup", "slot", "manual")
+
+
+def chartFetchStartLine(code, kind):
+    """메인 스레드에서 바로 남길 시작 로그."""
+    return f"[deskChart] {kind} 시작 {code}"
+
+
+def chartFetchExpired(startedMono, nowMono, timeoutSec=CHART_FETCH_TIMEOUT_SEC):
+    try:
+        return float(nowMono) - float(startedMono) >= float(timeoutSec)
+    except (TypeError, ValueError):
+        return False
+
+
+def intradayChartWanted(reason):
+    return str(reason or "") in INTRADAY_CHART_REASONS
 
 
 def mergeLoadCodes(*groups):

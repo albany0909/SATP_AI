@@ -218,7 +218,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 24)
+        self.assertEqual(int(spec["version"]), 25)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -231,7 +231,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 24)
+        self.assertEqual(payload["algVer"], 25)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -1705,6 +1705,38 @@ class SurgeTradeTest(unittest.TestCase):
             )
             shown = collectSurgeChartCds(datetime(2026, 11, 10, 10, 30), tmp)
             self.assertEqual(shown, ["003490", "267850"])
+
+    def test_intraday_chart_load_and_fetch_timeout(self):
+        import inspect
+
+        from utils.chartBarLoad import loadDeskChartBundle
+        from utils.chartBarPlan import (
+            CHART_FETCH_TIMEOUT_SEC,
+            chartFetchExpired,
+            chartFetchStartLine,
+            codesFromSurgeRows,
+            intradayChartWanted,
+        )
+
+        rows = [
+            {"stkCd": "002320", "baseCompChgr": 3, "price": 10, "originalRank": 1},
+            {"stkCd": "053800", "baseCompChgr": 0, "price": 10, "originalRank": 2},
+            {"stkCd": "199430", "baseCompChgr": -1, "price": 10, "originalRank": 3},
+        ]
+        shown = codesFromSurgeRows(rows)
+        self.assertEqual(shown, ["002320", "053800"])
+        self.assertTrue(intradayChartWanted("startup"))
+        self.assertTrue(intradayChartWanted("slot"))
+        self.assertTrue(intradayChartWanted("manual"))
+        self.assertFalse(intradayChartWanted(""))
+        line = chartFetchStartLine("002320", "조회")
+        self.assertIn("[deskChart]", line)
+        self.assertIn("002320", line)
+        self.assertFalse(chartFetchExpired(0, 10, CHART_FETCH_TIMEOUT_SEC))
+        self.assertTrue(chartFetchExpired(0, CHART_FETCH_TIMEOUT_SEC, CHART_FETCH_TIMEOUT_SEC))
+        src = inspect.getsource(loadDeskChartBundle)
+        self.assertNotIn("deskStkChart", src)
+        self.assertNotIn("backtest.engine", src)
 
     def test_recent_year_uses_daily_low_without_extra_fetch(self):
         from trading.surgeTradeData import formatYearRisePct, recentYearLow, yearRisePct
