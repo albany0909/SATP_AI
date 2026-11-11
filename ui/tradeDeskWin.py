@@ -1195,6 +1195,7 @@ class TradeDeskWin(QMainWindow):
         self.surgeRankTbl.setHorizontalHeaderLabels([label for _key, label in TAB_COLUMNS])
         self._tuneGrid(self.surgeRankTbl, [])
         self.surgeRankTbl.setVisible(False)
+        self.surgeRankTbl.itemSelectionChanged.connect(self._onSurgeRowPicked)
         watchLay.addWidget(self.surgeRankTbl, 1)
         self._surgePoll = QTimer(self)
         self._surgePoll.setInterval(400)
@@ -1869,7 +1870,7 @@ class TradeDeskWin(QMainWindow):
         return cd, nm
 
     def _onWatchRowPicked(self):
-        """관심 표 선택 → 차트 탭이 열려 있을 때만 일봉을 다시 읽는다."""
+        """관심종목 고정 칸·가로 칸에서 사용자가 고르면 차트 탭을 연다."""
         if getattr(self, "_watchRefreshBusy", False):
             return
         if getattr(self, "_chartSelBusy", False):
@@ -1893,17 +1894,68 @@ class TradeDeskWin(QMainWindow):
         finally:
             self._chartSelBusy = False
         cd, nm = self._selectedWatchStk()
-        if cd and cd == getattr(self, "_chartStkCd", ""):
+        self._applyWatchChartPick(cd, nm)
+
+    def _onSurgeRowPicked(self):
+        """급등주 표에서 사용자가 고르면 같은 차트 탭을 연다."""
+        if getattr(self, "_watchRefreshBusy", False) or getattr(self, "_chartSelBusy", False):
+            return
+        cd, nm = self._selectedSurgeStk()
+        self._applyWatchChartPick(cd, nm)
+
+    def _selectedSurgeStk(self):
+        from utils.stkCdUtil import normStkCd
+
+        table = getattr(self, "surgeRankTbl", None)
+        if table is None:
+            return "", ""
+        row = table.currentRow()
+        if row < 0:
+            return "", ""
+        codeCell = table.item(row, 0)
+        nameCell = table.item(row, 1)
+        cd = normStkCd(codeCell.text() if codeCell is not None else "") or ""
+        nm = str(nameCell.text() or "").strip() if nameCell is not None else ""
+        return cd, nm
+
+    def _applyWatchChartPick(self, cd, nm):
+        """실제 행 선택만 차트 탭을 연다. 갱신 중이면 열지 않는다."""
+        from utils.chartBarPlan import chartActionForWatchPick
+
+        action = chartActionForWatchPick(
+            True,
+            cd,
+            currentCode=getattr(self, "_chartStkCd", ""),
+            refreshBusy=getattr(self, "_watchRefreshBusy", False),
+            syncBusy=getattr(self, "_chartSelBusy", False),
+            chartOpen=getattr(self, "_sideKey", "") == "chart",
+        )
+        if action == "ignore":
             return
         self._chartStkCd = cd
         self._chartStkNm = nm
         self._chartFetchTried = set()
-        if getattr(self, "_sideKey", "") == "chart":
+        if action == "reload":
             self._reloadDeskChart()
+            return
+        btn = getattr(self, "chartTab", None)
+        if btn is not None and not btn.isChecked():
+            btn.setChecked(True)
+        self._onSideTab("chart", True)
 
     def _openDeskChart(self):
-        """차트 탭을 열 때: 선택 종목 일봉 로드 + 1초 라이브만."""
-        cd, nm = self._selectedWatchStk()
+        """차트 탭을 열 때: 선택 종목 일·주·월봉 로드 + 1초 라이브만."""
+        if self._isSurgeWatchTab():
+            cd, nm = self._selectedSurgeStk()
+        else:
+            cd, nm = self._selectedWatchStk()
+        if not cd and self._isSurgeWatchTab():
+            self._chartStkCd = ""
+            self._chartStkNm = ""
+            self.deskChart.clearChart("관심종목에서 종목을 선택하세요")
+            if not self._chartLiveTimer.isActive():
+                self._chartLiveTimer.start(1000)
+            return
         if not cd:
             cds = list(getattr(self, "_watchPaintCds", None) or [])
             if cds:
@@ -5186,10 +5238,20 @@ class TradeDeskWin(QMainWindow):
             timer.stop()
 
     def _fillSurgeWatch(self):
-        """저장된 스냅샷만 그린다. 여기서 주문을 내지 않는다."""
+        """저장된 스냅샷만 그린다. 여기서 주문을 내지 않는다. 다시 그리는 동안 차트 탭을 열지 않는다."""
         table = getattr(self, "surgeRankTbl", None)
         if table is None:
             return
+        outerBusy = getattr(self, "_watchRefreshBusy", False)
+        self._watchRefreshBusy = True
+        try:
+            self._paintSurgeWatch(table)
+        finally:
+            if not outerBusy:
+                self._watchRefreshBusy = False
+
+    def _paintSurgeWatch(self, table):
+        """급등주 표 칸만 채운다."""
         from trading.surgeTradeData import (
             SnapStore,
             TAB_COLUMNS,

@@ -218,7 +218,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 25)
+        self.assertEqual(int(spec["version"]), 26)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -231,7 +231,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 25)
+        self.assertEqual(payload["algVer"], 26)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -1737,6 +1737,27 @@ class SurgeTradeTest(unittest.TestCase):
         src = inspect.getsource(loadDeskChartBundle)
         self.assertNotIn("deskStkChart", src)
         self.assertNotIn("backtest.engine", src)
+        from utils.chartBarPlan import chartActionForWatchPick
+
+        self.assertEqual(chartActionForWatchPick(True, "002320", chartOpen=False), "open")
+        self.assertEqual(
+            chartActionForWatchPick(True, "053800", currentCode="002320", chartOpen=True),
+            "reload",
+        )
+        self.assertEqual(
+            chartActionForWatchPick(True, "002320", currentCode="002320", chartOpen=True),
+            "ignore",
+        )
+        self.assertEqual(chartActionForWatchPick(True, "", chartOpen=False), "ignore")
+        self.assertEqual(chartActionForWatchPick(False, "002320", chartOpen=False), "ignore")
+        self.assertEqual(
+            chartActionForWatchPick(True, "002320", refreshBusy=True, chartOpen=False),
+            "ignore",
+        )
+        self.assertEqual(
+            chartActionForWatchPick(True, "002320", syncBusy=True, chartOpen=False),
+            "ignore",
+        )
 
     def test_recent_year_uses_daily_low_without_extra_fetch(self):
         from trading.surgeTradeData import formatYearRisePct, recentYearLow, yearRisePct
