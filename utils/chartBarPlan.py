@@ -446,6 +446,7 @@ def atrStopPlans(bars, marks, barTp="day"):
                 "provisional": True,
                 "extend": False,
                 "label": False,
+                "status": "예상",
             })
             continue
         entryBar = i + 1
@@ -477,20 +478,47 @@ def atrStopPlans(bars, marks, barTp="day"):
             "provisional": False,
             "extend": False,
             "label": False,
+            "status": "",
         })
-    focus = None
-    for plan in reversed(plans):
-        if plan["provisional"]:
-            focus = plan
-            break
-        if plan["outcome"] is None and plan["entryBar"] is not None:
-            if (n - 1) - int(plan["entryBar"]) < ATR_HOLD_BARS:
-                focus = plan
-                break
-    if focus is not None:
+    if plans:
+        focus = plans[-1]
         focus["extend"] = True
-        focus["label"] = not focus["provisional"]
+        focus["label"] = True
+        focus["status"] = atrFocusStatus(focus, rows)
     return plans
+
+
+def _barMd(bars, index):
+    try:
+        i = int(index)
+        dt = str((bars or [])[i].get("tradeDt") or "")
+    except (TypeError, ValueError, IndexError):
+        return ""
+    if len(dt) < 8 or not dt[4:8].isdigit():
+        return ""
+    return f"{int(dt[4:6])}/{int(dt[6:8])}"
+
+
+def atrFocusStatus(plan, bars=None):
+    """마지막 눌림 선의 상태 문구."""
+    plan = plan or {}
+    if plan.get("provisional"):
+        return "예상"
+    outcome = plan.get("outcome")
+    if outcome == "target":
+        when = _barMd(bars, plan.get("exitBar"))
+        return f"익절 달성 {when}".strip()
+    if outcome == "stop":
+        when = _barMd(bars, plan.get("exitBar"))
+        return f"손절 {when}".strip()
+    try:
+        entry = int(plan.get("entryBar"))
+        end = int(plan.get("endBar"))
+    except (TypeError, ValueError):
+        return "예상"
+    if end >= entry + ATR_HOLD_BARS - 1:
+        return "기간 만료"
+    return f"진행중 ({end - entry + 1}/10봉)"
 
 
 def filterAtrPlans(plans, flags):
@@ -549,6 +577,43 @@ def atrLineSpan(plan, visStart, visCount):
     if x2 < x1:
         return None
     return x1, x2
+
+
+def atrDrawSpans(plan, visStart, visCount):
+    """그릴 구간. 끝난 기준선은 청산 봉 뒤를 옅게 오른쪽 끝까지 잇는다."""
+    try:
+        count = int(visCount)
+        origin = int(visStart)
+    except (TypeError, ValueError):
+        return []
+    if count <= 0:
+        return []
+    outer = atrLineSpan(plan, origin, count)
+    if outer is None:
+        return []
+    if not (plan or {}).get("extend"):
+        return [{"x1": outer[0], "x2": outer[1], "faint": False}]
+    plan = plan or {}
+    split = None
+    ended = False
+    if plan.get("outcome") and plan.get("exitBar") is not None:
+        split = int(plan["exitBar"])
+        ended = True
+    elif plan.get("entryBar") is not None and plan.get("endBar") is not None:
+        if int(plan["endBar"]) >= int(plan["entryBar"]) + ATR_HOLD_BARS - 1:
+            split = int(plan["endBar"])
+            ended = True
+    if not ended or split is None:
+        return [{"x1": outer[0], "x2": outer[1], "faint": False}]
+    xs = -0.5 if split < origin else float(split - origin)
+    right = outer[1]
+    left = outer[0]
+    spans = []
+    if xs > left:
+        spans.append({"x1": left, "x2": min(xs, right), "faint": False})
+    if right > max(xs, left):
+        spans.append({"x1": max(xs, left), "x2": right, "faint": True})
+    return spans
 
 
 def priceSpanForPlans(lo, hi, plans, visStart, visCount):

@@ -782,22 +782,21 @@ class CandleChartView(QChartView):
                     x = self._xAtAbs(plan["exitBar"], edges)
                     painter.setPen(QColor("#1565C0" if plan["outcome"] == "stop" else "#C62828"))
                     painter.drawText(int(x - 4), int(yInfo[0] - 2), "✕" if plan["outcome"] == "stop" else "✓")
-            anchor = plan.get("signal") if plan.get("entryBar") is None else plan.get("entryBar")
-            inView = atrHitInView(anchor, start, count) or bool(plan.get("extend"))
-            if plan.get("provisional") and plan.get("extend") and inView:
-                yInfo = self._yAtPrice(plan.get("entry"))
-                if yInfo is not None:
-                    painter.setPen(QColor("#616161"))
-                    painter.drawText(int(yInfo[1] + 6), int(yInfo[0] - 2), "예상")
-            if plan.get("label") and inView:
+            if plan.get("label") and plan.get("extend"):
+                status = str(plan.get("status") or "")
                 yStop = self._yAtPrice(plan.get("stop"))
                 yTgt = self._yAtPrice(plan.get("target"))
+                yEnt = self._yAtPrice(plan.get("entry"))
+                if yTgt is not None:
+                    painter.setPen(QColor("#C62828"))
+                    extra = f"  {status}" if status else ""
+                    painter.drawText(int(yTgt[1] + 6), int(yTgt[0] + 4), f"익절 {_fmtWon(plan.get('target'))}{extra}")
                 if yStop is not None:
                     painter.setPen(QColor("#1565C0"))
                     painter.drawText(int(yStop[1] + 6), int(yStop[0] + 4), f"손절 {_fmtWon(plan.get('stop'))}")
-                if yTgt is not None:
-                    painter.setPen(QColor("#C62828"))
-                    painter.drawText(int(yTgt[1] + 6), int(yTgt[0] + 4), f"익절 {_fmtWon(plan.get('target'))}")
+                if yEnt is not None:
+                    painter.setPen(QColor("#616161"))
+                    painter.drawText(int(yEnt[1] + 6), int(yEnt[0] + 4), f"매수 {_fmtWon(plan.get('entry'))}")
 
 
 class RsiPane(QWidget):
@@ -1766,42 +1765,43 @@ class DeskStkChartPane(QWidget):
 
     def _addAtrSeries(self, plans, visStart, visCount, axX, axY, lo, hi):
         """손절·익절·진입을 캔들과 같은 차트 시리즈로 그린다."""
-        from utils.chartBarPlan import atrLineSpan, priceSpanForPlans
+        from utils.chartBarPlan import atrDrawSpans, priceSpanForPlans
         from utils.termLog import termLog
 
+        faintColor = {"stop": "#90CAF9", "target": "#EF9A9A", "entry": "#BDBDBD"}
+        solidColor = {"stop": "#1565C0", "target": "#C62828", "entry": "#9E9E9E"}
         try:
             for plan in plans or []:
-                span = atrLineSpan(plan, visStart, visCount)
-                if span is None:
-                    continue
-                x1, x2 = span
+                spans = atrDrawSpans(plan, visStart, visCount)
                 specs = (
-                    ("stop", "#1565C0", True, 2),
-                    ("target", "#C62828", True, 2),
-                    ("entry", "#9E9E9E", False, 1),
+                    ("stop", True, 2),
+                    ("target", True, 2),
+                    ("entry", False, 1),
                 )
-                for key, color, dashed, width in specs:
-                    try:
-                        price = float(plan.get(key))
-                    except (TypeError, ValueError):
-                        continue
-                    if price <= 0:
-                        continue
-                    line = QLineSeries()
-                    line.setName("")
-                    pen = QPen(QColor(color))
-                    pen.setWidth(width)
-                    pen.setCosmetic(True)
-                    if dashed:
-                        pen.setStyle(Qt.PenStyle.DashLine)
-                    line.setPen(pen)
-                    line.append(float(x1), price)
-                    line.append(float(x2), price)
-                    self.candleChart.addSeries(line)
-                    line.attachAxis(axX)
-                    line.attachAxis(axY)
-                    for mk in self.candleChart.legend().markers(line):
-                        mk.setVisible(False)
+                for span in spans:
+                    for key, dashed, width in specs:
+                        try:
+                            price = float(plan.get(key))
+                        except (TypeError, ValueError):
+                            continue
+                        if price <= 0:
+                            continue
+                        line = QLineSeries()
+                        line.setName("")
+                        color = faintColor[key] if span.get("faint") else solidColor[key]
+                        pen = QPen(QColor(color))
+                        pen.setWidth(1 if span.get("faint") else width)
+                        pen.setCosmetic(True)
+                        if dashed:
+                            pen.setStyle(Qt.PenStyle.DashLine)
+                        line.setPen(pen)
+                        line.append(float(span["x1"]), price)
+                        line.append(float(span["x2"]), price)
+                        self.candleChart.addSeries(line)
+                        line.attachAxis(axX)
+                        line.attachAxis(axY)
+                        for mk in self.candleChart.legend().markers(line):
+                            mk.setVisible(False)
             low, high = priceSpanForPlans(lo, hi, plans, visStart, visCount)
             if low is not None and high is not None and high > low:
                 pad = max((high - low) * 0.06, abs(high) * 0.01)

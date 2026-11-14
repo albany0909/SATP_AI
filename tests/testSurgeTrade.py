@@ -218,7 +218,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 38)
+        self.assertEqual(int(spec["version"]), 39)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -231,7 +231,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 38)
+        self.assertEqual(payload["algVer"], 39)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -2441,6 +2441,43 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(atrHitInView(120, 100, 60))
         self.assertIn("10%", easyFirstSentence("SRG01"))
 
+    def test_atr_focus_last_signal_reaches_right_edge(self):
+        from utils.chartBarPlan import atrDrawSpans, atrFocusStatus, atrStopPlans, priceSpanForPlans
+
+        def flat(n):
+            return [{
+                "tradeDt": f"202610{(i % 28) + 1:02d}",
+                "open": 105.0, "high": 110.0, "low": 100.0, "close": 105.0, "qty": 1,
+            } for i in range(n)]
+
+        bars = flat(40)
+        marks = [None] * 40
+        marks[16] = {"line": 5}
+        marks[20] = {"line": 5}
+        plans = atrStopPlans(bars, marks, "day")
+        self.assertEqual([plan["signal"] for plan in plans], [16, 20])
+        self.assertFalse(plans[0]["extend"])
+        self.assertTrue(plans[1]["extend"])
+        self.assertTrue(plans[1]["label"])
+        self.assertEqual(plans[1]["status"], "기간 만료")
+        closed = flat(40)
+        closed[22] = {"tradeDt": "20261016", "open": 105.0, "high": 140.0, "low": 80.0, "close": 100.0, "qty": 1}
+        marks = [None] * 40
+        marks[20] = {"line": 5}
+        hit = atrStopPlans(closed, marks, "day")[-1]
+        self.assertEqual(hit["outcome"], "stop")
+        self.assertTrue(hit["extend"])
+        self.assertTrue(hit["status"].startswith("손절"))
+        spans = atrDrawSpans(hit, 30, 10)
+        self.assertTrue(spans)
+        self.assertEqual(spans[-1]["x2"], 9.5)
+        self.assertTrue(spans[-1]["faint"])
+        low, high = priceSpanForPlans(100.0, 110.0, [hit], 30, 10)
+        self.assertLessEqual(low, hit["stop"])
+        self.assertGreaterEqual(high, hit["target"])
+        self.assertEqual(atrFocusStatus({"provisional": True}, closed), "예상")
+        self.assertEqual(atrStopPlans(closed, marks, "week"), [])
+
     def test_atr_lines_render_offscreen(self):
         try:
             import os
@@ -2569,7 +2606,8 @@ class SurgeTradeTest(unittest.TestCase):
         capped = atrStopPlans(late, marks45, "day")[0]
         self.assertIsNone(capped["outcome"])
         self.assertEqual(capped["endBar"], 30)
-        self.assertFalse(capped["extend"])
+        self.assertTrue(capped["extend"])
+        self.assertEqual(capped["status"], "기간 만료")
 
         last = flat(30)
         lastMarks = [None] * 30
@@ -2579,7 +2617,8 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertIsNone(prov["entryBar"])
         self.assertAlmostEqual(prov["entry"], 105.0)
         self.assertTrue(prov["extend"])
-        self.assertFalse(prov["label"])
+        self.assertTrue(prov["label"])
+        self.assertEqual(prov["status"], "예상")
 
         live = flat(25)
         liveMarks = [None] * 25
