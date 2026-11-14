@@ -45,7 +45,7 @@ v64: 대기 없는 매수 체결(체결선착 대기복구)은 이평터치 주�
 
 ## 청산·손절
 
-- stop: before any TP: hard -2%; after 1st or 2nd TP: avg 0% (breakeven) flatten remaining; same-day entry flatten after 15:18 if px<=avg; prior-day SMA20 after 15:18 | weak MFE flat: hold>=weakHoldMin, never reached current tp1Pct (tp1Taken or maxPnl>=tp1Pct), maxPnl<weakPeakMaxPct, pnl<=weakExitMaxPnlPct
+- stop: before any TP: hard -1.5% (hardStopPct); after 1st or 2nd TP: avg 0% (breakeven) flatten remaining; same-day entry flatten after 15:18 if px<=avg; prior-day SMA20 after 15:18 | weak MFE flat: hold>=weakHoldMin, never reached current tp1Pct (tp1Taken or maxPnl>=tp1Pct), maxPnl<weakPeakMaxPct, pnl<=weakExitMaxPnlPct
 - takeProfit: intraday: 1st +1.4% sell 50%; 2nd +4% sell 50% of remaining; no 3rd/4th; residual trail 4/-3; 15:15 flat 0~4%; qty=1 flattens at TP1/TP2
 
 ## 수량·금액
@@ -95,7 +95,7 @@ v64: 대기 없는 매수 체결(체결선착 대기복구)은 이평터치 주�
   "afterHalfTrailTpPct": 3,
   "afterHalfRsiMin": 0,
   "banRebuySameDay": true,
-  "paperOnly": false,
+  "paperOnly": true,
   "weakMfeExitEnabled": true,
   "weakHoldMin": 90,
   "weakPeakMaxPct": 1.0,

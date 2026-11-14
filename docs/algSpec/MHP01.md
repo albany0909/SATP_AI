@@ -6,7 +6,7 @@
 
 - 전략ID: `mahaPullback_v1`
 - 버전: 1
-- 상태: test
+- 상태: draft
 - 명세 enabled: True
 - 주기: 1
 
@@ -39,6 +39,7 @@
 
 ```
 {
+  "paperOnly": true,
   "maType": "ema",
   "maFast": 20,
   "maMid": 50,

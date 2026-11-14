@@ -7,7 +7,7 @@
   "slrPct": -10,
   "maTouchLive": {
     "enabled": true,
-    "paperOnly": false,
+    "paperOnly": true,
     "buyAmt5": 1000000,
     "buyAmt10": 1000000,
     "buyAmt15": 1000000
@@ -29,7 +29,14 @@
     },
     "MSE01": {
       "enabled": false,
-      "buyAmtWon": 2000000
+      "buyAmtWon": 2000000,
+      "paperOnly": true
+    },
+    "LDR01": {
+      "paperOnly": true
+    },
+    "MMG01": {
+      "paperOnly": true
     }
   },
   "batchSched": {

@@ -148,6 +148,84 @@ def loadTicBars(stkCd, ticScope, startDt, endDt):
     return bars
 
 
+# 국내 온라인 수수료 편도 0.015%. 매도세 0.20%는 코스피 증권거래세에 맞춘 값.
+# 슬리피지 5bp 는 중간 가격대 1호가(약 0.05%)를 한쪽 불리 체결로 본 기본값이다.
+DEFAULT_BUY_FEE = 0.00015
+DEFAULT_SELL_FEE = 0.00015
+DEFAULT_SELL_TAX = 0.0020
+DEFAULT_SLIPPAGE_BPS = 5.0
+FILL_CLOSE = "close"
+FILL_AUCTION = "auction"
+FILL_NEXT_OPEN = "nextOpen"
+
+
+def netExecutionPrice(
+    price,
+    side,
+    buyFee=DEFAULT_BUY_FEE,
+    sellFee=DEFAULT_SELL_FEE,
+    sellTax=DEFAULT_SELL_TAX,
+    slippageBps=DEFAULT_SLIPPAGE_BPS,
+):
+    """매수는 비싸게, 매도는 싸게. 수수료·세금·슬리피지를 단가에 넣는다."""
+    px = float(price or 0)
+    if px <= 0:
+        return 0.0
+    slip = float(slippageBps or 0) / 10000.0
+    if str(side) == "buy":
+        return px * (1.0 + slip) * (1.0 + float(buyFee or 0))
+    return px * (1.0 - slip) * (1.0 - float(sellFee or 0) - float(sellTax or 0))
+
+
+def defaultFillMode(bars):
+    """분봉이 있으면 15:18 가격, 일봉뿐이면 다음 시가.
+
+    일봉 종가는 이미 지난 가격이라 그 종가 체결은 낙관적이다.
+    분봉이 있으면 15:18 봉의 종가가 의사결정 시각의 실제 가격에 가깝다.
+    """
+    intraday = False
+    for bar in bars or []:
+        tm = str(bar.get("barTm") or "")[:6]
+        if tm and tm != "151800":
+            intraday = True
+            break
+    return FILL_AUCTION if intraday else FILL_NEXT_OPEN
+
+
+def resolveFillPrice(trade, bars, mode):
+    """체결 가정. 해당 봉이 없으면 원래 가격."""
+    raw = float((trade or {}).get("price") or 0)
+    if raw <= 0 or mode == FILL_CLOSE:
+        return raw
+    try:
+        idx = int((trade or {}).get("barIdx"))
+    except (TypeError, ValueError):
+        idx = -1
+    rows = list(bars or [])
+    if mode == FILL_NEXT_OPEN:
+        if 0 <= idx + 1 < len(rows):
+            opened = float(rows[idx + 1].get("open") or 0)
+            if opened > 0:
+                return opened
+        return raw
+    if mode == FILL_AUCTION:
+        day = str((trade or {}).get("tradeDt") or "")
+        chosen = None
+        for bar in rows:
+            if str(bar.get("tradeDt") or "") != day:
+                continue
+            tm = str(bar.get("barTm") or "")[:6]
+            if tm >= "151800":
+                chosen = bar
+                break
+            chosen = bar
+        if chosen is not None:
+            closed = float(chosen.get("close") or 0)
+            if closed > 0:
+                return closed
+    return raw
+
+
 def _calcStats(trades, initCash=100_000_000.0):
     """
     라운드(매수→전량청산) 단위 통계.
@@ -159,6 +237,7 @@ def _calcStats(trades, initCash=100_000_000.0):
             "tradeCnt": 0,
             "winCnt": 0,
             "lossCnt": 0,
+            "flatCnt": 0,
             "winRate": 0.0,
             "sumRetPct": 0.0,
             "avgRetPct": 0.0,
@@ -173,13 +252,16 @@ def _calcStats(trades, initCash=100_000_000.0):
     rets = []
     winCnt = 0
     lossCnt = 0
+    flatCnt = 0
     for rnd in buildTradeRounds(trades):
         retPct = float(rnd.get("retPct") or 0.0)
         rets.append(retPct)
-        if retPct >= 0:
+        if retPct > 0:
             winCnt += 1
-        else:
+        elif retPct < 0:
             lossCnt += 1
+        else:
+            flatCnt += 1
         equity *= 1.0 + retPct / 100.0
         if equity > peak:
             peak = equity
@@ -187,12 +269,13 @@ def _calcStats(trades, initCash=100_000_000.0):
         if dd > maxDd:
             maxDd = dd
 
-    tradeCnt = winCnt + lossCnt
+    tradeCnt = winCnt + lossCnt + flatCnt
     sumRet = sum(rets) if rets else 0.0
     return {
         "tradeCnt": tradeCnt,
         "winCnt": winCnt,
         "lossCnt": lossCnt,
+        "flatCnt": flatCnt,
         "winRate": (winCnt / tradeCnt * 100.0) if tradeCnt else 0.0,
         "sumRetPct": sumRet,
         "avgRetPct": (sumRet / tradeCnt) if tradeCnt else 0.0,
@@ -223,11 +306,12 @@ def calcScalePnl(trades):
             continue
         if px <= 0 or qty <= 0:
             continue
-        amt = px * qty
         if tp in ("BUY", "ADD"):
+            amt = netExecutionPrice(px, "buy") * qty
             buyAmt += amt
             buyQty += qty
         elif tp in ("SELL", "SELL_HALF"):
+            amt = netExecutionPrice(px, "sell") * qty
             sellAmt += amt
             sellQty += qty
             if tp == "SELL_HALF":
@@ -247,7 +331,7 @@ def calcScalePnl(trades):
     }
 
 
-def _roundAmts(evts):
+def _roundAmts(evts, buyFee=DEFAULT_BUY_FEE, sellFee=DEFAULT_SELL_FEE, sellTax=DEFAULT_SELL_TAX, slippageBps=DEFAULT_SLIPPAGE_BPS):
     """
     라운드 이벤트 → 수량가중 매수·매도 금액.
     분할매수(ADD)·분할익절(SELL_HALF)까지 합산해야 전량청산 시점의
@@ -268,10 +352,10 @@ def _roundAmts(evts):
         if px <= 0 or qty <= 0:
             continue
         if tp in ("BUY", "ADD"):
-            buyAmt += px * qty
+            buyAmt += netExecutionPrice(px, "buy", buyFee, sellFee, sellTax, slippageBps) * qty
             buyQty += qty
         elif tp in ("SELL", "SELL_HALF"):
-            sellAmt += px * qty
+            sellAmt += netExecutionPrice(px, "sell", buyFee, sellFee, sellTax, slippageBps) * qty
             sellQty += qty
     # 매수수량을 다 팔지 못한(=라운드가 안 닫힌) 경우는 가중 계산을 쓰지 않는다
     if buyQty <= 0 or buyAmt <= 0 or sellQty < buyQty:
@@ -279,7 +363,13 @@ def _roundAmts(evts):
     return buyAmt, sellAmt
 
 
-def buildTradeRounds(trades):
+def buildTradeRounds(
+    trades,
+    buyFee=DEFAULT_BUY_FEE,
+    sellFee=DEFAULT_SELL_FEE,
+    sellTax=DEFAULT_SELL_TAX,
+    slippageBps=DEFAULT_SLIPPAGE_BPS,
+):
     """
     매수 → 전량청산 = 1라운드.
     승패·수익률은 라운드를 전부 청산했을 때의 최종 손익 기준이다.
@@ -318,12 +408,16 @@ def buildTradeRounds(trades):
         if buyPrc <= 0:
             continue
         # 라운드 구간(BUY ~ 전량 SELL)의 모든 체결을 모아 최종 손익을 낸다
-        buyAmt, sellAmt = _roundAmts(trades[startIdx : endIdx + 1])
+        buyAmt, sellAmt = _roundAmts(
+            trades[startIdx : endIdx + 1], buyFee, sellFee, sellTax, slippageBps
+        )
         if buyAmt > 0:
             retPct = (sellAmt / buyAmt - 1.0) * 100.0
             pnlWon = sellAmt - buyAmt
         else:
-            retPct = (sellPrc / buyPrc - 1.0) * 100.0
+            buyNet = netExecutionPrice(buyPrc, "buy", buyFee, sellFee, sellTax, slippageBps)
+            sellNet = netExecutionPrice(sellPrc, "sell", buyFee, sellFee, sellTax, slippageBps)
+            retPct = (sellNet / buyNet - 1.0) * 100.0 if buyNet > 0 else 0.0
             pnlWon = None
         buyDt = str(buy.get("tradeDt") or "").strip()
         catchDt = (
@@ -339,7 +433,7 @@ def buildTradeRounds(trades):
                 "buyPrc": buyPrc,
                 "sellPrc": sellPrc,
                 "retPct": retPct,
-                "result": "[성공]" if retPct >= 0 else "[실패]",
+                "result": "[성공]" if retPct > 0 else ("[본전]" if retPct == 0 else "[실패]"),
                 "buyReason": buy.get("reason") or "",
                 "sellReason": sell.get("reason") or "",
                 "maxPnlPct": sell.get("maxPnlPct"),
@@ -456,9 +550,11 @@ def runBacktest(
         if isinstance(ev, list):
             for e in ev:
                 e["tradeDt"] = bars[idx]["tradeDt"]
+                e["barIdx"] = idx
                 trades.append(e)
         else:
             ev["tradeDt"] = bars[idx]["tradeDt"]
+            ev["barIdx"] = idx
             trades.append(ev)
 
     if strat.pos is not None and bars:
@@ -472,6 +568,7 @@ def runBacktest(
                 "cntrTm": last["cntrTm"],
                 "tradeDt": last["tradeDt"],
                 "qty": leftQty,
+                "barIdx": len(bars) - 1,
             }
         )
         strat.pos = None
@@ -493,6 +590,13 @@ def runBacktest(
             filtered.append(t)
         i += 1
 
+    fillMode = defaultFillMode(bars)
+    filled = []
+    for trade in filtered:
+        item = dict(trade)
+        item["price"] = resolveFillPrice(item, bars, fillMode)
+        filled.append(item)
+    filtered = filled
     stats = _calcStats(filtered, initCash=initCash)
     rounds = buildTradeRounds(filtered)
     scalePnl = calcScalePnl(trades)
@@ -514,6 +618,13 @@ def runBacktest(
         "stats": stats,
         "scalePnl": scalePnl,
         "params": params,
+        "fillMode": fillMode,
+        "costs": {
+            "buyFee": DEFAULT_BUY_FEE,
+            "sellFee": DEFAULT_SELL_FEE,
+            "sellTax": DEFAULT_SELL_TAX,
+            "slippageBps": DEFAULT_SLIPPAGE_BPS,
+        },
     }
 
 
@@ -529,7 +640,8 @@ def formatBtResult(result):
         f"종목: {result.get('stkCd')} / 데이터: {srcLabel}",
         f"기간: {result.get('startDt')} ~ {result.get('endDt')}",
         f"워밍업시작: {result.get('warmupStartDt')} (봉/틱수 {result.get('barCnt')})",
-        f"거래: {s['tradeCnt']}회 (승 {s['winCnt']} / 패 {s['lossCnt']})",
+        f"거래: {s['tradeCnt']}회 (승 {s['winCnt']} / 패 {s['lossCnt']} / 본전 {s.get('flatCnt', 0)})",
+        f"체결가정: {result.get('fillMode') or '-'} · 수수료 {DEFAULT_BUY_FEE*100:.3f}%/{DEFAULT_SELL_FEE*100:.3f}% · 세금 {DEFAULT_SELL_TAX*100:.2f}% · 슬리피지 {DEFAULT_SLIPPAGE_BPS:g}bp",
         f"승률: {s['winRate']:.1f}%",
         f"평균수익률: {s['avgRetPct']:+.3f}%",
         f"복리수익률: {s['finalRetPct']:+.3f}%",

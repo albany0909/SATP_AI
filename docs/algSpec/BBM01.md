@@ -36,6 +36,7 @@ status=test. Live OFF. 익절=매수당일 15:18 전량.
 
 ```
 {
+  "paperOnly": true,
   "maType": "sma",
   "smaTouchA": 20,
   "smaTouchB": 60,

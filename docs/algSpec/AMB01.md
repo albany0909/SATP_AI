@@ -38,6 +38,7 @@ status=test. Live auto-trade OFF. Validate via val/bt.
 
 ```
 {
+  "paperOnly": true,
   "maType": "ema",
   "maFast": 20,
   "maMid": 50,

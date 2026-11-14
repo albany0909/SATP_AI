@@ -13,6 +13,7 @@
     "note": "실시간순위/AI_WATCH_STK 기반 + 양봉 필터(종목선정). 단일 bt는 종목 지정."
   },
   "params": {
+    "paperOnly": true,
     "maType": "ema",
     "maFast": 20,
     "maMid": 50,
@@ -36,7 +37,7 @@
   "fill": {
     "entryPrice": "close",
     "exitPrice": "close",
-    "feeRate": 0,
+    "feeRate": 0.0015,
     "btLeaveQtyNote": "BT P&L treats exit as full close; leaveQty for live order size only"
   },
   "notes": "status=test. Live auto-trade OFF. Validate via val/bt."

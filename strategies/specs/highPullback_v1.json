@@ -17,6 +17,7 @@
     "note": "val 2 watch 시 ntl first로 유니버스 선별 후 BT (관심종목 미사용)."
   },
   "params": {
+    "paperOnly": true,
     "maType": "ema",
     "maFast": 20,
     "maMid": 50,
@@ -45,7 +46,7 @@
   "fill": {
     "entryPrice": "close",
     "exitPrice": "close",
-    "feeRate": 0,
+    "feeRate": 0.0015,
     "btLeaveQtyNote": "BT full close on exit; leaveQty for live"
   },
   "notes": "status=test. Live OFF. Validate via val/bt/ntl first."

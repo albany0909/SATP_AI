@@ -4,7 +4,7 @@
   "englishName": "Surge Trade",
   "name": "급등주매매",
   "status": "draft",
-  "version": 39,
+  "version": 40,
   "enabled": false,
   "timeframe": "D",
   "docPath": "strategies/docs/surgeTrade_v1.md",
@@ -67,5 +67,5 @@
     "closingAuctionTrdeTp": "0",
     "closingAuctionNote": "kt10000 documents no dedicated closing-auction code. 15:20-15:30 uses ordinary limit 0. Market 3 and after-hours 81 are not used in that window."
   },
-  "notes": "v39. The latest pullback's stop, target, and entry stay drawn to the right edge with prices, even after the plan has closed. Older plans stay short. SRG01 spec enabled stays false. Trading rules are unchanged."
+  "notes": "v40. Paper-only flags are aligned to the safe side. Backtests charge fee, sell tax, and slippage, and do not count a flat return as a win. SRG01 stays disabled. Trading rules are unchanged."
 }

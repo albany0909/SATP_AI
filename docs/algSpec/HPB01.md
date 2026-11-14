@@ -44,6 +44,7 @@ status=test. Live OFF. Validate via val/bt/ntl first.
 
 ```
 {
+  "paperOnly": true,
   "maType": "ema",
   "maFast": 20,
   "maMid": 50,

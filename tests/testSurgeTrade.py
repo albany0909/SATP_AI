@@ -218,7 +218,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 39)
+        self.assertEqual(int(spec["version"]), 40)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -231,7 +231,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 39)
+        self.assertEqual(payload["algVer"], 40)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -2773,6 +2773,83 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(pane._sigOn["rsi"])
         self.assertTrue(pane._sigOn["macd"])
         app.processEvents()
+
+    def test_costs_fill_stats_and_paper_only(self):
+        import json
+        from pathlib import Path
+
+        from backtest.engine import (
+            DEFAULT_SLIPPAGE_BPS,
+            _calcStats,
+            defaultFillMode,
+            netExecutionPrice,
+            resolveFillPrice,
+        )
+        from strategies.specLoader import listStratSpecs, loadStratSpec
+
+        flat = _calcStats([
+            {"type": "BUY", "price": 10000, "qty": 1, "tradeDt": "20261113"},
+            {"type": "SELL", "price": 10000, "qty": 1, "tradeDt": "20261114"},
+        ], initCash=10000)
+        self.assertEqual(flat["winCnt"], 0)
+        self.assertEqual(flat["lossCnt"], 1)
+        self.assertEqual(flat["flatCnt"], 0)
+        self.assertLess(flat["rets"][0], 0)
+        zero = _calcStats([
+            {"type": "BUY", "price": 10000, "qty": 1},
+            {"type": "SELL", "price": 10000, "qty": 1},
+        ])
+        # 비용을 0으로 주면 같은 가격은 본전이다
+        from backtest.engine import buildTradeRounds
+
+        even = buildTradeRounds(
+            [
+                {"type": "BUY", "price": 10000, "qty": 1},
+                {"type": "SELL", "price": 10000, "qty": 1},
+            ],
+            buyFee=0, sellFee=0, sellTax=0, slippageBps=0,
+        )
+        self.assertEqual(even[0]["retPct"], 0.0)
+        self.assertEqual(even[0]["result"], "[본전]")
+        stats = _calcStats([])
+        self.assertEqual(stats["flatCnt"], 0)
+        bought = netExecutionPrice(10000, "buy", 0.00015, 0.00015, 0.002, 5)
+        self.assertGreater(bought, 10000)
+        self.assertEqual(DEFAULT_SLIPPAGE_BPS, 5.0)
+
+        day = [{"tradeDt": "20261113", "barTm": "151800", "open": 100, "close": 110}]
+        nxt = [{"tradeDt": "20261114", "barTm": "151800", "open": 111, "close": 112}]
+        self.assertEqual(defaultFillMode(day + nxt), "nextOpen")
+        trade = {"type": "BUY", "price": 110, "tradeDt": "20261113", "barIdx": 0}
+        self.assertEqual(resolveFillPrice(trade, day + nxt, "nextOpen"), 111)
+        self.assertEqual(resolveFillPrice(trade, day + nxt, "close"), 110)
+        intra = day + [{"tradeDt": "20261113", "barTm": "151900", "open": 109, "close": 108}]
+        self.assertEqual(defaultFillMode(intra), "auction")
+        self.assertEqual(resolveFillPrice(trade, intra, "auction"), 110)
+
+        root = Path("config/data")
+        settings = json.loads((root / "settings.json").read_text(encoding="utf-8"))
+        self.assertTrue(settings["stratLive"]["LDR01"]["paperOnly"])
+        self.assertTrue(settings["stratLive"]["MMG01"]["paperOnly"])
+        self.assertFalse(settings["stratLive"]["LDR01"]["enabled"])
+        self.assertFalse(settings["stratLive"]["MMG01"]["enabled"])
+        self.assertFalse(settings["stratLive"]["SRG01"]["enabled"] if "SRG01" in settings["stratLive"] else False)
+        for row in listStratSpecs():
+            spec = loadStratSpec(row["stratId"])
+            code = spec.get("algCd")
+            if code == "RAM01":
+                self.assertFalse(spec["params"]["paperOnly"])
+                continue
+            self.assertTrue(spec.get("params", {}).get("paperOnly") is True, code)
+            fee = (spec.get("fill") or {}).get("feeRate", spec.get("params", {}).get("feeRate"))
+            if fee is not None:
+                self.assertGreater(float(fee), 0, code)
+        touch = loadStratSpec("maTouchScale_v1")
+        self.assertIn("1.5%", touch["rules"]["stop"])
+        self.assertEqual(touch["params"]["hardStopPct"], 1.5)
+        mhp = loadStratSpec("mahaPullback_v1")
+        self.assertEqual(mhp["status"], "draft")
+        self.assertTrue(mhp["enabled"])
 
     def test_offscreen_yellow_cell(self):
         try:

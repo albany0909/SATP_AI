@@ -36,7 +36,7 @@ _FALLBACK = {
     "slrPct": -10,
     "maTouchLive": {
         "enabled": True,
-        "paperOnly": False,
+        "paperOnly": True,
         "buyAmt5": 1000000,
         "buyAmt10": 1000000,
         "buyAmt15": 1000000,
@@ -60,7 +60,10 @@ _FALLBACK = {
         "MSE01": {
             "enabled": True,
             "buyAmtWon": 2000000,
+            "paperOnly": True,
         },
+        "LDR01": {"paperOnly": True},
+        "MMG01": {"paperOnly": True},
     },
     "batchSched": {
         "usMorningLoad": True,
