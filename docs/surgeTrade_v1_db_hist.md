@@ -1,0 +1,930 @@
+# SRG01 v1 버전 이력 — 운영 DB 에 넣지 말 것
+
+`AI_ALG_VER_HIST` 에 아래를 넣을 수 있다. 이 작업에서는 실행하지 않았다.
+`GIT_HASH` 는 이 기능 커밋의 짧은 해시다. 커밋 뒤에 이 문서의 해시를 맞춘다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `1`
+- YMD: `2026-11-08`
+- SRC: `manual`
+- NOTE: `v1 급등주매매(Surge Trade) 모의 전용 초안. 기본 비활성. 실주문 없음.`
+- GIT_HASH: `f5093a17fda8`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 1, '2026-11-08',
+   'v1 급등주매매(Surge Trade) 모의 전용 초안. 기본 비활성. 실주문 없음.',
+   'f5093a17fda8', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v2 는 별도 행이다. 이 작업에서는 실행하지 않았다. `GIT_HASH` 는 v2 구현 커밋이다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `2`
+- YMD: `2026-11-09`
+- SRC: `manual`
+- NOTE: `v2 급등주 탭 ka00198 당일누적 조회는 전략이 꺼져 있어도 15분·16:00 수집. 수동 갱신은 ADHOC. 주문은 기본 비활성.`
+- GIT_HASH: `89c51d20b3d4`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 2, '2026-11-09',
+   'v2 급등주 탭 ka00198 당일누적 조회는 전략이 꺼져 있어도 15분·16:00 수집. 수동 갱신은 ADHOC. 주문은 기본 비활성.',
+   '89c51d20b3d4', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v3 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `3`
+- YMD: `2026-11-09`
+- SRC: `manual`
+- NOTE: `v3 매수는 구성·확인이슈·신선시세가 있을 때만. 보유 청산은 시세. 주문 기본 비활성.`
+- GIT_HASH: `4d089a399fca`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 3, '2026-11-09',
+   'v3 매수는 구성·확인이슈·신선시세가 있을 때만. 보유 청산은 시세. 주문 기본 비활성.',
+   '4d089a399fca', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v4 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `4`
+- YMD: `2026-11-09`
+- SRC: `manual`
+- NOTE: `v4 KOSPI200은 모의 ka20002 전수. KOSDAQ150은 KRX 지수명 조회. DART 키는 출력하지 않음. 주문 비활성.`
+- GIT_HASH: `79f8e44a4bc7`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 4, '2026-11-09',
+   'v4 KOSPI200은 모의 ka20002 전수. KOSDAQ150은 KRX 지수명 조회. DART 키는 출력하지 않음. 주문 비활성.',
+   '79f8e44a4bc7', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v5 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `5`
+- YMD: `2026-11-09`
+- SRC: `manual`
+- NOTE: `v5 명부 필터 제거. ka00198 base_comp_chgr 10% 이상만. 주문 비활성.`
+- GIT_HASH: `3b7521c080d5`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 5, '2026-11-09',
+   'v5 명부 필터 제거. ka00198 base_comp_chgr 10% 이상만. 주문 비활성.',
+   '3b7521c080d5', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v6 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `6`
+- YMD: `2026-11-09`
+- SRC: `manual`
+- NOTE: `v6 탭은 5% 이상. 원순위와 1년저점대비를 빼고 첫급등대비를 표시. 매수는 10% 유지. 주문 비활성.`
+- GIT_HASH: `2e698b34b3f3`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 6, '2026-11-09',
+   'v6 탭은 5% 이상. 원순위와 1년저점대비를 빼고 첫급등대비를 표시. 매수는 10% 유지. 주문 비활성.',
+   '2e698b34b3f3', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v7 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `7`
+- YMD: `2026-11-10`
+- SRC: `manual`
+- NOTE: `v7 장 시작 전 탭은 전일 최종 목록. 조회일시를 상단에 표시. 매수 조건은 그대로. 주문 비활성.`
+- GIT_HASH: `67fe98c2e0ee`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 7, '2026-11-10',
+   'v7 장 시작 전 탭은 전일 최종 목록. 조회일시를 상단에 표시. 매수 조건은 그대로. 주문 비활성.',
+   '67fe98c2e0ee', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v8 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `8`
+- YMD: `2026-11-10`
+- SRC: `manual`
+- NOTE: `v8 탭 칸은 ka10059·ka10081·ka10100 과 확인된 헤드라인으로 채운다. 매수 조건은 그대로. 주문 비활성.`
+- GIT_HASH: `61d67230340e`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 8, '2026-11-10',
+   'v8 탭 칸은 ka10059·ka10081·ka10100 과 확인된 헤드라인으로 채운다. 매수 조건은 그대로. 주문 비활성.',
+   '61d67230340e', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v9 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `9`
+- YMD: `2026-11-10`
+- SRC: `manual`
+- NOTE: `v9 같은 이슈는 같은 배경. 헤드라인은 네이버 모바일 종목뉴스. 주문 비활성.`
+- GIT_HASH: `f7b2101a2ad6`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 9, '2026-11-10',
+   'v9 같은 이슈는 같은 배경. 헤드라인은 네이버 모바일 종목뉴스. 주문 비활성.',
+   'f7b2101a2ad6', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v10 은 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `10`
+- YMD: `2026-11-10`
+- SRC: `manual`
+- NOTE: `v10 급등주 탭에서 시장 칸을 뺌. 시장 값은 캐시에 남김. 주문 비활성.`
+- GIT_HASH: `fd3bf7ac1004`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 10, '2026-11-10',
+   'v10 급등주 탭에서 시장 칸을 뺌. 시장 값은 캐시에 남김. 주문 비활성.',
+   'fd3bf7ac1004', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v11 은 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `11`
+- YMD: `2026-11-10`
+- SRC: `manual`
+- NOTE: `v11 RSI14 칸을 거래대금 바로 앞으로 옮김. 주문 비활성.`
+- GIT_HASH: `800954c45cc1`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 11, '2026-11-10',
+   'v11 RSI14 칸을 거래대금 바로 앞으로 옮김. 주문 비활성.',
+   '800954c45cc1', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v12 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `12`
+- YMD: `2026-11-10`
+- SRC: `manual`
+- NOTE: `v12 RSI 30 이하 옅은 파랑, 70 이상 옅은 빨강. 주문 비활성.`
+- GIT_HASH: `72854eb4275a`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 12, '2026-11-10',
+   'v12 RSI 30 이하 옅은 파랑, 70 이상 옅은 빨강. 주문 비활성.',
+   '72854eb4275a', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v13 은 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `13`
+- YMD: `2026-11-10`
+- SRC: `manual`
+- NOTE: `v13 52주 신고가 신 배지. 일봉은 RSI와 같은 ka10081. 주문 비활성.`
+- GIT_HASH: `42ddb69b8a3d`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 13, '2026-11-10',
+   'v13 52주 신고가 신 배지. 일봉은 RSI와 같은 ka10081. 주문 비활성.',
+   '42ddb69b8a3d', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v14 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `14`
+- YMD: `2026-11-10`
+- SRC: `manual`
+- NOTE: `v14 최근 20거래일 첫 급등 뉴 배지. 추가 TR 없음. 주문 비활성.`
+- GIT_HASH: `6e1484adfef6`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 14, '2026-11-10',
+   'v14 최근 20거래일 첫 급등 뉴 배지. 추가 TR 없음. 주문 비활성.',
+   '6e1484adfef6', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v15 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `15`
+- YMD: `2026-11-10`
+- SRC: `manual`
+- NOTE: `v15 실패로 남은 이슈 캐시는 다시 조회. 단어는 주도주와 같음. 주문 비활성.`
+- GIT_HASH: `abbbc5706ba3`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 15, '2026-11-10',
+   'v15 실패로 남은 이슈 캐시는 다시 조회. 단어는 주도주와 같음. 주문 비활성.',
+   'abbbc5706ba3', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v16 은 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `16`
+- YMD: `2026-11-10`
+- SRC: `manual`
+- NOTE: `v16 이슈는 종목명 헤드라인의 이유 태그 우선. 테마는 없을 때만. 주문 비활성.`
+- GIT_HASH: `46310e80089f`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 16, '2026-11-10',
+   'v16 이슈는 종목명 헤드라인의 이유 태그 우선. 테마는 없을 때만. 주문 비활성.',
+   '46310e80089f', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v17 은 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `17`
+- YMD: `2026-11-10`
+- SRC: `manual`
+- NOTE: `v17 종목명 바탕색 제거. 신 연빨강, 뉴 연초록. 주문 비활성.`
+- GIT_HASH: `e91735ff7671`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 17, '2026-11-10',
+   'v17 종목명 바탕색 제거. 신 연빨강, 뉴 연초록. 주문 비활성.',
+   'e91735ff7671', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v18 은 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `18`
+- YMD: `2026-11-10`
+- SRC: `manual`
+- NOTE: `v18 현재가 콤마. 순매수는 ka10059 백만원을 억원으로. 주문 비활성.`
+- GIT_HASH: `dd46757308d3`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 18, '2026-11-10',
+   'v18 현재가 콤마. 순매수는 ka10059 백만원을 억원으로. 주문 비활성.',
+   'dd46757308d3', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v19 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `19`
+- YMD: `2026-11-10`
+- SRC: `manual`
+- NOTE: `v19 외국인·기관·연기금. penfnd_etc 백만원. 이슈 색 구분. 주문 비활성.`
+- GIT_HASH: `3e17be51393d`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 19, '2026-11-10',
+   'v19 외국인·기관·연기금. penfnd_etc 백만원. 이슈 색 구분. 주문 비활성.',
+   '3e17be51393d', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v20 은 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `20`
+- YMD: `2026-11-10`
+- SRC: `manual`
+- NOTE: `v20 최근1년은 일봉 저가 대비. 첫급등 기록은 남김. 주문 비활성.`
+- GIT_HASH: `417b08be14eb`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 20, '2026-11-10',
+   'v20 최근1년은 일봉 저가 대비. 첫급등 기록은 남김. 주문 비활성.',
+   '417b08be14eb', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v21 은 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `21`
+- YMD: `2026-11-11`
+- SRC: `manual`
+- NOTE: `v21 일간% 20% 연빨강, 10% 연노랑. 주문 비활성.`
+- GIT_HASH: `27fc9f454308`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 21, '2026-11-11',
+   'v21 일간% 20% 연빨강, 10% 연노랑. 주문 비활성.',
+   '27fc9f454308', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v22 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `22`
+- YMD: `2026-11-11`
+- SRC: `manual`
+- NOTE: `v22 우주항공 오탐 수정. 유가·통합 이유 단어. 주문 비활성.`
+- GIT_HASH: `11b1e3fd555d`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 22, '2026-11-11',
+   'v22 우주항공 오탐 수정. 유가·통합 이유 단어. 주문 비활성.',
+   '11b1e3fd555d', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v23 은 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+주봉·월봉 테이블은 `sql/poleStkPrc.sql` 이다. 이 작업에서 운영 DB 에 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `23`
+- YMD: `2026-11-11`
+- SRC: `manual`
+- NOTE: `v23 급등주 일·주·월봉을 차트에 적재. 주문 비활성.`
+- GIT_HASH: `abf88ef5979e`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 23, '2026-11-11',
+   'v23 급등주 일·주·월봉을 차트에 적재. 주문 비활성.',
+   'abf88ef5979e', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v24 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `24`
+- YMD: `2026-11-11`
+- SRC: `manual`
+- NOTE: `v24 탭 표시 0% 이상. 진입 10% 유지. 주문 비활성.`
+- GIT_HASH: `b161e483cad1`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 24, '2026-11-11',
+   'v24 탭 표시 0% 이상. 진입 10% 유지. 주문 비활성.',
+   'b161e483cad1', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v25 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `25`
+- YMD: `2026-11-11`
+- SRC: `manual`
+- NOTE: `v25 급등주 장중 일·주·월봉. 차트 조회 시간 초과. 주문 비활성.`
+- GIT_HASH: `68823af65106`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 25, '2026-11-11',
+   'v25 급등주 장중 일·주·월봉. 차트 조회 시간 초과. 주문 비활성.',
+   '68823af65106', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v26 은 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `26`
+- YMD: `2026-11-11`
+- SRC: `manual`
+- NOTE: `v26 관심종목 클릭 시 차트 탭. 주문 비활성.`
+- GIT_HASH: `e6f9cbd3dbac`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 26, '2026-11-11',
+   'v26 관심종목 클릭 시 차트 탭. 주문 비활성.',
+   'e6f9cbd3dbac', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v27 은 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `27`
+- YMD: `2026-11-11`
+- SRC: `manual`
+- NOTE: `v27 관심종목과 차트 너비 조절. 주문 비활성.`
+- GIT_HASH: `c4e1476d1197`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 27, '2026-11-11',
+   'v27 관심종목과 차트 너비 조절. 주문 비활성.',
+   'c4e1476d1197', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v28 은 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `28`
+- YMD: `2026-11-11`
+- SRC: `manual`
+- NOTE: `v28 차트 금액축을 오른쪽에 표시. 주문 비활성.`
+- GIT_HASH: `e06df74987e7`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 28, '2026-11-11',
+   'v28 차트 금액축을 오른쪽에 표시. 주문 비활성.',
+   'e06df74987e7', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v29 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+통합 차트 봉 테이블은 `sql/chartUnifPrc.sql` 이다. 이 작업에서 운영 DB 에 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `29`
+- YMD: `2026-11-11`
+- SRC: `manual`
+- NOTE: `v29 차트 통합봉·RSI14·30년 확대. 매매 일봉 유지. 주문 비활성.`
+- GIT_HASH: `363fdcaad4ef`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 29, '2026-11-11',
+   'v29 차트 통합봉·RSI14·30년 확대. 매매 일봉 유지. 주문 비활성.',
+   '363fdcaad4ef', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v30 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `30`
+- YMD: `2026-11-11`
+- SRC: `manual`
+- NOTE: `v30 차트 RSI 시그널 9·골든/데드 크로스. 주문 비활성.`
+- GIT_HASH: `3f4513282261`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 30, '2026-11-11',
+   'v30 차트 RSI 시그널 9·골든/데드 크로스. 주문 비활성.',
+   '3f4513282261', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v31 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `31`
+- YMD: `2026-11-11`
+- SRC: `manual`
+- NOTE: `v31 차트 이평·MACD 크로스와 고저 돌파. 주문 비활성.`
+- GIT_HASH: `c81044b98b53`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 31, '2026-11-11',
+   'v31 차트 이평·MACD 크로스와 고저 돌파. 주문 비활성.',
+   'c81044b98b53', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v32 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `32`
+- YMD: `2026-11-11`
+- SRC: `manual`
+- NOTE: `v32 차트 시그널 표시 체크. 주문 비활성.`
+- GIT_HASH: `5cf3d562f98e`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 32, '2026-11-11',
+   'v32 차트 시그널 표시 체크. 주문 비활성.',
+   '5cf3d562f98e', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v33 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `33`
+- YMD: `2026-11-14`
+- SRC: `manual`
+- NOTE: `v33 차트 눌림 표시. 주문 비활성.`
+- GIT_HASH: `fa946dcaf266`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 33, '2026-11-14',
+   'v33 차트 눌림 표시. 주문 비활성.',
+   'fa946dcaf266', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v34 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `34`
+- YMD: `2026-11-14`
+- SRC: `manual`
+- NOTE: `v34 일봉 차트 ATR 손절·익절선. 주문 비활성.`
+- GIT_HASH: `1d9a82a9d4da`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 34, '2026-11-14',
+   'v34 일봉 차트 ATR 손절·익절선. 주문 비활성.',
+   '1d9a82a9d4da', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v35 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `35`
+- YMD: `2026-11-14`
+- SRC: `manual`
+- NOTE: `v35 차트 시그널 전체 체크. 주문 비활성.`
+- GIT_HASH: `d823df83e25e`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 35, '2026-11-14',
+   'v35 차트 시그널 전체 체크. 주문 비활성.',
+   'd823df83e25e', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v36 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `36`
+- YMD: `2026-11-14`
+- SRC: `manual`
+- NOTE: `v36 ATR 손절·익절선을 차트 시리즈로. 주문 비활성.`
+- GIT_HASH: `635fed4d8058`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 36, '2026-11-14',
+   'v36 ATR 손절·익절선을 차트 시리즈로. 주문 비활성.',
+   '635fed4d8058', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v37 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `37`
+- YMD: `2026-11-14`
+- SRC: `manual`
+- NOTE: `v37 알고리즘 관리 조회·중지·명세. 주문 비활성.`
+- GIT_HASH: `ecba45192168`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 37, '2026-11-14',
+   'v37 알고리즘 관리 조회·중지·명세. 주문 비활성.',
+   'ecba45192168', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v38 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `38`
+- YMD: `2026-11-14`
+- SRC: `manual`
+- NOTE: `v38 쉬운 설명·운행 상태·ATR 표시 범위. 주문 비활성.`
+- GIT_HASH: `10edf8801784`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 38, '2026-11-14',
+   'v38 쉬운 설명·운행 상태·ATR 표시 범위. 주문 비활성.',
+   '10edf8801784', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v39 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `39`
+- YMD: `2026-11-14`
+- SRC: `manual`
+- NOTE: `v39 마지막 눌림 손절·익절을 오른쪽 끝까지. 주문 비활성.`
+- GIT_HASH: `f8053ed34375`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 39, '2026-11-14',
+   'v39 마지막 눌림 손절·익절을 오른쪽 끝까지. 주문 비활성.',
+   'f8053ed34375', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+v40 는 별도 행이다. 이 작업에서는 실행하지 않았다.
+
+- ALG_CD: `SRG01`
+- STRAT_ID: `surgeTrade_v1`
+- ALG_VER: `40`
+- YMD: `2026-11-14`
+- SRC: `manual`
+- NOTE: `v40 모의 전용 정합·백테스트 비용. 주문 비활성.`
+- GIT_HASH: `ed1c057f6e5d`
+
+```sql
+INSERT INTO AI_ALG_VER_HIST
+  (ALG_CD, STRAT_ID, ALG_VER, YMD, NOTE, GIT_HASH, SRC)
+VALUES
+  ('SRG01', 'surgeTrade_v1', 40, '2026-11-14',
+   'v40 모의 전용 정합·백테스트 비용. 주문 비활성.',
+   'ed1c057f6e5d', 'manual')
+ON DUPLICATE KEY UPDATE
+  NOTE=VALUES(NOTE),
+  GIT_HASH=VALUES(GIT_HASH),
+  SRC=VALUES(SRC);
+```
+
+현재 이벤트 행의 `ALG_VER` 는 40 이다. 헬퍼는 `strategies.impl.surgeTrade.buildAlgVerEvent` 이며 DB 를 열지 않는다.
+
+순위 스냅샷과 이슈 확인 표는 `sql/surgeTrade.sql` 이다. 같은 이유로 운영 DB 에 실행하지 않는다.

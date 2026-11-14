@@ -2,7 +2,7 @@
   "stratId": "mahaPullback_v1",
   "algCd": "MHP01",
   "name": "마하세븐 눌림목(정배열+프랙탈)",
-  "status": "test",
+  "status": "draft",
   "version": 1,
   "enabled": true,
   "timeframe": "1",
@@ -12,6 +12,7 @@
     "stkCds": ["005930"]
   },
   "params": {
+    "paperOnly": true,
     "maType": "ema",
     "maFast": 20,
     "maMid": 50,
@@ -34,7 +35,7 @@
   "fill": {
     "entryPrice": "close",
     "exitPrice": "close",
-    "feeRate": 0
+    "feeRate": 0.0015
   },
   "notes": "1분봉 원천 적재 후 상위 TF는 리샘플. status=draft — 엔진 미연동."
 }

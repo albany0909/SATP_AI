@@ -71,7 +71,7 @@
     "afterHalfTrailTpPct": 3,
     "afterHalfRsiMin": 0,
     "banRebuySameDay": true,
-    "paperOnly": false,
+    "paperOnly": true,
     "weakMfeExitEnabled": true,
     "weakHoldMin": 90,
     "weakPeakMaxPct": 1.0,
@@ -85,13 +85,14 @@
     "entry": "from above touch SMA20 once; do not buy on touch; same-day only: wait for a 3-min bar that closes bullish above SMA20 (close>open and close>SMA20); place a limit buy at SMA20 rounded DOWN to a valid KRX tick; if unfilled after 10 minutes cancel remainder (no market follow-up); wait expires same day; retouch resets; 14:00 cutoff only if next calendar day is closed; after full exit ban rebuy that stock same day",
     "halfTp": "pnl>=tp1Pct sell tp1QtyRatio LIMIT at avg*(1+tp1Pct) rounded UP to a valid KRX tick (pre-arm at tp1PreArmPct, cancel<=-1% then rearm); BE/flatten 0% only after tp1 fully filled; then pnl>=tp1Pct sell tp1QtyRatio (1.4%/50%); then pnl>=tp2Pct sell tp2QtyRatio of remaining (4%/50%); tp3/tp4 disabled; residual trail peak>=4 then -3%p; from 15:15 if 0%<=pnl<=4% flatten; if qty==1, any reached TP1/TP2 step flattens 100%",
     "afterHalf": "after 1st/2nd TP, remaining flattens at avg -afterHalfStopPct (0=breakeven); residual trail when peak>=afterHalfTrailMinPct and pnl<=peak-afterHalfTrailTpPct (also when tp3 disabled and qty>=2); else +tp4Pct flatten if enabled",
-    "stop": "before any TP: hard -2%; after 1st or 2nd TP: avg 0% (breakeven) flatten remaining; same-day entry flatten after 15:18 if px<=avg; prior-day SMA20 after 15:18 | weak MFE flat: hold>=weakHoldMin, never reached current tp1Pct (tp1Taken or maxPnl>=tp1Pct), maxPnl<weakPeakMaxPct, pnl<=weakExitMaxPnlPct",
+    "stop": "before any TP: hard -1.5% (hardStopPct); after 1st or 2nd TP: avg 0% (breakeven) flatten remaining; same-day entry flatten after 15:18 if px<=avg; prior-day SMA20 after 15:18 | weak MFE flat: hold>=weakHoldMin, never reached current tp1Pct (tp1Taken or maxPnl>=tp1Pct), maxPnl<weakPeakMaxPct, pnl<=weakExitMaxPnlPct",
     "takeProfit": "intraday: 1st +1.4% sell 50%; 2nd +4% sell 50% of remaining; no 3rd/4th; residual trail 4/-3; 15:15 flat 0~4%; qty=1 flattens at TP1/TP2"
   },
   "fill": {
+    "signalTiming": "intraday",
     "entryPrice": "sma20NearTickLimit",
     "exitPrice": "closeOrTick",
-    "feeRate": 0,
+    "feeRate": 0.0015,
     "btNote": "v63 limit buy px = floor to KRX tick. v62 hardStop 1.5%. v58: fix residual trail when tp3 off and qty>=2"
   },
   "notes": "v64: 대기 없는 매수 체결(체결선착 대기복구)은 이평터치 주문번호·최근 이평터치 매수주문(180초)·이미 이평터치 보유 종목만 반영 — 수동(HTS/MTS)·다른 전략 체결은 편입하지 않음. MMG01 풀·보유 종목은 신규매수 스킵(MMG01_POOL). v63: 모든 지정가 주문을 유효 호가로 — 매수 내림·매도 올림(1차 +1.4% 지정가 29,710→29,750 등, 571557 거부 방지). 규칙·파라미터 변경 없음. v62: 하드손절 hardStopPct 2→1.5 (1·2차 전). v61: 1차 전 +1%면 +1.4% 지정가 선주문 · −1%↓ 취소·재무장(시간취소 없음) · 1차 체결완료 후만 본전. v60: 1차익절 지정가(트리거가)·10분 미체결 취소 후 재도달 대기 · 1차 체결완료 전 본전청산 금지 · 완료 후 0%↓ 시장가. v59: 주문워커 TRAIL 매도 누락 수정(큐만 넣고 _placeSell 미호출). v58: 3차 미사용·잔량≥2주여도 되돌림(트레일) 검사. v57: 2차 +4%/50% 재도입 · 1·2차 시 1주면 전량. v56: tp1 1.4%/50%, trail 4/-3 after peak, tp2-4 off, 15:15 flat 0~4%. v55: weakMfeExit. v54: tp1 1.2→1.4. v55: weakMfeExit 90m + peak<1% + pnl<=-0.5% + 현행 tp1Pct 미도달 시 전량. v54: tp1Pct 1.2→1.4. v53: 관심 제외"

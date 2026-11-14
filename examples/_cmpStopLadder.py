@@ -1,5 +1,6 @@
 ﻿# -*- coding: utf-8 -*-
 """Compare stop schemes on MTS01 BT: A hard-2 | B 1.2/1.6/2 | C 1.5/50 then 2 | D 1.5 flat.
+막날 강제청산은 그 봉의 장중 종가다. 장마감 뒤에야 아는 신호의 당일 종가 체결은 쓰지 않는다.
 Also report winners missed / flipped vs A per symbol.
 """
 from __future__ import annotations

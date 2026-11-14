@@ -13,6 +13,7 @@
     "note": "키움 조건식: 1봉전 대금≥1만백만·양봉·20봉신고거래량 + (당일 SMA1×20 또는 전일 SMA1×50 골든). BT는 일봉 근사. 실전은 조건검색 연동 권장."
   },
   "params": {
+    "paperOnly": true,
     "maType": "sma",
     "smaTouchA": 20,
     "smaTouchB": 60,
@@ -39,7 +40,7 @@
   "fill": {
     "entryPrice": "5m_close",
     "exitPrice": "1m_close_at_exitEodTm",
-    "feeRate": 0,
+    "feeRate": 0.0015,
     "note": "BT resamples 1m → day/5m (15m optional)"
   },
   "notes": "status=test. Live OFF. 익절=매수당일 15:18 전량."

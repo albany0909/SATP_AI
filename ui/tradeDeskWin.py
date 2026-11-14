@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QStyle,
+    QStyleOptionViewItem,
     QStyledItemDelegate,
     QTabBar,
     QTableWidget,
@@ -527,6 +528,57 @@ class RsiDelegate(QStyledItemDelegate):
         painter.restore()
 
 
+class SurgeSortItem(QTableWidgetItem):
+    """표시는 콤마 문자열, 정렬은 UserRole+1 숫자."""
+
+    def __lt__(self, other):
+        av = self.data(Qt.ItemDataRole.UserRole + 1)
+        bv = other.data(Qt.ItemDataRole.UserRole + 1) if isinstance(other, QTableWidgetItem) else None
+        if av is None or bv is None:
+            return QTableWidgetItem.__lt__(self, other)
+        try:
+            return float(av) < float(bv)
+        except (TypeError, ValueError):
+            return QTableWidgetItem.__lt__(self, other)
+
+
+class SurgeNameDelegate(QStyledItemDelegate):
+    """종목명 앞에 신·뉴 배지. 셀 글자는 종목명만 남겨 복사·정렬이 배지를 포함하지 않는다."""
+
+    def paint(self, painter, option, index):
+        marks = index.data(Qt.ItemDataRole.UserRole)
+        if marks is True:
+            marks = "신"
+        if not isinstance(marks, str) or not marks:
+            super().paint(painter, option, index)
+            return
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        from trading.surgeTradeData import badgeFillColor
+
+        painter.save()
+        if opt.state & QStyle.StateFlag.State_Selected:
+            painter.fillRect(opt.rect, opt.palette.highlight())
+        else:
+            painter.fillRect(opt.rect, opt.palette.base())
+        left = opt.rect.left() + 3
+        for ch in marks:
+            box = QRect(left, opt.rect.center().y() - 7, 14, 14)
+            fill = badgeFillColor(ch)
+            painter.setPen(QPen(QColor("#212121")))
+            painter.setBrush(QColor(fill) if fill else Qt.BrushStyle.NoBrush)
+            painter.drawRect(box)
+            painter.drawText(box, int(Qt.AlignmentFlag.AlignCenter), ch)
+            left += 16
+        painter.setPen(QColor("#212121"))
+        painter.drawText(
+            opt.rect.adjusted(left - opt.rect.left(), 0, -4, 0),
+            int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
+            str(opt.text or ""),
+        )
+        painter.restore()
+
+
 class SideBgDelegate(QStyledItemDelegate):
     """매수/매도 칸만 연한빨강·연한파랑 배경. 주문취소·원주문은 연한회색."""
 
@@ -908,7 +960,7 @@ class TradeDeskWin(QMainWindow):
         self._stratAlgCd = "MTS01"
         self._stratAlgTabCds = []
         self._stratAlgTabsBusy = False
-        self._watchAlgCd = "acnt"
+        self._watchAlgCd = "surge"
         self._watchAlgTabCds = []
         self._watchAlgTabsBusy = False
         self._watchNetCache = {}
@@ -1035,7 +1087,6 @@ class TradeDeskWin(QMainWindow):
         outer.addWidget(body, 1)
 
         mainSplit = QSplitter(Qt.Orientation.Horizontal)
-        bodyLay.addWidget(mainSplit, 1)
 
         holdPane = QWidget()
         holdLay = QVBoxLayout(holdPane)
@@ -1118,6 +1169,40 @@ class TradeDeskWin(QMainWindow):
         _lrLay.addStretch(1)
         self._leaderRankTools.setVisible(False)
         watchLay.addWidget(self._leaderRankTools)
+        self._surgeTools = QWidget()
+        _sgLay = QHBoxLayout(self._surgeTools)
+        _sgLay.setContentsMargins(4, 0, 4, 2)
+        _sgLay.setSpacing(8)
+        self._surgeStateLbl = QLabel("급등주: 대기")
+        self._surgeStateLbl.setStyleSheet("font-size: 12px; color: #004D40; padding: 2px 4px;")
+        self._surgeRefreshBtn = QPushButton("수동 갱신")
+        self._surgeRefreshBtn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._surgeRefreshBtn.setStyleSheet(
+            "QPushButton { font-size: 12px; padding: 2px 10px; "
+            "background: #80DEEA; color: #004D40; border: 1px solid #4DD0E1; }"
+            "QPushButton:disabled { background: #EEEEEE; color: #9E9E9E; }"
+        )
+        self._surgeRefreshBtn.clicked.connect(self._onSurgeRefresh)
+        _sgLay.addWidget(self._surgeStateLbl)
+        _sgLay.addWidget(self._surgeRefreshBtn)
+        _sgLay.addStretch(1)
+        self._surgeTools.setVisible(False)
+        watchLay.addWidget(self._surgeTools)
+        from trading.surgeTradeData import TAB_COLUMNS
+
+        self.surgeRankTbl = QTableWidget(0, len(TAB_COLUMNS))
+        self.surgeRankTbl.setHorizontalHeaderLabels([label for _key, label in TAB_COLUMNS])
+        self._tuneGrid(self.surgeRankTbl, [])
+        self.surgeRankTbl.setVisible(False)
+        self.surgeRankTbl.itemSelectionChanged.connect(self._onSurgeRowPicked)
+        watchLay.addWidget(self.surgeRankTbl, 1)
+        self._surgePoll = QTimer(self)
+        self._surgePoll.setInterval(400)
+        self._surgePoll.timeout.connect(self._pollSurgeRefresh)
+        self._surgeSnapTimer = QTimer(self)
+        self._surgeSnapTimer.setInterval(45000)
+        self._surgeSnapTimer.timeout.connect(self._fillSurgeWatch)
+        self._surgeStatusWord = ""
         self._leaderRankPoll = QTimer(self)
         self._leaderRankPoll.setInterval(2000)
         self._leaderRankPoll.timeout.connect(self._pollLeaderRankScan)
@@ -1271,11 +1356,15 @@ class TradeDeskWin(QMainWindow):
         mainSplit.setStretchFactor(0, 1)
         mainSplit.setStretchFactor(1, 1)
         mainSplit.setSizes([700, 700])
+        mainSplit.setMinimumWidth(360)
+        self.mainSplit = mainSplit
 
         # 오른쪽 탭: 기본은 접힘. 계좌·로그는 눌렀을 때만 탭 왼쪽에 펼친다.
         self.sidePanel = QWidget()
         self.sidePanel.setMinimumWidth(300)
-        self.sidePanel.setMaximumWidth(560)
+        self.sidePanel.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         sideLay = QVBoxLayout(self.sidePanel)
         sideLay.setContentsMargins(0, 0, 0, 0)
         self.sideTitle = self._sectionTitle("계좌")
@@ -1376,6 +1465,8 @@ class TradeDeskWin(QMainWindow):
         chartPane = DeskStkChartPane()
         self.deskChart = chartPane
         self.deskChart.btnRefresh.clicked.connect(self._onChartRefreshClick)
+        self.deskChart.barsMissing.connect(self._onChartBarsMissing)
+        self._chartFetchTried = set()
         self.sideStack.addWidget(chartPane)
 
         # 설정 — 투자모드·매매방식 (상단바에서 이동)
@@ -1431,11 +1522,28 @@ class TradeDeskWin(QMainWindow):
             termLog(f"[desk] MMG01 설정행 실패: {err}")
         settLay.addStretch(1)
         self.sideStack.addWidget(settPane)
+        from ui.algMgrPane import AlgMgrPane
+
+        self.algMgrPane = AlgMgrPane()
+        self.sideStack.addWidget(self.algMgrPane)
         self._loadTradeModeCmb()
         self._loadTradeExchCmb()
 
         self.sidePanel.hide()
-        bodyLay.addWidget(self.sidePanel)
+        self.deskBodySplit = QSplitter(Qt.Orientation.Horizontal)
+        self.deskBodySplit.setChildrenCollapsible(False)
+        self.deskBodySplit.setHandleWidth(8)
+        self.deskBodySplit.setStyleSheet(
+            "QSplitter::handle { background: #d0d0d0; }"
+            "QSplitter::handle:hover { background: #1565c0; }"
+        )
+        self.deskBodySplit.addWidget(mainSplit)
+        self.deskBodySplit.addWidget(self.sidePanel)
+        self.deskBodySplit.setStretchFactor(0, 1)
+        self.deskBodySplit.setStretchFactor(1, 2)
+        self.deskBodySplit.splitterMoved.connect(self._onDeskBodySplitMoved)
+        self._deskBodySizes = None
+        bodyLay.addWidget(self.deskBodySplit, 1)
 
         rail = QFrame()
         rail.setObjectName("sideRail")
@@ -1455,6 +1563,7 @@ class TradeDeskWin(QMainWindow):
         self.errTab = self._makeSideTab("오류")
         self.chartTab = self._makeSideTab("차트")
         self.settTab = self._makeSideTab("설정")
+        self.mgrTab = self._makeSideTab("관리")
         self.acctTab.clicked.connect(lambda c: self._onSideTab("acct", c))
         self.stratTab.clicked.connect(lambda c: self._onSideTab("strat", c))
         self.dayTab.clicked.connect(lambda c: self._onSideTab("day", c))
@@ -1462,6 +1571,7 @@ class TradeDeskWin(QMainWindow):
         self.errTab.clicked.connect(lambda c: self._onSideTab("err", c))
         self.chartTab.clicked.connect(lambda c: self._onSideTab("chart", c))
         self.settTab.clicked.connect(lambda c: self._onSideTab("sett", c))
+        self.mgrTab.clicked.connect(lambda c: self._onSideTab("mgr", c))
         railLay.addWidget(self.acctTab)
         railLay.addWidget(self.stratTab)
         railLay.addWidget(self.dayTab)
@@ -1469,6 +1579,7 @@ class TradeDeskWin(QMainWindow):
         railLay.addWidget(self.errTab)
         railLay.addWidget(self.chartTab)
         railLay.addWidget(self.settTab)
+        railLay.addWidget(self.mgrTab)
         railLay.addStretch(1)
         bodyLay.addWidget(rail)
 
@@ -1705,9 +1816,11 @@ class TradeDeskWin(QMainWindow):
             "day": self.dayTab,
             "chart": self.chartTab,
             "sett": self.settTab,
+            "mgr": self.mgrTab,
         }
         if not checked:
             if not any(b.isChecked() for b in tabs.values()):
+                self._rememberDeskBodySplit()
                 self._sideKey = ""
                 self.sidePanel.hide()
                 self._stopDeskChart()
@@ -1723,6 +1836,7 @@ class TradeDeskWin(QMainWindow):
             "day": "거래",
             "chart": "차트",
             "sett": "설정",
+            "mgr": "알고리즘 관리",
         }
         pages = {
             "acct": 0,
@@ -1732,22 +1846,24 @@ class TradeDeskWin(QMainWindow):
             "err": 4,
             "chart": 5,
             "sett": 6,
+            "mgr": 7,
         }
         self.sideTitle.setText(self._titleText(titles.get(key) or key))
         self.sideStack.setCurrentIndex(pages.get(key, 0))
         self._sideKey = key
         if key == "chart":
             self.sidePanel.setMinimumWidth(380)
-            self.sidePanel.setMaximumWidth(720)
         else:
             self.sidePanel.setMinimumWidth(300)
-            self.sidePanel.setMaximumWidth(560)
         self.sidePanel.show()
+        QTimer.singleShot(0, self._applyDeskBodySplit)
         if key == "strat":
             self._rebuildStratAlgTabs()
             self.refreshStratInfo()
         if key == "acct":
             self.refreshAlgPnl()
+        if key == "mgr":
+            self.algMgrPane.reload()
         if key == "sett":
             self._loadTradeModeCmb()
             self._loadTradeExchCmb()
@@ -1756,6 +1872,36 @@ class TradeDeskWin(QMainWindow):
             self._openDeskChart()
         else:
             self._stopDeskChart()
+
+    def _rememberDeskBodySplit(self):
+        split = getattr(self, "deskBodySplit", None)
+        panel = getattr(self, "sidePanel", None)
+        if split is None or panel is None or not panel.isVisible():
+            return
+        sizes = split.sizes()
+        if len(sizes) == 2 and sizes[0] > 0 and sizes[1] > 0:
+            self._deskBodySizes = [int(sizes[0]), int(sizes[1])]
+
+    def _onDeskBodySplitMoved(self, _pos, _index):
+        self._rememberDeskBodySplit()
+
+    def _applyDeskBodySplit(self):
+        """관심종목과 차트 사이 핸들. 한 번 조절한 너비는 이 창이 열려 있는 동안 유지한다."""
+        from utils.chartBarPlan import deskSideSplitSizes
+
+        split = getattr(self, "deskBodySplit", None)
+        panel = getattr(self, "sidePanel", None)
+        if split is None or panel is None or not panel.isVisible():
+            return
+        total = sum(int(n) for n in split.sizes())
+        if total < 200:
+            total = max(800, int(self.width() or 0) - 60)
+        sizes = deskSideSplitSizes(
+            total,
+            getattr(self, "_deskBodySizes", None),
+            chartOpen=getattr(self, "_sideKey", "") == "chart",
+        )
+        split.setSizes(sizes)
 
     def _selectedWatchStk(self):
         """관심종목 선택 행 → (stkCd, stkNm). 없으면 빈 값."""
@@ -1782,7 +1928,7 @@ class TradeDeskWin(QMainWindow):
         return cd, nm
 
     def _onWatchRowPicked(self):
-        """관심 표 선택 → 차트 탭이 열려 있을 때만 일봉을 다시 읽는다."""
+        """관심종목 고정 칸·가로 칸에서 사용자가 고르면 차트 탭을 연다."""
         if getattr(self, "_watchRefreshBusy", False):
             return
         if getattr(self, "_chartSelBusy", False):
@@ -1806,16 +1952,82 @@ class TradeDeskWin(QMainWindow):
         finally:
             self._chartSelBusy = False
         cd, nm = self._selectedWatchStk()
-        if cd and cd == getattr(self, "_chartStkCd", ""):
+        self._applyWatchChartPick(cd, nm)
+
+    def _onSurgeRowPicked(self):
+        """급등주 표에서 사용자가 고르면 같은 차트 탭을 연다."""
+        if getattr(self, "_watchRefreshBusy", False) or getattr(self, "_chartSelBusy", False):
+            return
+        cd, nm = self._selectedSurgeStk()
+        self._applyWatchChartPick(cd, nm)
+
+    def _selectedSurgeStk(self):
+        from utils.stkCdUtil import normStkCd
+
+        table = getattr(self, "surgeRankTbl", None)
+        if table is None:
+            return "", ""
+        row = table.currentRow()
+        if row < 0:
+            return "", ""
+        codeCell = table.item(row, 0)
+        nameCell = table.item(row, 1)
+        cd = normStkCd(codeCell.text() if codeCell is not None else "") or ""
+        nm = str(nameCell.text() or "").strip() if nameCell is not None else ""
+        return cd, nm
+
+    def _applyWatchChartPick(self, cd, nm):
+        """실제 행 선택만 차트 탭을 연다. 갱신 중이면 열지 않는다."""
+        from utils.chartBarPlan import chartActionForWatchPick
+
+        action = chartActionForWatchPick(
+            True,
+            cd,
+            currentCode=getattr(self, "_chartStkCd", ""),
+            refreshBusy=getattr(self, "_watchRefreshBusy", False),
+            syncBusy=getattr(self, "_chartSelBusy", False),
+            chartOpen=getattr(self, "_sideKey", "") == "chart",
+        )
+        if action == "ignore":
             return
         self._chartStkCd = cd
         self._chartStkNm = nm
-        if getattr(self, "_sideKey", "") == "chart":
+        self._chartFetchTried = set()
+        self._subscribeChartQuote(cd)
+        if action == "reload":
             self._reloadDeskChart()
+            return
+        btn = getattr(self, "chartTab", None)
+        if btn is not None and not btn.isChecked():
+            btn.setChecked(True)
+        self._onSideTab("chart", True)
+
+    def _subscribeChartQuote(self, code):
+        """차트로 연 종목은 0B 구독에 넣는다. 주문은 내지 않는다."""
+        if not code:
+            return
+        try:
+            from trading.watchRtMonitor import addWatchRtCodes
+
+            addWatchRtCodes([code], "차트")
+        except Exception as err:
+            from utils.termLog import termLog
+
+            termLog(f"[deskChart] 시세 구독 실패 {code}: {err}")
 
     def _openDeskChart(self):
-        """차트 탭을 열 때: 선택 종목 일봉 로드 + 1초 라이브만."""
-        cd, nm = self._selectedWatchStk()
+        """차트 탭을 열 때: 선택 종목 일·주·월봉 로드 + 1초 라이브만."""
+        if self._isSurgeWatchTab():
+            cd, nm = self._selectedSurgeStk()
+        else:
+            cd, nm = self._selectedWatchStk()
+        if not cd and self._isSurgeWatchTab():
+            self._chartStkCd = ""
+            self._chartStkNm = ""
+            self.deskChart.clearChart("관심종목에서 종목을 선택하세요")
+            if not self._chartLiveTimer.isActive():
+                self._chartLiveTimer.start(1000)
+            return
         if not cd:
             cds = list(getattr(self, "_watchPaintCds", None) or [])
             if cds:
@@ -1828,6 +2040,8 @@ class TradeDeskWin(QMainWindow):
                 cd, nm = self._selectedWatchStk()
         self._chartStkCd = cd
         self._chartStkNm = nm
+        self._chartFetchTried = set()
+        self._subscribeChartQuote(cd)
         self._reloadDeskChart()
         if not self._chartLiveTimer.isActive():
             self._chartLiveTimer.start(1000)
@@ -1837,8 +2051,8 @@ class TradeDeskWin(QMainWindow):
         if getattr(self, "_chartLiveTimer", None) is not None:
             self._chartLiveTimer.stop()
 
-    def _reloadDeskChart(self):
-        """일봉은 백그라운드에서만. 차트 탭이 아니면 조회하지 않는다."""
+    def _reloadDeskChart(self, allowFetch=True):
+        """일·주·월봉은 백그라운드에서만. 차트 탭이 아니면 조회하지 않는다."""
         if getattr(self, "_sideKey", "") != "chart":
             return
         cd = str(getattr(self, "_chartStkCd", "") or "")
@@ -1848,20 +2062,81 @@ class TradeDeskWin(QMainWindow):
             return
         self._chartLoadTok = int(getattr(self, "_chartLoadTok", 0) or 0) + 1
         tok = self._chartLoadTok
+        period = str(getattr(self.deskChart, "_barTp", "") or "day")
         self.deskChart.headLbl.setText(f"{nm}({cd}) 차트 조회…")
+        from utils.chartBarPlan import CHART_FETCH_TIMEOUT_SEC, chartFetchStartLine
+        from utils.termLog import termLog
+
+        termLog(chartFetchStartLine(cd, "조회"))
+        QTimer.singleShot(
+            int(CHART_FETCH_TIMEOUT_SEC * 1000),
+            lambda tok=tok, code=cd, name=nm: self._expireDeskChart(tok, code, name, "조회"),
+        )
 
         def _job():
-            try:
-                from ui.deskStkChart import loadDeskDayBars
+            from utils.chartBarLoad import ensureChartBars, loadDeskChartBundle
+            from utils.chartBarPlan import needsAutoFetch
+            from utils.termLog import termLog
 
-                bars = loadDeskDayBars(cd)
-            except Exception:
-                bars = []
+            try:
+                bundle = loadDeskChartBundle(cd)
+            except Exception as err:
+                termLog(f"[deskChart] 차트 조회 실패 {cd}: {err}")
+                bundle = {"day": [], "week": [], "month": [], "note": str(err)}
+            key = (cd, period)
+            tried = getattr(self, "_chartFetchTried", set())
+            if allowFetch and needsAutoFetch(bundle, period) and key not in tried:
+                tried.add(key)
+                self._chartFetchTried = tried
+                try:
+                    got = ensureChartBars(cd) or {}
+                except Exception as err:
+                    termLog(f"[deskChart] 자동 조회 실패 {cd}: {err}")
+                    got = {"ok": False, "errMsg": str(err)}
+                try:
+                    bundle = loadDeskChartBundle(cd)
+                except Exception as err:
+                    termLog(f"[deskChart] 재조회 실패 {cd}: {err}")
+                    bundle = {"day": [], "week": [], "month": []}
+                if needsAutoFetch(bundle, period):
+                    note = str(got.get("errMsg") or "일·주·월봉을 받지 못했습니다")
+                    bundle["note"] = note
+                    termLog(f"[deskChart] {cd} {period} 없음 · {note}")
+            if not any(bundle.get(key) for key in ("day", "week", "month")) and not bundle.get("note"):
+                errs = bundle.get("errors") or []
+                bundle["note"] = str(errs[0]) if errs else "데이터 없음"
             if tok != getattr(self, "_chartLoadTok", 0):
                 return
-            self.chartBarsOk.emit(cd, bars, nm)
+            self.chartBarsOk.emit(cd, bundle, nm)
 
         threading.Thread(target=_job, daemon=True).start()
+
+    def _onChartBarsMissing(self, period):
+        """주·월 전환인데 봉이 없으면 일·주·월을 함께 받는다."""
+        if getattr(self, "_sideKey", "") != "chart":
+            return
+        self._reloadDeskChart(allowFetch=True)
+
+    def _expireDeskChart(self, tok, code, name, kind):
+        """조회가 끝나지 않으면 헤더를 되돌린다. 늦은 결과는 버린다."""
+        if int(tok or 0) != int(getattr(self, "_chartLoadTok", 0) or 0):
+            return
+        self._chartLoadTok = int(tok or 0) + 1
+        from utils.termLog import termLog
+
+        termLog(f"[deskChart] {kind} 시간 초과 {code}")
+        termLog(
+            f"[deskChart] ATR 진단 cd={code} tab=- widget=DeskStkChartPane bars=0 "
+            f"visible=-..- signals=0 plans=0 focus=none extend=False "
+            f"chk눌림=- chkATR=- chk전체=- series_added=0 yrange=- "
+            f"skip={kind} 시간 초과로 번들을 그리지 않음"
+        )
+        title = f"{name}({code})" if name else str(code)
+        self.deskChart.headLbl.setText(f"{title} {kind} 시간 초과")
+        btn = getattr(self.deskChart, "btnRefresh", None)
+        if btn is not None:
+            btn.setEnabled(True)
+            btn.setText("차트 최신화")
 
     def _onChartRefreshClick(self):
         """차트 최신화: 선택 종목 일봉 증분+마지막날 재조회 → DB 적재 → 차트 다시 읽기."""
@@ -1873,17 +2148,30 @@ class TradeDeskWin(QMainWindow):
         btn = self.deskChart.btnRefresh
         btn.setEnabled(False)
         btn.setText("갱신 중…")
-        self.deskChart.headLbl.setText(f"{nm}({cd}) 일봉 최신화 중…")
+        self.deskChart.headLbl.setText(f"{nm}({cd}) 일·주·월봉 최신화 중…")
+        self._chartLoadTok = int(getattr(self, "_chartLoadTok", 0) or 0) + 1
+        tok = self._chartLoadTok
+        from utils.chartBarPlan import CHART_FETCH_TIMEOUT_SEC, chartFetchStartLine
+        from utils.termLog import termLog
+
+        termLog(chartFetchStartLine(cd, "최신화"))
+        QTimer.singleShot(
+            int(CHART_FETCH_TIMEOUT_SEC * 1000),
+            lambda tok=tok, code=cd, name=nm: self._expireDeskChart(tok, code, name, "최신화"),
+        )
 
         def _job():
             try:
-                from utils.rankDayPrcLoad import loadDayPrcForRankStks, DEFAULT_MONTHS
+                from utils.chartBarLoad import ensureChartBars
 
-                res = loadDayPrcForRankStks(
-                    [cd], months=DEFAULT_MONTHS, skipIfEnough=False, refetchLastDay=True
-                ) or {}
+                res = ensureChartBars(cd, refetch=True) or {}
             except Exception as e:
-                res = {"ok": False, "errMsg": str(e)}
+                from utils.termLog import termLog
+
+                termLog(f"[deskChart] 최신화 실패 {cd}: {e}")
+                res = {"ok": False, "errMsg": str(e), "failCnt": 1}
+            if tok != getattr(self, "_chartLoadTok", 0):
+                return
             self.chartRefreshDone.emit(cd, res)
 
         threading.Thread(target=_job, daemon=True).start()
@@ -1919,7 +2207,8 @@ class TradeDeskWin(QMainWindow):
         if str(stkCd or "") != str(getattr(self, "_chartStkCd", "") or ""):
             return
         ymd = datetime.now().strftime("%Y%m%d")
-        self.deskChart.setDayBars(stkCd, stkNm, bars or [], liveYmd=ymd)
+        bundle = bars if isinstance(bars, dict) else {"day": bars or []}
+        self.deskChart.setChartBundle(stkCd, stkNm, bundle, liveYmd=ymd)
         self._tickDeskChart()
 
     def _tickDeskChart(self):
@@ -1935,10 +2224,13 @@ class TradeDeskWin(QMainWindow):
             info = peekWatchLastPx(cd) or {}
         except Exception:
             return
-        px = info.get("curPrc") or info.get("krxPrc") or info.get("nxtPrc")
+        from utils.chartBarPlan import unifiedLivePx
+
+        today = datetime.now().strftime("%Y%m%d")
+        px = unifiedLivePx(info, today)
         if px is None:
             return
-        self.deskChart.applyLivePx(px)
+        self.deskChart.applyLivePx(px, tickYmd=info.get("tickYmd"))
 
     def _titleText(self, text):
         """섹션 제목 표시. 표 헤더와 구분되도록 감싼다."""
@@ -2860,30 +3152,20 @@ class TradeDeskWin(QMainWindow):
         termLog(f"[매매창] 매매 설정 저장: {saved}")
 
     def refreshOpsAlgBar(self):
-        """하단: 운영 중 알고리즘 — 보유 행번호와 동일 바탕색 칩."""
+        """하단: 유효 가동 알고리즘만. 꺼진 알고리즘 이름·설명은 두지 않는다."""
         try:
-            from trading.deskLiveAlgs import algBgColor, listDeskLiveAlgs
+            from trading.deskLiveAlgs import formatOpsAlgBar, listDeskLiveAlgs, operatingDeskRows
 
-            chips = []
-            for r in listDeskLiveAlgs():
-                alg = r.get("algCd") or ""
-                nm = r.get("name") or alg
-                on = "ON" if r.get("enabled") else "OFF"
-                bg = algBgColor(alg)
-                chips.append(
-                    f'<span style="background-color:{bg};color:#000;'
-                    f'padding:2px 8px;border-radius:3px;margin-right:4px;">'
-                    f"{nm}({alg}) {on}</span>"
-                )
-            if chips:
-                self.opsAlgLbl.setText(
-                    '<span style="color:#424242;">운영알고리즘 </span>'
-                    + "&nbsp;".join(chips)
-                )
+            shown = formatOpsAlgBar(operatingDeskRows(listDeskLiveAlgs()))
+            if shown.get("visible") and shown.get("text"):
+                self.opsAlgLbl.setText(shown["text"])
+                self.opsAlgLbl.setVisible(True)
             else:
-                self.opsAlgLbl.setText("운영알고리즘: -")
+                self.opsAlgLbl.clear()
+                self.opsAlgLbl.setVisible(False)
         except Exception:
-            self.opsAlgLbl.setText("운영알고리즘: -")
+            self.opsAlgLbl.clear()
+            self.opsAlgLbl.setVisible(False)
         # 설정이 바뀌었으면 전략 탭도 맞춤
         try:
             if hasattr(self, "stratAlgTabBar"):
@@ -2896,11 +3178,11 @@ class TradeDeskWin(QMainWindow):
             pass
 
     def _rebuildStratAlgTabs(self):
-        """전략 탭 상단 — deskAlgTabs 기준, 탭색=algBgColor."""
+        """전략 설명 탭 — 유효 가동 알고리즘만. 보유로 켜짐 여부를 판단하지 않는다."""
         try:
-            from trading.deskLiveAlgs import algBgColor, listDeskLiveAlgs
+            from trading.deskLiveAlgs import algBgColor, listDeskLiveAlgs, operatingDeskRows
 
-            algs = listDeskLiveAlgs()
+            algs = operatingDeskRows(listDeskLiveAlgs())
         except Exception:
             algs = []
             algBgColor = None
@@ -2915,7 +3197,7 @@ class TradeDeskWin(QMainWindow):
             if hasattr(bar, "setTabBg"):
                 bar.setTabBg(idx, bg)
 
-        # 동일하면 이름·색만 갱신
+        # 동일하면 이름·색만 갱신. 가동이 없으면 이전 설명을 지운다.
         if cds == getattr(self, "_stratAlgTabCds", None):
             for i, r in enumerate(algs):
                 if i < bar.count():
@@ -2923,6 +3205,9 @@ class TradeDeskWin(QMainWindow):
                     bar.setTabText(i, r.get("name") or alg)
                     bar.setTabToolTip(i, str(alg))
                     _paintTabBg(i, alg)
+            if not cds or self._stratAlgCd not in cds:
+                self._stratAlgCd = cds[0] if cds else ""
+                self._syncStratInfoVisibility()
             if hasattr(bar, "update"):
                 bar.update()
             return
@@ -2942,11 +3227,12 @@ class TradeDeskWin(QMainWindow):
                 _paintTabBg(idx, alg)
                 self._stratAlgTabCds.append(alg)
             cur = self._stratAlgCd if self._stratAlgCd in self._stratAlgTabCds else (
-                self._stratAlgTabCds[0] if self._stratAlgTabCds else "MTS01"
+                self._stratAlgTabCds[0] if self._stratAlgTabCds else ""
             )
             self._stratAlgCd = cur
             if cur in self._stratAlgTabCds:
                 bar.setCurrentIndex(self._stratAlgTabCds.index(cur))
+            self._syncStratInfoVisibility()
         finally:
             self._stratAlgTabsBusy = False
             bar.update()
@@ -2959,15 +3245,27 @@ class TradeDeskWin(QMainWindow):
         alg = self.stratAlgTabBar.tabData(idx)
         if not alg and 0 <= idx < len(getattr(self, "_stratAlgTabCds", [])):
             alg = self._stratAlgTabCds[idx]
-        self._stratAlgCd = str(alg or "MTS01")
+        self._stratAlgCd = str(alg or "")
+        if self._stratAlgCd not in (getattr(self, "_stratAlgTabCds", None) or []):
+            cds = getattr(self, "_stratAlgTabCds", None) or []
+            self._stratAlgCd = cds[0] if cds else ""
         self.refreshStratInfo()
 
     def _rebuildWatchAlgTabs(self):
-        """관심종목 — 실계좌 보유만. 상승순위 탭은 쓰지 않는다."""
-        tabs = (
-            ("acnt", "실계좌", "#CE93D8"),
-            ("leader", "주도주", "#FFCC80"),
-        )
+        """조회 탭. 기본은 급등주만. 실계좌·주도주 코드는 남기고 설정으로 되돌린다."""
+        try:
+            from trading.deskLiveAlgs import resolveMonitorSelection, visibleMonitorTabs
+
+            tabs = tuple(
+                (row["key"], row["name"], row["bg"]) for row in visibleMonitorTabs()
+            )
+        except Exception:
+            tabs = (("surge", "급등주", "#80DEEA"),)
+
+            def resolveMonitorSelection(current, visibleKeys):
+                keys = [str(k) for k in (visibleKeys or []) if str(k)]
+                cur = str(current or "")
+                return cur if cur in keys else (keys[0] if keys else "")
         cds = [k for k, _n, _c in tabs]
         bar = self.watchAlgTabBar
         if cds == getattr(self, "_watchAlgTabCds", None) and bar.count() == len(cds):
@@ -2987,7 +3285,7 @@ class TradeDeskWin(QMainWindow):
                 except Exception:
                     pass
                 self._watchAlgTabCds.append(key)
-            cur = self._watchAlgCd if self._watchAlgCd in self._watchAlgTabCds else "acnt"
+            cur = resolveMonitorSelection(self._watchAlgCd, self._watchAlgTabCds)
             self._watchAlgCd = cur
             if cur in self._watchAlgTabCds:
                 bar.setCurrentIndex(self._watchAlgTabCds.index(cur))
@@ -3004,7 +3302,10 @@ class TradeDeskWin(QMainWindow):
         alg = self.watchAlgTabBar.tabData(idx)
         if not alg and 0 <= idx < len(getattr(self, "_watchAlgTabCds", [])):
             alg = self._watchAlgTabCds[idx]
-        self._watchAlgCd = str(alg or "acnt")
+        self._watchAlgCd = str(alg or "")
+        cds = getattr(self, "_watchAlgTabCds", None) or []
+        if self._watchAlgCd not in cds:
+            self._watchAlgCd = cds[0] if cds else ""
         try:
             _f = self.tradeWatchFrozen
             _f.setItemDelegateForColumn(1, SignedPnlDelegate(_f))
@@ -3014,6 +3315,7 @@ class TradeDeskWin(QMainWindow):
         except Exception:
             pass
         self._syncLeaderRankTools()
+        self._syncSurgeTools()
         self.refreshTradeWatch()
 
     def _listWatchRowsForAlg(self, algCd):
@@ -3077,25 +3379,44 @@ class TradeDeskWin(QMainWindow):
         if bar is None or bar.count() < 1:
             return
         cds = list(getattr(self, "_watchAlgTabCds", None) or [])
-        labels = {"acnt": "실계좌", "leader": "주도주", "rank20": "20일누적"}
+        labels = {"acnt": "실계좌", "leader": "주도주", "rank20": "20일누적", "surge": "급등주"}
         for i, key in enumerate(cds):
             if i >= bar.count():
                 break
             bar.setTabText(i, labels.get(key, key))
         bar.update()
 
+    def _syncStratInfoVisibility(self):
+        """가동 알고리즘이 없으면 설명 칸을 비우고 숨긴다."""
+        box = getattr(self, "stratBox", None)
+        if box is None:
+            return
+        cds = getattr(self, "_stratAlgTabCds", None) or []
+        if cds and self._stratAlgCd in cds:
+            box.setVisible(True)
+            return
+        self._stratAlgCd = cds[0] if cds else ""
+        box.clear()
+        box.setVisible(bool(cds))
+
     def refreshStratInfo(self):
-        """선택된 알고리즘 명세를 전략 탭에 표시. 스크롤 위치는 유지."""
+        """선택된 가동 알고리즘 명세만. 꺼진 알고리즘 설명은 남기지 않는다."""
+        cds = getattr(self, "_stratAlgTabCds", None) or []
+        algCd = str(getattr(self, "_stratAlgCd", "") or "")
+        if algCd not in cds:
+            self._syncStratInfoVisibility()
+            return
         try:
             from trading.deskLiveAlgs import stratIdForAlg
 
-            algCd = self._stratAlgCd or "MTS01"
             stratId = stratIdForAlg(algCd) or (
-                "maTouchScale_v1" if algCd == "MTS01" else "maSupportEod_v1"
+                "maTouchScale_v1" if algCd == "MTS01" else ""
             )
         except Exception:
-            algCd = getattr(self, "_stratAlgCd", None) or "MTS01"
-            stratId = "maTouchScale_v1" if algCd == "MTS01" else "maSupportEod_v1"
+            stratId = "maTouchScale_v1" if algCd == "MTS01" else ""
+        if not stratId:
+            self.stratBox.clear()
+            return
         # 탭 선택 동기
         cds = getattr(self, "_stratAlgTabCds", []) or []
         if algCd in cds:
@@ -4376,33 +4697,10 @@ class TradeDeskWin(QMainWindow):
                 return f"{n / 10000:.0f}만"
             return f"{int(n):,}"
 
-        _ISSUE_MAP = (
-            # 지주사·지분경쟁은 금융(업종 분류)보다 먼저 잡는다
-            ("경영권", "지배구조·경영권"), ("지분 경쟁", "지배구조·경영권"), ("지분경쟁", "지배구조·경영권"),
-            ("지분 매집", "지배구조·경영권"), ("장내 매집", "지배구조·경영권"), ("공개매수", "지배구조·경영권"),
-            ("지배구조", "지배구조·경영권"), ("지주사", "지배구조·경영권"), ("m&a", "지배구조·경영권"),
-            ("실적", "실적"), ("어닝", "실적"), ("흑자", "실적"),
-            ("방산", "방산"), ("방위", "방산"), ("전쟁", "전쟁"), ("우크라", "전쟁"), ("이스라엘", "전쟁"), ("재건", "재건"),
-            ("보안", "보안"), ("해킹", "해킹"), ("사이버", "해킹"),
-            ("HBM", "HBM"), ("반도체장비", "반도체장비"), ("장비", "반도체장비"), ("반도체", "반도체"), ("메모리", "반도체"),
-            ("원전", "원전"), ("원자력", "원전"), ("SMR", "원전"), ("전선", "전선"), ("전력", "전력"), ("변압기", "전력"),
-            ("2차전지", "2차전지"), ("배터리", "2차전지"), ("리튬", "2차전지"),
-            ("바이오", "바이오"), ("제약", "바이오"), ("신약", "바이오"), ("비만", "비만약"),
-            ("로봇", "로봇"), ("AI", "AI"), ("인공지능", "AI"), ("조선", "조선"), ("우주", "우주항공"), ("항공", "우주항공"),
-            ("자동차", "자동차"), ("엔터", "엔터"), ("게임", "게임"), ("화장품", "화장품"), ("음식", "K푸드"),
-            ("통신", "통신"), ("5G", "통신"), ("건설", "건설"), ("은행", "금융"), ("증권", "금융"), ("금융", "금융"),
-            ("철강", "철강"), ("석유", "에너지"), ("가스", "에너지"), ("태양광", "태양광"), ("수소", "수소"),
-            ("코인", "가상자산"), ("가상", "가상자산"), ("정책", "정책"), ("밸류업", "밸류업"),
-            ("수주", "실적"), ("턴어라운드", "실적"), ("배당", "밸류업"),
-            ("미사일", "방산"), ("드론", "방산"), ("국방", "방산"), ("북한", "전쟁"), ("중동", "전쟁"),
-            ("CXL", "HBM"), ("파운드리", "반도체"), ("디스플레이", "반도체"), ("OLED", "반도체"), ("PCB", "반도체"), ("기판", "반도체"), ("소재", "반도체장비"),
-            ("데이터센터", "전력"), ("전기", "전력"), ("ESS", "2차전지"), ("양극", "2차전지"), ("음극", "2차전지"), ("전해", "2차전지"), ("전기차", "자동차"), ("자율주행", "자동차"), ("부품", "자동차"),
-            ("의료", "바이오"), ("헬스", "바이오"), ("진단", "바이오"), ("치료", "바이오"), ("백신", "바이오"), ("의약", "바이오"),
-            ("휴머노이드", "로봇"), ("클라우드", "AI"), ("소프트", "AI"), ("SW", "AI"), ("반도체설계", "반도체"), ("6G", "통신"), ("위성", "우주항공"), ("해운", "조선"), ("LNG", "조선"),
-            ("미디어", "엔터"), ("콘텐츠", "엔터"), ("K-", "엔터"), ("여행", "엔터"), ("식품", "K푸드"), ("라면", "K푸드"), ("뷰티", "화장품"),
-            ("인프라", "건설"), ("시멘트", "건설"), ("리츠", "금융"), ("보험", "금융"), ("비철", "철강"), ("구리", "철강"), ("화학", "에너지"), ("정유", "에너지"), ("풍력", "태양광"),
-            ("블록체인", "가상자산"), ("STO", "가상자산"),
-        )
+        from trading.leaderIssueWords import LEADER_EVENT_MAP, LEADER_ISSUE_MAP
+
+        _ISSUE_MAP = LEADER_ISSUE_MAP
+        _EVENT_MAP = LEADER_EVENT_MAP
         _PASTELS = ("#FFF3C4", "#FFD6D6", "#E4D9F7", "#D3E6FF", "#D6F2DD", "#CFF1EF",
                     "#FAD9EC", "#DCE2F8", "#DCEFFA", "#FFE2C6", "#EEEEDC", "#E8F5C8")
 
@@ -4452,30 +4750,6 @@ class TradeDeskWin(QMainWindow):
             return out[:2]
 
         from utils.riseRankBoard import riseNewsTitle
-
-        # 뉴스/테마 문구 -> 짧은 이슈 단어 (먼저 나온 것이 우선)
-        _EVENT_MAP = (
-            ("어닝서프", "어닝서프라이즈"), ("어닝 서프", "어닝서프라이즈"), ("깜짝 실적", "어닝서프라이즈"), ("깜짝실적", "어닝서프라이즈"),
-            ("호실적", "어닝서프라이즈"), ("사상 최대", "어닝서프라이즈"), ("최대 실적", "어닝서프라이즈"), ("최대실적", "어닝서프라이즈"),
-            ("어닝쇼크", "어닝쇼크"), ("어닝 쇼크", "어닝쇼크"), ("실적 부진", "어닝쇼크"), ("적자 전환", "어닝쇼크"), ("적자전환", "어닝쇼크"),
-            ("흑자전환", "흑자전환"), ("흑자 전환", "흑자전환"), ("턴어라운드", "흑자전환"),
-            ("공개매수", "공개매수"), ("경영권", "경영권분쟁"), ("지분 경쟁", "경영권분쟁"), ("지분경쟁", "경영권분쟁"),
-            ("장내 매집", "지분매집"), ("지분 매집", "지분매집"), ("인수", "M&A"), ("합병", "M&A"), ("m&a", "M&A"), ("매각", "M&A"),
-            ("이란", "이란전쟁"), ("이스라엘", "중동전쟁"), ("중동", "중동전쟁"), ("우크라", "우크라전쟁"), ("러시아", "우크라전쟁"),
-            ("종전", "종전기대"), ("휴전", "종전기대"), ("재건", "재건"), ("북한", "북한리스크"),
-            ("관세", "관세"), ("트럼프", "트럼프"), ("무역", "관세"), ("수출 규제", "수출규제"), ("수출규제", "수출규제"), ("제재", "제재"),
-            ("코로나", "코로나"), ("팬데믹", "팬데믹"), ("독감", "감염병"), ("감염", "감염병"),
-            ("수주", "수주"), ("공급계약", "수주"), ("공급 계약", "수주"), ("계약 체결", "수주"), ("납품", "수주"),
-            ("fda", "FDA승인"), ("임상", "임상"), ("기술이전", "기술이전"), ("기술수출", "기술이전"), ("허가", "인허가"), ("승인", "인허가"),
-            ("정책", "정책수혜"), ("정부", "정책수혜"), ("예산", "정책수혜"), ("규제 완화", "규제완화"), ("규제완화", "규제완화"),
-            ("밸류업", "밸류업"), ("자사주", "자사주"), ("배당", "배당"), ("액면분할", "액면분할"), ("무상증자", "무상증자"),
-            ("유상증자", "유상증자"), ("상장", "신규상장"), ("금리 인하", "금리인하"), ("금리인하", "금리인하"), ("금리", "금리"),
-            ("환율", "환율"), ("유가", "유가"), ("목표가", "목표가상향"), ("신고가", "신고가"), ("상한가", "상한가"),
-            ("특허", "특허"), ("출시", "신제품"), ("신제품", "신제품"), ("협력", "협력"), ("mou", "협력"), ("투자 유치", "투자유치"),
-            ("해킹", "해킹"), ("화재", "사고"), ("파업", "파업"), ("소송", "소송"),
-            ("엔비디아", "엔비디아"), ("hbm", "HBM"), ("데이터센터", "데이터센터"), ("원전", "원전"), ("smr", "원전"),
-            ("방산", "방산수출"), ("k9", "방산수출"), ("로봇", "로봇"), ("휴머노이드", "로봇"), ("ai", "AI"),
-        )
 
         def _issueTxt(row):
             try:
@@ -4993,13 +5267,238 @@ class TradeDeskWin(QMainWindow):
                 pass
 
     def _fillTradeWatch(self):
-        """관심종목=계좌보유, 주도주=상승순위 보드."""
-        kind = str(getattr(self, "_watchAlgCd", None) or "acnt")
-        if kind in ("leader", "rank20"):
+        """관심종목=계좌보유, 주도주=상승순위, 급등주=조회순위."""
+        allowed = list(getattr(self, "_watchAlgTabCds", None) or [])
+        kind = str(getattr(self, "_watchAlgCd", None) or "")
+        frame = getattr(self, "watchGridFrame", None)
+        table = getattr(self, "surgeRankTbl", None)
+        if not allowed or kind not in allowed:
+            if allowed:
+                kind = allowed[0]
+                self._watchAlgCd = kind
+            else:
+                self._watchAlgCd = ""
+                if frame is not None:
+                    frame.setVisible(False)
+                if table is not None:
+                    table.setVisible(False)
+                self._syncLeaderRankTools()
+                self._syncSurgeTools()
+                return
+        surge = kind == "surge"
+        if frame is not None:
+            frame.setVisible(not surge)
+        if table is not None:
+            table.setVisible(surge)
+        if surge:
+            self._fillSurgeWatch()
+        elif kind in ("leader", "rank20"):
             self._fillRiseRankWatch()
         else:
             self._fillRealAcntWatch()
         try:
             self._syncLeaderRankTools()
+            self._syncSurgeTools()
         except Exception:
             pass
+
+    def _isSurgeWatchTab(self):
+        return str(getattr(self, "_watchAlgCd", None) or "") == "surge"
+
+    def _syncSurgeTools(self):
+        tools = getattr(self, "_surgeTools", None)
+        if tools is None:
+            return
+        show = self._isSurgeWatchTab()
+        tools.setVisible(show)
+        timer = getattr(self, "_surgeSnapTimer", None)
+        if timer is None:
+            return
+        if show and not timer.isActive():
+            timer.start()
+        if not show and timer.isActive():
+            timer.stop()
+
+    def _fillSurgeWatch(self):
+        """저장된 스냅샷만 그린다. 여기서 주문을 내지 않는다. 다시 그리는 동안 차트 탭을 열지 않는다."""
+        table = getattr(self, "surgeRankTbl", None)
+        if table is None:
+            return
+        outerBusy = getattr(self, "_watchRefreshBusy", False)
+        self._watchRefreshBusy = True
+        try:
+            self._paintSurgeWatch(table)
+        finally:
+            if not outerBusy:
+                self._watchRefreshBusy = False
+
+    def _paintSurgeWatch(self, table):
+        """급등주 표 칸만 채운다."""
+        from trading.surgeTradeData import (
+            SnapStore,
+            TAB_COLUMNS,
+            buildTabRows,
+            dailyPctCellColor,
+            formatGroupedInt,
+            formatNetEok,
+            formatYearRisePct,
+            nameBadges,
+            netFlowColor,
+            rsiCellColor,
+            selectTabDisplay,
+        )
+        from trading.surgeTradeEnrich import displayExtras
+
+        try:
+            from utils.appPaths import configDataDir
+
+            store = SnapStore(configDataDir() / "surgeTrade")
+            picked = selectTabDisplay(store, datetime.now())
+            asof = picked.get("asof") or ""
+            extras = displayExtras(store.dir, asof)
+            snap = picked.get("snap")
+            view = buildTabRows(snap, asof, extras)
+            view["slot"] = (snap or {}).get("slot") or ""
+            view["observedAt"] = (snap or {}).get("observedAt") or (snap or {}).get("notedAt") or ""
+            view["queryLabel"] = picked.get("queryLabel") or "조회일시 -"
+            view["fallback"] = picked.get("fallback") is True
+        except Exception as err:
+            view = {"state": "ERROR", "lastUpdated": "", "rows": [], "note": str(err), "queryLabel": "조회일시 -"}
+        rows = view.get("rows") or []
+        table.setRowCount(len(rows))
+        for r, row in enumerate(rows):
+            for c, (key, _label) in enumerate(TAB_COLUMNS):
+                val = row.get(key)
+                sortNum = None
+                flowSign = ""
+                if key == "price":
+                    text = formatGroupedInt(val)
+                    sortNum = val
+                elif key == "turnoverEok":
+                    text = formatGroupedInt(val)
+                    sortNum = val
+                elif key in ("orgnNetMillionKrw", "frgnNetMillionKrw", "penfndNetMillionKrw"):
+                    text, flowSign = formatNetEok(val)
+                    sortNum = val
+                elif key == "yearRisePct":
+                    text, yearSign = formatYearRisePct(val)
+                    sortNum = val
+                else:
+                    text = "-" if val in (None, "") else str(val)
+                item = SurgeSortItem(text) if sortNum not in (None, "") else QTableWidgetItem(text)
+                if sortNum not in (None, ""):
+                    item.setData(Qt.ItemDataRole.UserRole + 1, sortNum)
+                if key == "name":
+                    item.setData(
+                        Qt.ItemDataRole.UserRole,
+                        nameBadges(row.get("newHigh"), row.get("newSurge")),
+                    )
+                if key == "dailyPct":
+                    dailyBg = dailyPctCellColor(val)
+                    if dailyBg:
+                        item.setBackground(QBrush(QColor(dailyBg)))
+                if key == "rsi14":
+                    rsiBg = rsiCellColor(val)
+                    if rsiBg:
+                        item.setBackground(QBrush(QColor(rsiBg)))
+                        item.setForeground(QBrush(QColor("#212121")))
+                if key == "issues" and row.get("issueColor"):
+                    item.setBackground(QBrush(QColor(str(row.get("issueColor")))))
+                    item.setForeground(QBrush(QColor("#212121")))
+                flowFg = netFlowColor(flowSign)
+                if flowFg:
+                    item.setForeground(QBrush(QColor(flowFg)))
+                if key == "yearRisePct" and yearSign == "up":
+                    item.setForeground(QBrush(_PNL_PLUS))
+                elif key == "yearRisePct" and yearSign == "down":
+                    item.setForeground(QBrush(_PNL_MINUS))
+                if key in ("issues", "orgnNetMillionKrw", "frgnNetMillionKrw", "penfndNetMillionKrw"):
+                    tip = row.get("flowStatus") or ""
+                    details = row.get("issueDetails") or []
+                    if details:
+                        tip = tip + " " + str(details[0].get("sourceUrl") or "")
+                    item.setToolTip(tip.strip())
+                table.setItem(r, c, item)
+        nameCol = next((i for i, (key, _label) in enumerate(TAB_COLUMNS) if key == "name"), None)
+        if nameCol is not None:
+            if getattr(self, "_surgeNameDel", None) is None:
+                self._surgeNameDel = SurgeNameDelegate(table)
+            table.setItemDelegateForColumn(nameCol, self._surgeNameDel)
+        label = getattr(self, "_surgeStateLbl", None)
+        if label is not None:
+            stamp = view.get("queryLabel") or "조회일시 -"
+            word = str(getattr(self, "_surgeStatusWord", "") or "")
+            if word:
+                label.setText(f"{word} · {stamp}")
+            else:
+                label.setText(stamp)
+
+    def _onSurgeRefresh(self):
+        """수동 갱신. 백그라운드에서 ka00198 만 읽고 ADHOC 으로 저장한다."""
+        if not self._isSurgeWatchTab():
+            return
+        from trading.surgeTradeData import SnapStore
+        from trading.surgeTradeLive import (
+            beginManualRankRefresh,
+            loadPaperOrderSession,
+            paperRankTransport,
+        )
+        from utils.appPaths import configDataDir
+
+        btn = getattr(self, "_surgeRefreshBtn", None)
+        if btn is not None:
+            btn.setEnabled(False)
+        self._surgeStatusWord = "조회중"
+        label = getattr(self, "_surgeStateLbl", None)
+        if label is not None:
+            label.setText("조회중")
+        session = None
+        try:
+            session = loadPaperOrderSession()
+        except Exception:
+            session = None
+        if not session:
+            self._surgeStatusWord = "실패 모의 조회 세션 없음"
+            if label is not None:
+                label.setText(self._surgeStatusWord)
+            if btn is not None:
+                btn.setEnabled(True)
+            return
+        session = dict(session)
+        session["purpose"] = "market_read"
+        beginManualRankRefresh(
+            session,
+            SnapStore(configDataDir() / "surgeTrade"),
+            datetime.now(),
+            paperRankTransport(session),
+        )
+        poll = getattr(self, "_surgePoll", None)
+        if poll is not None and not poll.isActive():
+            poll.start()
+
+    def _applySurgeRefreshState(self, state):
+        btn = getattr(self, "_surgeRefreshBtn", None)
+        busy = str(state.get("state") or "") == "BUSY"
+        if btn is not None:
+            btn.setEnabled(not busy)
+        word = str(state.get("label") or "")
+        if word:
+            self._surgeStatusWord = word
+        label = getattr(self, "_surgeStateLbl", None)
+        if label is not None and word:
+            label.setText(word)
+
+    def _pollSurgeRefresh(self):
+        from trading.surgeTradeLive import refreshStatus
+
+        state = refreshStatus()
+        if str(state.get("state") or "") in ("", "IDLE", "BUSY"):
+            if str(state.get("state") or "") == "BUSY":
+                self._applySurgeRefreshState(state)
+            return
+        poll = getattr(self, "_surgePoll", None)
+        if poll is not None:
+            poll.stop()
+        self._applySurgeRefreshState(state)
+        if self._isSurgeWatchTab():
+            self._fillSurgeWatch()

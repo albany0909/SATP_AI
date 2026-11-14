@@ -1,7 +1,6 @@
 """
-매매창 관심종목 일봉 차트.
-과거는 AI_DAY_STK_PRC, 당일은 이미 수신 중인 0B 현재가로만 덧그린다.
-TR 을 추가로 부르지 않는다.
+매매창 차트. 일봉은 AI_DAY_STK_PRC, 주봉은 AI_WK_STK_PRC, 월봉은 AI_MON_STK_PRC.
+당일 일봉만 이미 수신 중인 0B 현재가로 덧그린다. 주·월은 1초마다 다시 그리지 않는다.
 """
 
 from datetime import datetime, timedelta
@@ -17,8 +16,9 @@ from PySide6.QtCharts import (
     QValueAxis,
 )
 from PySide6.QtCore import QMargins, QRectF, QTimer, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QButtonGroup,
+    QCheckBox,
 )
 
 _MA_PERIODS = (5, 10, 20, 60, 120)
@@ -308,20 +309,10 @@ def _aggBars(dayBars, barTp):
 
 
 def loadDeskDayBars(stkCd, endYmd=None):
-    """워커 스레드에서 호출. 주·월·년봉은 이 일봉을 합쳐 그린다."""
-    from backtest.engine import loadDayBars
-    from utils.stkCdUtil import normStkCd
+    """저장된 일봉. 차트 워커는 이 UI 모듈을 거치지 않고 utils.chartBarLoad 를 쓴다."""
+    from utils.chartBarLoad import loadStoredDayBars
 
-    cd = normStkCd(stkCd)
-    if not cd:
-        return []
-    end = str(endYmd or datetime.now().strftime("%Y%m%d"))[:8]
-    try:
-        startDt = datetime.strptime(end, "%Y%m%d") - timedelta(days=_LOOKBACK_DAYS)
-        start = startDt.strftime("%Y%m%d")
-    except ValueError:
-        start = end
-    return loadDayBars(cd, start, end) or []
+    return loadStoredDayBars(stkCd, endYmd=endYmd) or []
 
 
 class CandleChartView(QChartView):
@@ -347,11 +338,27 @@ class CandleChartView(QChartView):
         self._xBarN = 0
         self._xTicks = []
         self._plotReady = False
+        self._timingMarks = []
+        self._atrPlans = []
+        self._atrVisStart = 0
+        self._atrVisCount = 0
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
 
     def setSrHits(self, rows):
         self._srHits = list(rows or [])
+
+    def setTimingMarks(self, rows):
+        """보이는 봉 인덱스 기준. i 는 화면 왼쪽부터."""
+        self._timingMarks = list(rows or [])
+        self.viewport().update()
+
+    def setAtrPlans(self, plans, visStart=0, visCount=0):
+        """일봉 ATR 손절·익절. 인덱스는 전체 봉 기준."""
+        self._atrPlans = list(plans or [])
+        self._atrVisStart = int(visStart or 0)
+        self._atrVisCount = int(visCount or 0)
+        self.viewport().update()
 
     def setXTicks(self, barN, ticks):
         """월 눈금. Qt 카테고리 라벨은 폭이 줄어 안 보이므로 직접 그린다."""
@@ -523,11 +530,22 @@ class CandleChartView(QChartView):
             return
         super().mouseDoubleClickEvent(ev)
 
+    def wheelEvent(self, ev):
+        delta = ev.angleDelta().y()
+        fn = getattr(self, "zoomWheel", None)
+        if delta and fn:
+            fn(delta)
+            ev.accept()
+            return
+        super().wheelEvent(ev)
+
     def drawForeground(self, painter, rect):
         super().drawForeground(painter, rect)
         self._drawPriceLabels(painter)
         if self._plotReady:
             self._drawMonthLabels(painter)
+        self._drawTimingMarks(painter)
+        self._drawAtrPlans(painter)
         if self._draftPx is None or self._yAxis is None:
             return
         ch = self.chart()
@@ -550,7 +568,10 @@ class CandleChartView(QChartView):
         painter.drawLine(int(p0.x()), int(y), int(p1.x()), int(y))
         painter.setPen(QColor(_SR_COLOR))
         painter.setFont(QFont(self.font().family(), 9))
-        painter.drawText(int(p0.x()) + 4, int(y) - 4, _fmtWon(self._draftPx))
+        if getattr(self, "_priceOnRight", True):
+            painter.drawText(int(p1.x()) + 6, int(y) - 4, _fmtWon(self._draftPx))
+        else:
+            painter.drawText(int(p0.x()) + 4, int(y) - 4, _fmtWon(self._draftPx))
 
     def _drawPriceLabels(self, painter):
         """기본 축 숫자(콤마 없음) 대신 금액 콤마 라벨을 같은 자리에 그린다."""
@@ -568,16 +589,18 @@ class CandleChartView(QChartView):
         n = max(int(ax.tickCount() or 5), 2)
         painter.setPen(QColor("#424242"))
         painter.setFont(QFont(self.font().family(), 8))
+        onRight = getattr(self, "_priceOnRight", True)
         for i in range(n):
             val = y1 + (y0 - y1) * i / float(n - 1)
             ratio = (y0 - val) / (y0 - y1)
             y = p0.y() + ratio * (p1.y() - p0.y())
-            box = QRectF(p0.x() - 78, y - 8, 74, 16)
-            painter.drawText(
-                box,
-                int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
-                _fmtWon(val),
-            )
+            if onRight:
+                box = QRectF(p1.x() + 6, y - 8, 78, 16)
+                align = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            else:
+                box = QRectF(p0.x() - 78, y - 8, 74, 16)
+                align = int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            painter.drawText(box, align, _fmtWon(val))
 
     def _drawMonthLabels(self, painter):
         """plotArea 아래 YYYY-MM, 기울여 비율 간격. 겹치면 건너뛴다."""
@@ -611,6 +634,422 @@ class CandleChartView(QChartView):
             painter.drawText(0, 0, text)
             painter.restore()
 
+    def _barScenePoint(self, index, price):
+        ch = self.chart()
+        ax = self._yAxis
+        n = int(self._xBarN or 0)
+        if ch is None or ax is None or n <= 0:
+            return None
+        area = ch.plotArea()
+        y0 = ax.max()
+        y1 = ax.min()
+        if area.width() <= 1 or area.height() <= 1 or y0 == y1:
+            return None
+        p0 = ch.mapToScene(area.topLeft())
+        p1 = ch.mapToScene(area.bottomRight())
+        x = p0.x() + (int(index) + 0.5) * (p1.x() - p0.x()) / float(n)
+        ratio = (y0 - float(price)) / (y0 - y1)
+        y = p0.y() + ratio * (p1.y() - p0.y())
+        return x, y
+
+    def _drawTimingMarks(self, painter):
+        """이평 크로스는 채워진 삼각, 고저 돌파는 빈 꺾쇠. 봉 중심에 맞춘다."""
+        if not self._timingMarks:
+            return
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        for row in self._timingMarks:
+            pt = self._barScenePoint(row.get("i"), row.get("px"))
+            if pt is None:
+                continue
+            x, y = pt
+            kind = str(row.get("kind") or "")
+            if kind == "maGolden":
+                self._fillTri(painter, x, y, True, "#C62828")
+            elif kind == "maDead":
+                self._fillTri(painter, x, y, False, "#1565C0")
+            elif kind == "brkHigh":
+                self._strokeChevron(painter, x, y - 8, True, "#C62828")
+            elif kind == "brkLow":
+                self._strokeChevron(painter, x, y + 8, False, "#1565C0")
+            elif kind == "pullback":
+                self._fillTri(painter, x, y + 16, True, "#00897B")
+                painter.setPen(QColor("#00897B"))
+                painter.setFont(QFont(self.font().family(), 7))
+                painter.drawText(int(x + 6), int(y + 20), f"눌림{row.get('line') or ''}")
+
+    def _fillTri(self, painter, x, y, up, color):
+        tip = 4.0
+        path = QPainterPath()
+        if up:
+            path.moveTo(x, y - tip)
+            path.lineTo(x - tip, y + tip * 0.75)
+            path.lineTo(x + tip, y + tip * 0.75)
+        else:
+            path.moveTo(x, y + tip)
+            path.lineTo(x - tip, y - tip * 0.75)
+            path.lineTo(x + tip, y - tip * 0.75)
+        path.closeSubpath()
+        painter.fillPath(path, QColor(color))
+
+    def _strokeChevron(self, painter, x, y, up, color):
+        pen = QPen(QColor(color))
+        pen.setWidth(2)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        wing = 5.0
+        if up:
+            painter.drawLine(int(x - wing), int(y + wing), int(x), int(y))
+            painter.drawLine(int(x), int(y), int(x + wing), int(y + wing))
+        else:
+            painter.drawLine(int(x - wing), int(y - wing), int(x), int(y))
+            painter.drawLine(int(x), int(y), int(x + wing), int(y - wing))
+
+    def _plotXs(self):
+        ch = self.chart()
+        n = int(self._xBarN or 0)
+        if ch is None or n <= 0:
+            return None
+        area = ch.plotArea()
+        if area.width() <= 1:
+            return None
+        p0 = ch.mapToScene(area.topLeft())
+        p1 = ch.mapToScene(area.bottomRight())
+        return p0.x(), p1.x(), n
+
+    def _xAtAbs(self, index, edges):
+        left, right, n = edges
+        rel = int(index) - int(self._atrVisStart or 0)
+        width = right - left
+        if rel < 0:
+            return left
+        if rel >= n:
+            return right
+        return left + (rel + 0.5) * width / float(n)
+
+    def _yAtPrice(self, price):
+        ch = self.chart()
+        ax = self._yAxis
+        if ch is None or ax is None:
+            return None
+        area = ch.plotArea()
+        y0 = ax.max()
+        y1 = ax.min()
+        if area.height() <= 1 or y0 == y1:
+            return None
+        p0 = ch.mapToScene(area.topLeft())
+        p1 = ch.mapToScene(area.bottomRight())
+        ratio = (y0 - float(price)) / (y0 - y1)
+        return p0.y() + ratio * (p1.y() - p0.y()), p1.x()
+
+    def _strokeHLine(self, painter, x1, x2, price, color, dashed):
+        yInfo = self._yAtPrice(price)
+        if yInfo is None:
+            return
+        pen = QPen(QColor(color))
+        pen.setWidth(1)
+        pen.setCosmetic(True)
+        if dashed:
+            pen.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        painter.drawLine(int(min(x1, x2)), int(yInfo[0]), int(max(x1, x2)), int(yInfo[0]))
+
+    def _drawAtrPlans(self, painter):
+        """체결 표시와 오른쪽 글자. 선 자체는 차트 시리즈로 그린다."""
+        try:
+            self._drawAtrMarks(painter)
+        except Exception as err:
+            from utils.termLog import termLog
+
+            termLog(f"[deskChart] ATR 선 그리기 실패: {err}")
+
+    def _drawAtrMarks(self, painter):
+        if not self._atrPlans:
+            return
+        edges = self._plotXs()
+        if edges is None:
+            return
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setFont(QFont(self.font().family(), 8))
+        from utils.chartBarPlan import atrHitInView
+
+        start = int(self._atrVisStart or 0)
+        count = int(self._atrVisCount or self._xBarN or 0)
+        for plan in self._atrPlans:
+            if plan.get("outcome") and atrHitInView(plan.get("exitBar"), start, count):
+                price = plan["stop"] if plan["outcome"] == "stop" else plan["target"]
+                yInfo = self._yAtPrice(price)
+                if yInfo is not None:
+                    x = self._xAtAbs(plan["exitBar"], edges)
+                    painter.setPen(QColor("#1565C0" if plan["outcome"] == "stop" else "#C62828"))
+                    painter.drawText(int(x - 4), int(yInfo[0] - 2), "✕" if plan["outcome"] == "stop" else "✓")
+            if plan.get("label") and plan.get("extend"):
+                status = str(plan.get("status") or "")
+                yStop = self._yAtPrice(plan.get("stop"))
+                yTgt = self._yAtPrice(plan.get("target"))
+                yEnt = self._yAtPrice(plan.get("entry"))
+                if yTgt is not None:
+                    painter.setPen(QColor("#C62828"))
+                    extra = f"  {status}" if status else ""
+                    painter.drawText(int(yTgt[1] + 6), int(yTgt[0] + 4), f"ATR01 익절 {_fmtWon(plan.get('target'))}{extra}")
+                if yStop is not None:
+                    painter.setPen(QColor("#1565C0"))
+                    painter.drawText(int(yStop[1] + 6), int(yStop[0] + 4), f"ATR01 손절 {_fmtWon(plan.get('stop'))}")
+                if yEnt is not None:
+                    painter.setPen(QColor("#616161"))
+                    painter.drawText(int(yEnt[1] + 6), int(yEnt[0] + 4), f"ATR01 매수 {_fmtWon(plan.get('entry'))}")
+
+
+class RsiPane(QWidget):
+    """거래량 아래 RSI14·시그널 9. 보이는 구간만 그린다."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._vals = []
+        self._signal = []
+        self._marks = []
+        self._label = ""
+        self._sigLabel = ""
+        self._left = 52
+        self._right = 8
+        self.setMinimumHeight(72)
+        self.setMaximumHeight(96)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def setPad(self, left, right):
+        self._left = max(8, int(left))
+        self._right = max(4, int(right))
+        self.update()
+
+    def setSeries(self, vals, label="", signal=None, marks=None, signalLabel=""):
+        self._vals = list(vals or [])
+        self._signal = list(signal or [])
+        self._marks = list(marks or [])
+        self._label = str(label or "")
+        self._sigLabel = str(signalLabel or "")
+        self.update()
+
+    def wheelEvent(self, ev):
+        delta = ev.angleDelta().y()
+        fn = getattr(self, "zoomWheel", None)
+        if delta and fn:
+            fn(delta)
+            ev.accept()
+            return
+        super().wheelEvent(ev)
+
+    def paintEvent(self, ev):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor("#FFFFFF"))
+        vals = [v for v in self._vals]
+        p.setFont(QFont(self.font().family(), 8))
+        p.setPen(QColor("#616161"))
+        p.drawText(4, 12, "RSI14")
+        if self._sigLabel:
+            p.setPen(QColor("#00897B"))
+            sigBox = self.rect().adjusted(0, 0, -6, 0)
+            if self._label:
+                sigBox = sigBox.adjusted(0, 0, -(len(self._label) * 6 + 10), 0)
+            p.drawText(sigBox, int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop), self._sigLabel)
+        if self._label:
+            p.setPen(QColor("#E65100"))
+            p.drawText(self.rect().adjusted(0, 0, -6, 0), int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop), self._label)
+        nums = [float(v) for v in vals if v is not None]
+        sigNums = [float(v) for v in self._signal if v is not None]
+        if len(nums) < 1 and len(sigNums) < 1 and not any(self._marks):
+            return
+        left = self._left
+        right = self._right
+        top = 16
+        h = max(self.height() - top - 6, 8)
+        w = max(self.width() - left - right, 8)
+        n = max(len(vals), len(self._signal), len(self._marks), 1)
+
+        def y_of(val):
+            return top + (100.0 - float(val)) / 100.0 * h
+
+        def x_of(i):
+            return left + (i + 0.5) * w / float(n)
+
+        p.setPen(QColor("#EEEEEE"))
+        for level in (30, 70):
+            y = y_of(level)
+            p.drawLine(int(left), int(y), int(left + w), int(y))
+        if len(sigNums) >= 2:
+            p.setPen(QPen(QColor("#00897B"), 1.4))
+            prev = None
+            for i, val in enumerate(self._signal):
+                if val is None:
+                    prev = None
+                    continue
+                x = x_of(i)
+                y = y_of(val)
+                if prev is not None:
+                    p.drawLine(int(prev[0]), int(prev[1]), int(x), int(y))
+                prev = (x, y)
+        if len(nums) >= 2:
+            p.setPen(QPen(QColor("#7E57C2"), 1.5))
+            prev = None
+            for i, val in enumerate(vals):
+                if val is None:
+                    prev = None
+                    continue
+                x = x_of(i)
+                y = y_of(val)
+                if prev is not None:
+                    p.drawLine(int(prev[0]), int(prev[1]), int(x), int(y))
+                prev = (x, y)
+        for i, kind in enumerate(self._marks):
+            if kind not in ("golden", "dead"):
+                continue
+            if i >= len(vals) or vals[i] is None:
+                continue
+            x = x_of(i)
+            y = y_of(vals[i])
+            up = kind == "golden"
+            color = QColor("#C62828" if up else "#1565C0")
+            tip = 5.0
+            path = QPainterPath()
+            if up:
+                path.moveTo(x, y - tip)
+                path.lineTo(x - tip, y + tip * 0.7)
+                path.lineTo(x + tip, y + tip * 0.7)
+            else:
+                path.moveTo(x, y + tip)
+                path.lineTo(x - tip, y - tip * 0.7)
+                path.lineTo(x + tip, y - tip * 0.7)
+            path.closeSubpath()
+            p.fillPath(path, color)
+
+
+class MacdPane(QWidget):
+    """RSI 아래 MACD 12·26·9. 보이는 구간만 그린다."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._macd = []
+        self._signal = []
+        self._marks = []
+        self._label = ""
+        self._sigLabel = ""
+        self._left = 52
+        self._right = 8
+        self.setMinimumHeight(68)
+        self.setMaximumHeight(88)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def setPad(self, left, right):
+        self._left = max(8, int(left))
+        self._right = max(4, int(right))
+        self.update()
+
+    def setSeries(self, macd, label="", signal=None, marks=None, signalLabel=""):
+        self._macd = list(macd or [])
+        self._signal = list(signal or [])
+        self._marks = list(marks or [])
+        self._label = str(label or "")
+        self._sigLabel = str(signalLabel or "")
+        self.update()
+
+    def wheelEvent(self, ev):
+        delta = ev.angleDelta().y()
+        fn = getattr(self, "zoomWheel", None)
+        if delta and fn:
+            fn(delta)
+            ev.accept()
+            return
+        super().wheelEvent(ev)
+
+    def paintEvent(self, ev):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor("#FFFFFF"))
+        p.setFont(QFont(self.font().family(), 8))
+        p.setPen(QColor("#616161"))
+        p.drawText(4, 12, "MACD")
+        if self._sigLabel:
+            p.setPen(QColor("#E65100"))
+            box = self.rect().adjusted(0, 0, -6, 0)
+            if self._label:
+                box = box.adjusted(0, 0, -(len(self._label) * 6 + 10), 0)
+            p.drawText(box, int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop), self._sigLabel)
+        if self._label:
+            p.setPen(QColor("#1565C0"))
+            p.drawText(self.rect().adjusted(0, 0, -6, 0), int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop), self._label)
+        nums = [float(v) for v in self._macd if v is not None]
+        sigNums = [float(v) for v in self._signal if v is not None]
+        if len(nums) < 1 and len(sigNums) < 1:
+            return
+        left = self._left
+        right = self._right
+        top = 16
+        h = max(self.height() - top - 6, 8)
+        w = max(self.width() - left - right, 8)
+        n = max(len(self._macd), len(self._signal), len(self._marks), 1)
+        span = nums + sigNums
+        lo = min(span)
+        hi = max(span)
+        if hi == lo:
+            hi += 1.0
+            lo -= 1.0
+        pad = (hi - lo) * 0.08
+        lo -= pad
+        hi += pad
+        if lo > 0:
+            lo = 0.0
+        if hi < 0:
+            hi = 0.0
+
+        def y_of(val):
+            return top + (hi - float(val)) / (hi - lo) * h
+
+        def x_of(i):
+            return left + (i + 0.5) * w / float(n)
+
+        zero = y_of(0.0)
+        p.setPen(QColor("#EEEEEE"))
+        p.drawLine(int(left), int(zero), int(left + w), int(zero))
+        if len(sigNums) >= 2:
+            p.setPen(QPen(QColor("#E65100"), 1.3))
+            prev = None
+            for i, val in enumerate(self._signal):
+                if val is None:
+                    prev = None
+                    continue
+                x = x_of(i)
+                y = y_of(val)
+                if prev is not None:
+                    p.drawLine(int(prev[0]), int(prev[1]), int(x), int(y))
+                prev = (x, y)
+        if len(nums) >= 2:
+            p.setPen(QPen(QColor("#1565C0"), 1.5))
+            prev = None
+            for i, val in enumerate(self._macd):
+                if val is None:
+                    prev = None
+                    continue
+                x = x_of(i)
+                y = y_of(val)
+                if prev is not None:
+                    p.drawLine(int(prev[0]), int(prev[1]), int(x), int(y))
+                prev = (x, y)
+        for i, kind in enumerate(self._marks):
+            if kind not in ("golden", "dead") or i >= len(self._macd) or self._macd[i] is None:
+                continue
+            x = x_of(i)
+            y = y_of(self._macd[i])
+            up = kind == "golden"
+            tip = 4.5
+            path = QPainterPath()
+            if up:
+                path.moveTo(x, y - tip)
+                path.lineTo(x - tip, y + tip * 0.7)
+                path.lineTo(x + tip, y + tip * 0.7)
+            else:
+                path.moveTo(x, y + tip)
+                path.lineTo(x - tip, y - tip * 0.7)
+                path.lineTo(x + tip, y - tip * 0.7)
+            path.closeSubpath()
+            p.fillPath(path, QColor("#C62828" if up else "#1565C0"))
+
 
 class VolBarView(QWidget):
     """일봉 바로 아래 거래량. Qt 막대(카테고리 많으면 폭 0) 대신 직접 그린다."""
@@ -623,6 +1062,15 @@ class VolBarView(QWidget):
         self.setMinimumHeight(88)
         self.setMaximumHeight(120)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def wheelEvent(self, ev):
+        delta = ev.angleDelta().y()
+        fn = getattr(self, "zoomWheel", None)
+        if delta and fn:
+            fn(delta)
+            ev.accept()
+            return
+        super().wheelEvent(ev)
 
     def setPlotPad(self, left, right):
         self._left = max(8, int(left))
@@ -693,7 +1141,9 @@ class VolBarView(QWidget):
 
 
 class DeskStkChartPane(QWidget):
-    """일봉 + 바로 아래 거래량 + SMA + 지지선."""
+    """일·주·월봉, 거래량, RSI14, MACD, 그리고 지지선."""
+
+    barsMissing = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -725,6 +1175,7 @@ class DeskStkChartPane(QWidget):
         self.headLbl = QLabel("관심종목에서 종목을 선택하세요")
         self.headLbl.setStyleSheet("font-weight: 700; font-size: 13px; color: #111;")
         self.headLbl.setWordWrap(True)
+        self.headLbl.setMaximumWidth(132)
         self.btnAddSr = QToolButton()
         self.btnAddSr.setText("지지선")
         self.btnAddSr.setToolTip("켠 뒤 차트 위로 마우스를 올리면 선이 따라가고, 클릭한 자리에 넣습니다")
@@ -757,18 +1208,52 @@ class DeskStkChartPane(QWidget):
         top.addStretch(1)
         self.btnRefresh = QToolButton()
         self.btnRefresh.setText("차트 최신화")
-        self.btnRefresh.setToolTip("선택 종목 일봉을 키움에서 다시 받아 DB 적재 후 차트를 다시 그립니다")
+        self.btnRefresh.setToolTip("선택 종목 일봉·주봉·월봉을 키움에서 받아 저장한 뒤 차트를 다시 그립니다")
         self.btnRefresh.setStyleSheet("QToolButton { padding: 2px 6px; }")
         top.addWidget(self.btnRefresh)
         top.addWidget(self.btnAddSr)
         lay.addLayout(top)
-        lay.addWidget(self.headLbl)
+        from utils.chartBarPlan import CHART_SIGNAL_GROUPS, chartSignalDefaults
+
+        nameRow = QHBoxLayout()
+        nameRow.setSpacing(6)
+        nameRow.addWidget(self.headLbl, 0, Qt.AlignmentFlag.AlignTop)
+        self._sigOn = chartSignalDefaults()
+        self._sigBusy = False
+        self._sigBoxes = {}
+        sigGrid = QGridLayout()
+        sigGrid.setContentsMargins(0, 0, 0, 0)
+        sigGrid.setHorizontalSpacing(8)
+        sigGrid.setVerticalSpacing(0)
+        allBox = QCheckBox("전체")
+        allBox.setTristate(True)
+        allBox.setCheckState(Qt.CheckState.Checked)
+        allBox.setStyleSheet("QCheckBox { font-size: 11px; spacing: 2px; }")
+        allBox.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        allBox.clicked.connect(self._onAllSignalsClicked)
+        self._allSigBox = allBox
+        sigGrid.addWidget(allBox, 0, 0)
+        for i, (key, label) in enumerate(CHART_SIGNAL_GROUPS):
+            box = QCheckBox(label)
+            box.setChecked(True)
+            box.setProperty("sigKey", key)
+            box.setStyleSheet("QCheckBox { font-size: 11px; spacing: 2px; }")
+            box.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+            if key == "atr":
+                box.setToolTip("ATR01. 눌림 진입, 손절 진입-2×ATR14, 익절 진입+2×ATR14, 보유 10거래일")
+            box.toggled.connect(self._onSignalToggled)
+            self._sigBoxes[key] = box
+            pos = i + 1
+            sigGrid.addWidget(box, pos // 2, pos % 2)
+        nameRow.addLayout(sigGrid, 0)
+        nameRow.addStretch(1)
+        lay.addLayout(nameRow)
 
         self.candleChart = QChart()
         self.candleChart.legend().setVisible(True)
         self.candleChart.legend().setAlignment(Qt.AlignmentFlag.AlignTop)
         self.candleChart.setBackgroundRoundness(0)
-        self.candleChart.setMargins(QMargins(0, 0, 10, 52))
+        self.candleChart.setMargins(QMargins(48, 0, 8, 52))
         self.candleView = CandleChartView(self.candleChart)
         self.candleView.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.candleView.setMinimumHeight(200)
@@ -781,9 +1266,19 @@ class DeskStkChartPane(QWidget):
         self.candleView.srLineDeleted.connect(self._onSrLineDeleted)
         self.candleChart.plotAreaChanged.connect(self._onPlotArea)
         lay.addWidget(self.candleView, 1)
+        self.candleView.zoomWheel = self._onZoomWheel
 
         self.volView = VolBarView()
+        self.volView.zoomWheel = self._onZoomWheel
         lay.addWidget(self.volView, 0)
+
+        self.rsiView = RsiPane()
+        self.rsiView.zoomWheel = self._onZoomWheel
+        lay.addWidget(self.rsiView, 0)
+
+        self.macdView = MacdPane()
+        self.macdView.zoomWheel = self._onZoomWheel
+        lay.addWidget(self.macdView, 0)
 
         self.srHdr = QLabel("지지선 · 차트에서 드래그 이동, 더블클릭 삭제")
         self.srHdr.setStyleSheet("font-size: 11px; color: #555;")
@@ -793,6 +1288,8 @@ class DeskStkChartPane(QWidget):
         self.srList.setToolTip("더블클릭하면 지지선을 지웁니다")
         self.srList.itemDoubleClicked.connect(self._delSrItem)
         lay.addWidget(self.srList)
+        self.srHdr.setVisible(False)
+        self.srList.setVisible(False)
 
     def showEvent(self, ev):
         super().showEvent(ev)
@@ -819,6 +1316,54 @@ class DeskStkChartPane(QWidget):
     def _barTpNm(self):
         return _BAR_TP_NM.get(self._barTp) or "일봉"
 
+    def _onAllSignalsClicked(self, _checked=False):
+        """전체. 다 켜져 있으면 끄고, 아니면 여섯을 켠 뒤 한 번만 다시 그린다."""
+        if getattr(self, "_sigBusy", False):
+            return
+        from utils.chartBarPlan import nextAllChartSignals
+
+        self._sigOn = nextAllChartSignals(getattr(self, "_sigOn", None))
+        self._sigBusy = True
+        try:
+            for key, box in self._sigBoxes.items():
+                box.blockSignals(True)
+                box.setChecked(bool(self._sigOn.get(key)))
+                box.blockSignals(False)
+            self._paintAllBox()
+        finally:
+            self._sigBusy = False
+        if self._bars:
+            self._redraw()
+
+    def _paintAllBox(self):
+        """자식 상태만 반영한다. 다시 그리지 않는다."""
+        box = getattr(self, "_allSigBox", None)
+        if box is None:
+            return
+        from utils.chartBarPlan import chartSignalAllState
+
+        state = chartSignalAllState(getattr(self, "_sigOn", None))
+        shown = {
+            "checked": Qt.CheckState.Checked,
+            "unchecked": Qt.CheckState.Unchecked,
+        }.get(state, Qt.CheckState.PartiallyChecked)
+        box.blockSignals(True)
+        box.setCheckState(shown)
+        box.blockSignals(False)
+
+    def _onSignalToggled(self, checked):
+        """표시만 바꾼다. 다시 받지 않고, 창이 열려 있는 동안 유지한다."""
+        if getattr(self, "_sigBusy", False):
+            return
+        box = self.sender()
+        key = str(box.property("sigKey") or "") if box is not None else ""
+        from utils.chartBarPlan import setChartSignal
+
+        self._sigOn = setChartSignal(getattr(self, "_sigOn", None), key, checked)
+        self._paintAllBox()
+        if self._bars:
+            self._redraw()
+
     def _setHeadTitle(self):
         if self._stkNm and self._stkCd:
             title = f"{self._stkNm}({self._stkCd})"
@@ -831,10 +1376,17 @@ class DeskStkChartPane(QWidget):
         self.headLbl.setText(title)
 
     def _rebuildBars(self):
-        """저장된 일봉을 선택 주기(일·주·월)로 다시 묶는다."""
+        """선택 주기의 저장 봉을 쓴다. 주·월이 아직 없으면 일봉을 묶지 않는다."""
         if self._barTp not in _SHOW_BY_TP:
             self._barTp = "day"
-        self._bars = _aggBars(self._dayBars, self._barTp)
+        stored = None
+        byTp = getattr(self, "_byTp", None)
+        if isinstance(byTp, dict) and self._barTp in byTp:
+            stored = byTp.get(self._barTp)
+        if stored is None and self._barTp != "day":
+            self._bars = _aggBars(self._dayBars, self._barTp)
+        else:
+            self._bars = [dict(b) for b in (stored if stored is not None else self._dayBars)]
 
     def _onBarTpClicked(self, btn):
         tp = str(btn.property("barTp") or "day")
@@ -847,6 +1399,18 @@ class DeskStkChartPane(QWidget):
         if self._showN > len(self._bars) > 0:
             self._showN = len(self._bars)
         self._setHeadTitle()
+        if not self._bars:
+            self.headLbl.setText(f"{self._stkNm}({self._stkCd}) {self._barTpNm()} 없음")
+            self.candleChart.removeAllSeries()
+            self.volView.setRows([])
+            if getattr(self, "rsiView", None) is not None:
+                self.rsiView.setSeries([], "")
+            if getattr(self, "macdView", None) is not None:
+                self.macdView.setSeries([], "")
+            self.candleView.setTimingMarks([])
+            self.candleView.setAtrPlans([])
+            self.barsMissing.emit(tp)
+            return
         self._redraw()
 
     def _visibleBars(self):
@@ -857,19 +1421,33 @@ class DeskStkChartPane(QWidget):
         return list(self._bars[-n:])
 
     def _zoomMore(self):
-        """+ : 화면에 더 많은 봉 (기간 확대)."""
+        """+ 와 휠 아래: 더 긴 과거. 상한은 저장된 봉이며 최대 30년치다."""
+        self._setShowCount(True)
+
+    def _zoomLess(self):
+        """− 와 휠 위: 최근 봉만 크게."""
+        self._setShowCount(False)
+
+    def _setShowCount(self, zoomOut):
+        from utils.chartBarPlan import nextShowCount
+
         total = len(self._bars)
         if total <= 0:
             return
         cfg = self._showCfg()
-        self._showN = min(total, int(self._showN) + int(cfg["step"]))
+        nxt = nextShowCount(
+            self._showN, total, zoomOut, step=cfg["step"], minShow=cfg["min"]
+        )
+        if nxt == int(self._showN):
+            return
+        self._showN = nxt
         self._redraw()
 
-    def _zoomLess(self):
-        """− : 최근 봉만 (기간 축소)."""
-        cfg = self._showCfg()
-        self._showN = max(int(cfg["min"]), int(self._showN) - int(cfg["step"]))
-        self._redraw()
+    def _onZoomWheel(self, deltaY):
+        if deltaY > 0:
+            self._zoomLess()
+        elif deltaY < 0:
+            self._zoomMore()
 
     def _toggleSrPick(self, on):
         self.candleView.pickSr = bool(on)
@@ -948,6 +1526,9 @@ class DeskStkChartPane(QWidget):
             it = QListWidgetItem(f"{_fmtWon(r['px'])}  {r.get('note') or '지지'}")
             it.setData(Qt.ItemDataRole.UserRole, r.get("id"))
             self.srList.addItem(it)
+        has = self.srList.count() > 0
+        self.srHdr.setVisible(has)
+        self.srList.setVisible(has)
 
     def _srRows(self):
         if not self._stkCd:
@@ -970,6 +1551,12 @@ class DeskStkChartPane(QWidget):
         left = int(topLeft.x())
         right = int(view.width() - botRight.x())
         self.volView.setPlotPad(left, max(right, 4))
+        rsi = getattr(self, "rsiView", None)
+        if rsi is not None:
+            rsi.setPad(left, max(right, 4))
+        macd = getattr(self, "macdView", None)
+        if macd is not None:
+            macd.setPad(left, max(right, 4))
         # 첫 표시 때 plotArea 가 늦게 잡히면 월 눈금이 한쪽으로 갔다가 돌아온다.
         # 영역이 확정된 뒤에만 월 글자를 그리고, 뷰를 다시 칠한다.
         vw = max(view.viewport().width(), view.width(), 1)
@@ -980,6 +1567,7 @@ class DeskStkChartPane(QWidget):
     def clearChart(self, msg="관심종목에서 종목을 선택하세요"):
         self._bars = []
         self._dayBars = []
+        self._byTp = {}
         self._stkCd = ""
         self._stkNm = ""
         self._srHideId = ""
@@ -988,68 +1576,295 @@ class DeskStkChartPane(QWidget):
         for ax in list(self.candleChart.axes()):
             self.candleChart.removeAxis(ax)
         self.volView.setRows([])
+        if getattr(self, "rsiView", None) is not None:
+            self.rsiView.setSeries([], "")
+        if getattr(self, "macdView", None) is not None:
+            self.macdView.setSeries([], "")
+        self.candleView.setTimingMarks([])
+        self.candleView.setAtrPlans([])
         self.srList.clear()
+        self.srHdr.setVisible(False)
+        self.srList.setVisible(False)
         self.candleView.setSrHits([])
         self.candleView.setXTicks(0, [])
 
     def setDayBars(self, stkCd, stkNm, bars, liveYmd=None):
-        """DB 일봉을 받아 두고, 선택 주기(일·주·월·년)로 그려 둔다."""
+        """일봉만 넘어온 예전 호출. 주·월은 키가 없어 일봉을 묶는다."""
+        self.setChartBundle(
+            stkCd,
+            stkNm,
+            {"day": bars or []},
+            liveYmd=liveYmd,
+        )
+
+    def setChartBundle(self, stkCd, stkNm, bundle, liveYmd=None):
+        """일·주·월 저장 봉. 없는 주기는 빈 목록이라 일봉으로 대신 그리지 않는다."""
+        data = bundle or {}
         self._stkCd = str(stkCd or "")
         self._stkNm = str(stkNm or "")
         self._liveYmd = str(liveYmd or datetime.now().strftime("%Y%m%d"))[:8]
-        self._dayBars = [dict(b) for b in (bars or [])]
+        self._byTp = {}
+        for key in ("day", "week", "month"):
+            if key in data:
+                self._byTp[key] = [dict(b) for b in (data.get(key) or [])]
+        self._dayBars = self._byTp.get("day") or []
         self._rebuildBars()
-        self._setHeadTitle()
+        note = str(data.get("note") or "").strip()
         if not self._bars:
-            self.headLbl.setText(
-                f"{self._stkNm}({self._stkCd}) 일봉 없음" if self._stkCd else "일봉 없음"
-            )
+            label = self._barTpNm()
+            title = f"{self._stkNm}({self._stkCd}) {label} 없음" if self._stkCd else f"{label} 없음"
+            if note:
+                title = f"{title} · {note[:80]}"
+            self.headLbl.setText(title)
             self.candleChart.removeAllSeries()
             self.volView.setRows([])
+            if getattr(self, "rsiView", None) is not None:
+                self.rsiView.setSeries([], "")
+            if getattr(self, "macdView", None) is not None:
+                self.macdView.setSeries([], "")
+            self.candleView.setTimingMarks([])
+            self.candleView.setAtrPlans([])
             self._fillSrList()
             return
+        self._setHeadTitle()
         if self._showN > len(self._bars):
             self._showN = len(self._bars)
         self._fillSrList()
         self._redraw()
 
-    def applyLivePx(self, pxRaw):
+    def applyLivePx(self, pxRaw, tickYmd=None):
         """
-        당일 일봉만 갱신한 뒤 주·월·년봉을 다시 묶는다.
-        0B 명세에 거래량 FID 가 없어 당일 거래량은 일봉값을 유지한다.
+        오늘 통합 시세로 당일 봉의 종가·고저만 고친다.
+        날짜가 오늘이 아니거나 오늘 봉이 없으면 건드리지 않는다.
         """
-        px = _absPx(pxRaw)
-        if px is None or not self._dayBars or not self._stkCd:
+        from utils.chartBarPlan import applyChartLive
+
+        updated = applyChartLive(self._dayBars, self._liveYmd, pxRaw, tickYmd)
+        if not updated:
             return False
-        last = self._dayBars[-1]
-        lastDt = str(last.get("tradeDt") or "")[:8]
-        if lastDt == self._liveYmd and abs(float(last.get("close") or 0) - px) < 0.5:
-            return False
-        if lastDt == self._liveYmd:
-            last["close"] = px
-            last["high"] = max(float(last.get("high") or px), px)
-            lo = float(last.get("low") or 0)
-            last["low"] = px if lo <= 0 else min(lo, px)
-            if float(last.get("open") or 0) <= 0:
-                last["open"] = px
-        else:
-            self._dayBars.append(
-                {
-                    "tradeDt": self._liveYmd,
-                    "open": px,
-                    "high": px,
-                    "low": px,
-                    "close": px,
-                    "qty": 0,
-                }
-            )
+        self._dayBars = updated
+        if isinstance(getattr(self, "_byTp", None), dict):
+            self._byTp["day"] = self._dayBars
+        if self._barTp != "day":
+            return True
         self._rebuildBars()
         self._redraw()
         return True
 
+    def _paintRsi(self, allBars, visStart, visCount):
+        view = getattr(self, "rsiView", None)
+        if view is None:
+            return
+        closes = []
+        for bar in allBars or []:
+            try:
+                closes.append(float(bar.get("close") or 0))
+            except (TypeError, ValueError):
+                closes.append(0.0)
+        from strategies.indicators import calcRsiSeries, rsiCrossMarks, rsiSignalSeries
+
+        series = calcRsiSeries(closes, 14) if len(closes) > 14 else [None] * len(closes)
+        signal = rsiSignalSeries(series, 9)
+        marks = rsiCrossMarks(series, signal)
+        start = max(0, int(visStart))
+        count = max(0, int(visCount))
+        visible = series[start:start + count] if series else []
+        visSig = signal[start:start + count] if signal else []
+        from utils.chartBarPlan import filterCrossMarks, signalFlags
+
+        showRsi = signalFlags(getattr(self, "_sigOn", None))["rsi"]
+        visMarks = filterCrossMarks(marks[start:start + count] if marks else [], showRsi)
+        current = ""
+        for val in reversed(series):
+            if val is not None:
+                current = f"{float(val):.2f}"
+                break
+        sigNow = ""
+        for val in reversed(signal):
+            if val is not None:
+                sigNow = f"S9 {float(val):.2f}"
+                break
+        view.setSeries(visible, current, signal=visSig, marks=visMarks, signalLabel=sigNow)
+
+    def _paintMacd(self, closes, visStart, visCount):
+        view = getattr(self, "macdView", None)
+        if view is None:
+            return
+        from strategies.indicators import macdSeries, seriesCrossMarks
+
+        macd, signal = macdSeries(closes)
+        marks = seriesCrossMarks(macd, signal)
+        start = max(0, int(visStart))
+        count = max(0, int(visCount))
+        current = ""
+        for val in reversed(macd):
+            if val is not None:
+                current = f"{float(val):.2f}"
+                break
+        sigNow = ""
+        for val in reversed(signal):
+            if val is not None:
+                sigNow = f"S {float(val):.2f}"
+                break
+        from utils.chartBarPlan import filterCrossMarks, signalFlags
+
+        showMacd = signalFlags(getattr(self, "_sigOn", None))["macd"]
+        view.setSeries(
+            macd[start:start + count],
+            current,
+            signal=signal[start:start + count],
+            marks=filterCrossMarks(marks[start:start + count], showMacd),
+            signalLabel=sigNow,
+        )
+
+    def _timingRows(self, allBars, closes, visStart, visCount):
+        from strategies.indicators import breakoutMarks, calcSmaSeries, seriesCrossMarks
+
+        sma5 = calcSmaSeries(closes, 5)
+        sma20 = calcSmaSeries(closes, 20)
+        crosses = seriesCrossMarks(sma5, sma20)
+        highs = []
+        lows = []
+        for bar in allBars or []:
+            try:
+                close = float(bar.get("close") or 0)
+            except (TypeError, ValueError):
+                close = 0.0
+            try:
+                high = float(bar.get("high") or close)
+            except (TypeError, ValueError):
+                high = close
+            try:
+                low = float(bar.get("low") or close)
+            except (TypeError, ValueError):
+                low = close
+            highs.append(high)
+            lows.append(low)
+        breaks = breakoutMarks(highs, lows, 20)
+        rows = []
+        start = max(0, int(visStart))
+        for j in range(max(0, int(visCount))):
+            i = start + j
+            kind = crosses[i] if i < len(crosses) else None
+            if kind == "golden" and i < len(sma5) and sma5[i] is not None:
+                rows.append({"i": j, "kind": "maGolden", "px": sma5[i]})
+            elif kind == "dead" and i < len(sma5) and sma5[i] is not None:
+                rows.append({"i": j, "kind": "maDead", "px": sma5[i]})
+            brk = breaks[i] if i < len(breaks) else None
+            if brk in ("high", "both") and i < len(highs):
+                rows.append({"i": j, "kind": "brkHigh", "px": highs[i]})
+            if brk in ("low", "both") and i < len(lows):
+                rows.append({"i": j, "kind": "brkLow", "px": lows[i]})
+        from utils.chartBarPlan import pullbackMarks
+
+        for j, mark in enumerate(pullbackMarks(allBars)[start:start + max(0, int(visCount))]):
+            if not mark:
+                continue
+            i = start + j
+            if i < len(lows):
+                rows.append({"i": j, "kind": "pullback", "px": lows[i], "line": mark.get("line")})
+        return rows
+
+    def _addAtrSeries(self, plans, visStart, visCount, axX, axY, lo, hi):
+        """손절·익절·진입을 캔들과 같은 차트 시리즈로 그린다."""
+        from utils.chartBarPlan import atrDrawSpans, priceSpanForPlans
+        from utils.termLog import termLog
+
+        faintColor = {"stop": "#90CAF9", "target": "#EF9A9A", "entry": "#BDBDBD"}
+        solidColor = {"stop": "#1565C0", "target": "#C62828", "entry": "#9E9E9E"}
+        added = 0
+        try:
+            for plan in plans or []:
+                spans = atrDrawSpans(plan, visStart, visCount)
+                specs = (
+                    ("stop", True, 2),
+                    ("target", True, 2),
+                    ("entry", False, 1),
+                )
+                for span in spans:
+                    for key, dashed, width in specs:
+                        try:
+                            price = float(plan.get(key))
+                        except (TypeError, ValueError):
+                            continue
+                        if price <= 0:
+                            continue
+                        line = QLineSeries()
+                        line.setName("")
+                        color = faintColor[key] if span.get("faint") else solidColor[key]
+                        pen = QPen(QColor(color))
+                        pen.setWidth(1 if span.get("faint") else width)
+                        pen.setCosmetic(True)
+                        if dashed:
+                            pen.setStyle(Qt.PenStyle.DashLine)
+                        line.setPen(pen)
+                        line.append(float(span["x1"]), price)
+                        line.append(float(span["x2"]), price)
+                        self._attachLineAxes(line, axX, axY)
+                        added += 1
+                        for mk in self.candleChart.legend().markers(line):
+                            mk.setVisible(False)
+            low, high = priceSpanForPlans(lo, hi, plans, visStart, visCount)
+            if low is not None and high is not None and high > low:
+                pad = max((high - low) * 0.06, abs(high) * 0.01)
+                axY.setRange(max(0.0, low - pad), high + pad)
+            return added
+        except Exception as err:
+            import traceback
+
+            termLog(f"[deskChart] ATR 선 시리즈 실패: {err}")
+            termLog(traceback.format_exc())
+            raise
+
+    def _attachLineAxes(self, series, axX, axY):
+        """값축에만 붙인다. 범주축이 같이 붙으면 -0.5 같은 x 가 화면 밖으로 나간다."""
+        self.candleChart.addSeries(series)
+        for ax in list(series.attachedAxes()):
+            horizontal = ax.orientation() == Qt.Orientation.Horizontal
+            if horizontal and ax is not axX:
+                series.detachAxis(ax)
+        if axX not in series.attachedAxes():
+            series.attachAxis(axX)
+        if axY not in series.attachedAxes():
+            series.attachAxis(axY)
+
+    def _logAtr(self, signals=0, plans=0, focus="", extend=False, seriesN=0, yrange="", skip=""):
+        """하루 차트 그리기마다 한 줄. 같은 내용은 30초에 한 번만."""
+        import time
+
+        from utils.chartBarPlan import chartSignalAllState, signalFlags
+        from utils.termLog import termLog
+
+        flags = signalFlags(getattr(self, "_sigOn", None))
+        bars = list(getattr(self, "_bars", None) or [])
+        vis = []
+        try:
+            vis = list(self._visibleBars() or [])
+        except Exception:
+            vis = bars[-20:]
+        first = str((vis[0] if vis else {}).get("tradeDt") or "-")[:8]
+        last = str((vis[-1] if vis else {}).get("tradeDt") or "-")[:8]
+        line = (
+            f"[deskChart] ATR 진단 cd={self._stkCd or '-'} tab={self._barTp or '-'} "
+            f"widget={type(self).__name__} bars={len(bars)} visible={first}..{last} "
+            f"signals={int(signals)} plans={int(plans)} focus={focus or 'none'} "
+            f"extend={bool(extend)} chk눌림={bool(flags.get('pull'))} "
+            f"chkATR={bool(flags.get('atr'))} chk전체={chartSignalAllState(flags)} "
+            f"series_added={int(seriesN)} yrange={yrange or '-'}"
+        )
+        if skip:
+            line += f" skip={skip}"
+        now = time.time()
+        if line == getattr(self, "_atrLogLine", "") and now - float(getattr(self, "_atrLogAt", 0) or 0) < 30:
+            return
+        self._atrLogLine = line
+        self._atrLogAt = now
+        termLog(line)
+
     def _redraw(self):
         allBars = self._bars
         if not allBars:
+            self._logAtr(skip="no bars")
             return
         self.candleView._plotReady = False
         vis = self._visibleBars()
@@ -1080,6 +1895,20 @@ class DeskStkChartPane(QWidget):
             volRows.append({"qty": q, "up": c >= o})
 
         self.volView.setRows(volRows)
+        self._paintRsi(allBars, visStart, len(vis))
+        self._paintMacd(allClose, visStart, len(vis))
+        from utils.chartBarPlan import filterPriceSignalMarks
+
+        timing = filterPriceSignalMarks(
+            self._timingRows(allBars, allClose, visStart, len(vis)),
+            getattr(self, "_sigOn", None),
+        )
+        from utils.chartBarPlan import atrStopPlans, filterAtrPlans, pullbackMarks, signalFlags
+
+        marks = pullbackMarks(allBars)
+        rawPlans = atrStopPlans(allBars, marks, self._barTp)
+        atrPlans = filterAtrPlans(rawPlans, getattr(self, "_sigOn", None))
+        signalN = sum(1 for mark in marks if mark)
 
         self.candleChart.removeAllSeries()
         for ax in list(self.candleChart.axes()):
@@ -1100,10 +1929,18 @@ class DeskStkChartPane(QWidget):
             axY.setRange(max(0.0, lo - pad), hi + pad)
         self._yAxis = axY
         self.candleView._yAxis = axY
+        from utils.chartBarPlan import CHART_PRICE_AXIS_RIGHT
+
+        self.candleView._priceOnRight = bool(CHART_PRICE_AXIS_RIGHT)
+        priceSide = (
+            Qt.AlignmentFlag.AlignRight
+            if self.candleView._priceOnRight
+            else Qt.AlignmentFlag.AlignLeft
+        )
 
         self.candleChart.addSeries(candle)
         self.candleChart.addAxis(axX, Qt.AlignmentFlag.AlignBottom)
-        self.candleChart.addAxis(axY, Qt.AlignmentFlag.AlignLeft)
+        self.candleChart.addAxis(axY, priceSide)
         candle.attachAxis(axX)
         candle.attachAxis(axY)
         for mk in self.candleChart.legend().markers(candle):
@@ -1131,9 +1968,7 @@ class DeskStkChartPane(QWidget):
                 hasPt = True
             if not hasPt:
                 continue
-            self.candleChart.addSeries(line)
-            line.attachAxis(axXma)
-            line.attachAxis(axY)
+            self._attachLineAxes(line, axXma, axY)
 
         hideId = str(self._srHideId or "")
         nVis = max(len(vis) - 1, 1)
@@ -1154,9 +1989,7 @@ class DeskStkChartPane(QWidget):
             hn.setPen(pen)
             hn.append(0.0, px)
             hn.append(float(nVis), px)
-            self.candleChart.addSeries(hn)
-            hn.attachAxis(axXma)
-            hn.attachAxis(axY)
+            self._attachLineAxes(hn, axXma, axY)
             for mk in self.candleChart.legend().markers(hn):
                 mk.setVisible(False)
             if lo is not None and hi is not None:
@@ -1164,6 +1997,39 @@ class DeskStkChartPane(QWidget):
                     axY.setMin(px * 0.995)
                 if px > hi:
                     axY.setMax(px * 1.005)
+        seriesN = 0
+        skip = "" if self._barTp == "day" else "not day tab"
+        flags = signalFlags(getattr(self, "_sigOn", None))
+        if self._barTp == "day" and (not flags.get("atr") or not flags.get("pull")):
+            skip = "checkbox off"
+        try:
+            seriesN = int(self._addAtrSeries(atrPlans, visStart, len(vis), axXma, axY, lo, hi) or 0)
+        except Exception:
+            import traceback
+
+            from utils.termLog import termLog
+
+            skip = "exception"
+            termLog(traceback.format_exc())
         self.candleView.setSrHits(hits)
         self.candleView.setXTicks(len(vis), xTicks)
+        self.candleView.setTimingMarks(timing)
+        self.candleView.setAtrPlans(atrPlans, visStart, len(vis))
+        focus = "none"
+        extend = False
+        if atrPlans:
+            try:
+                focus = str(allBars[int(atrPlans[-1].get("signal"))].get("tradeDt") or "")[:8] or "none"
+            except (TypeError, ValueError, IndexError):
+                focus = "none"
+            extend = bool(atrPlans[-1].get("extend"))
+        yrange = "-"
+        try:
+            yrange = f"{float(axY.min()):.4g}..{float(axY.max()):.4g}"
+        except Exception:
+            yrange = "-"
+        self._logAtr(
+            signals=signalN, plans=len(atrPlans), focus=focus, extend=extend,
+            seriesN=seriesN, yrange=yrange, skip=skip,
+        )
         QTimer.singleShot(0, self._refreshAxisPaint)

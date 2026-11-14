@@ -36,13 +36,26 @@ def _runnerRankDayPrc():
     univ = listRankUnivCds()
     if not univ.get("ok"):
         return {"ok": False, "errMsg": univ.get("errMsg")}
-    stkCds = univ.get("stkCds") or []
+    from utils.chartBarPlan import collectSurgeChartCds, mergeLoadCodes
+
+    stkCds = mergeLoadCodes(univ.get("stkCds") or [], collectSurgeChartCds())
     result = loadDayPrcForRankStks(
         stkCds,
         months=DEFAULT_MONTHS,
         endDt=univ.get("tradeDt"),
         skipIfEnough=True,
     )
+    try:
+        from utils.chartBarLoad import loadWeekMonthForCodes
+
+        pole = loadWeekMonthForCodes(
+            stkCds, refetch=False, endDt=univ.get("tradeDt")
+        )
+        if pole.get("summary"):
+            termLog(pole.get("summary"))
+        result["pole"] = pole
+    except Exception as err:
+        termLog(f"[rankDayPrc] 주월봉 실패: {err}")
     if result.get("ok"):
         result["summary"] = (
             f"[순위일봉:수동] 대상 {len(stkCds)}종목 "

@@ -709,6 +709,24 @@ def _monCodes():
     except Exception as err:
         termLog(f"[watchRt] 관리종목 병합 실패: {err}")
     try:
+        from utils.chartBarPlan import collectSurgeChartCds
+
+        for cd in collectSurgeChartCds() or []:
+            if cd and cd not in seen and len(codes) < _MAX_STK:
+                seen.add(cd)
+                codes.append(cd)
+    except Exception as err:
+        termLog(f"[watchRt] 급등주 구독 병합 실패: {err}")
+    try:
+        from trading.surgeTradeInputs import srgQuoteCodes
+
+        for cd in srgQuoteCodes():
+            if cd and cd not in seen and len(codes) < _MAX_STK:
+                seen.add(cd)
+                codes.append(cd)
+    except Exception:
+        pass
+    try:
         from utils.stratOrdLedgerStore import listOpenLedgerStkCds
 
         for cd in listOpenLedgerStkCds():
@@ -1124,6 +1142,18 @@ def startWatchRtMonitor():
                     startMaSupportEodLive()
                 except Exception as err:
                     termLog(f"[watchRt] maSupportEod 기동 실패: {err}")
+                try:
+                    from trading.surgeTradeLive import startSurgeRankCollector
+
+                    startSurgeRankCollector()
+                except Exception as err:
+                    termLog(f"[watchRt] 급등주 조회 수집 실패: {err}")
+                try:
+                    from trading.surgeTradeLive import startSurgeTradeLive
+
+                    startSurgeTradeLive()
+                except Exception as err:
+                    termLog(f"[watchRt] SRG01 기동 실패: {err}")
         except Exception as err:
             termLog(f"[watchRt] deskRole 확인 실패 — 전략 기동 스킵: {err}")
         termLog(

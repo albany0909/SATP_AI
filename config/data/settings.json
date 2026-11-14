@@ -42,15 +42,19 @@
     },
     "LDR01": {
       "enabled": false,
-      "paperOnly": false
+      "paperOnly": true
     },
     "MMG01": {
       "enabled": false,
-      "paperOnly": false
+      "paperOnly": true
     },
     "RAM01": {
       "enabled": false,
       "paperOnly": false
+    },
+    "ATR01": {
+      "enabled": false,
+      "paperOnly": true
     }
   },
   "batchSched": {

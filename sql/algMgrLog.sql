@@ -1,0 +1,16 @@
+-- 알고리즘 중단/다시 사용 이력. 이 파일은 예시이며 이 작업에서 실행하지 않았다.
+-- 실제 가동 여부는 settings.json stratLive.enabled (MTS01 은 maTouchLive.enabled) 에 둔다.
+-- 아래 표는 승인 후에만 운영 DB 에 만든다.
+
+CREATE TABLE IF NOT EXISTS AI_ALG_MGR_LOG (
+  ID BIGINT NOT NULL AUTO_INCREMENT,
+  ALG_CD VARCHAR(8) NOT NULL,
+  AT_DTM VARCHAR(19) NOT NULL,
+  ACTOR VARCHAR(40) NOT NULL,
+  OLD_ENABLED TINYINT NULL,
+  NEW_ENABLED TINYINT NOT NULL,
+  REASON VARCHAR(200) NOT NULL,
+  POS_NOTE VARCHAR(400) NOT NULL,
+  PRIMARY KEY (ID),
+  KEY IX_ALG_MGR_LOG_CD (ALG_CD, AT_DTM)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

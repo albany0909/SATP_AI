@@ -45,9 +45,10 @@
     "reset": "if flat and close < SMA5 → clear breakout flag"
   },
   "fill": {
+    "signalTiming": "afterClose",
     "entryPrice": "dayClose",
     "exitPrice": "dayClose",
-    "feeRate": 0,
+    "feeRate": 0.0015,
     "btNote": "day bars; SMA5 excludes today close; force_close_eod at period end"
   },
   "notes": "status=test. Live: maSupportEodLive. BUY_SKIP 복기(종목당 1일 1건). 실전 당일 봉 = 1분봉 없으면 ka10001 시/고/저/현재가+누적거래량(구독 종목은 0B 현재가로 종가·고저 보정). 매수 창은 연속거래 마지막 2분(15:18~15:20) — 동시호가 직전까지. ka10001 은 폴링당 20종씩 나눠 조회(회전)하고 한도는 utils/trRateLimit 공용 게이트로 지킨다. 창 안에서 평가 가능한 종목은 약 110종."
