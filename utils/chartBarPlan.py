@@ -501,6 +501,19 @@ def filterAtrPlans(plans, flags):
     return list(plans or [])
 
 
+def atrHitInView(index, visStart, visCount):
+    """보이는 봉 안에 있을 때만 전경 표시. 왼쪽 끝으로 붙이지 않는다."""
+    try:
+        i = int(index)
+        start = int(visStart)
+        count = int(visCount)
+    except (TypeError, ValueError):
+        return False
+    if count <= 0:
+        return False
+    return start <= i < start + count
+
+
 def atrLineSpan(plan, visStart, visCount):
     """화면에 걸치는 ATR 선의 x 구간. 화면 밖이고 연장도 아니면 None.
 

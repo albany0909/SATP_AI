@@ -218,7 +218,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 37)
+        self.assertEqual(int(spec["version"]), 38)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -231,7 +231,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 37)
+        self.assertEqual(payload["algVer"], 38)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -2382,7 +2382,8 @@ class SurgeTradeTest(unittest.TestCase):
             self.assertTrue(specFilePath(code).is_file(), code)
             text = specFilePath(code).read_text(encoding="utf-8")
             self.assertIn(code, text)
-            self.assertIn("## 목적", text)
+            self.assertIn("## 쉽게 말하면", text)
+            self.assertTrue(text.index("## 쉽게 말하면") < text.index("## 목적"))
         self.assertIn("SRG01", codes)
         self.assertIn("MMG01", codes)
         self.assertIn("MTS01", codes)
@@ -2426,6 +2427,19 @@ class SurgeTradeTest(unittest.TestCase):
             self.assertEqual(saved[0]["algCd"], "MMG01")
             self.assertFalse(saved[0]["new"])
             self.assertIn("팔지 않는다", saved[0]["positions"])
+        from utils.algMgr import classifyAlgRun
+        from utils.algSpecDoc import easyFirstSentence
+        from utils.chartBarPlan import atrHitInView
+
+        self.assertEqual(classifyAlgRun(False, False, True, "100000", specBlocked=True), "미기동")
+        self.assertEqual(classifyAlgRun(True, True, True, "100000"), "운행중")
+        self.assertEqual(classifyAlgRun(True, True, False, "100000"), "대기")
+        self.assertEqual(classifyAlgRun(True, True, True, "160000"), "대기")
+        self.assertEqual(classifyAlgRun(False, False, True, "100000"), "중지")
+        self.assertEqual(classifyAlgRun(True, False, True, "100000"), "미기동")
+        self.assertFalse(atrHitInView(10, 100, 60))
+        self.assertTrue(atrHitInView(120, 100, 60))
+        self.assertIn("10%", easyFirstSentence("SRG01"))
 
     def test_atr_lines_render_offscreen(self):
         try:

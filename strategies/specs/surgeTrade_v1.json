@@ -4,7 +4,7 @@
   "englishName": "Surge Trade",
   "name": "급등주매매",
   "status": "draft",
-  "version": 37,
+  "version": 38,
   "enabled": false,
   "timeframe": "D",
   "docPath": "strategies/docs/surgeTrade_v1.md",
@@ -67,5 +67,5 @@
     "closingAuctionTrdeTp": "0",
     "closingAuctionNote": "kt10000 documents no dedicated closing-auction code. 15:20-15:30 uses ordinary limit 0. Market 3 and after-hours 81 are not used in that window."
   },
-  "notes": "v37. The desk has an algorithm manager. Stopping blocks new entries and does not sell open positions. SRG01 spec enabled stays false. Trading rules are unchanged. Live DB is not updated by this file."
+  "notes": "v38. Algorithm specs start with a plain-language summary, and the manager shows whether each runner is actually up. ATR hit marks stay inside the visible bars. SRG01 spec enabled stays false. Trading rules are unchanged."
 }

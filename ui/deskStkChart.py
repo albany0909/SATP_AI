@@ -770,20 +770,26 @@ class CandleChartView(QChartView):
             return
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setFont(QFont(self.font().family(), 8))
+        from utils.chartBarPlan import atrHitInView
+
+        start = int(self._atrVisStart or 0)
+        count = int(self._atrVisCount or self._xBarN or 0)
         for plan in self._atrPlans:
-            if plan.get("outcome") and plan.get("exitBar") is not None:
+            if plan.get("outcome") and atrHitInView(plan.get("exitBar"), start, count):
                 price = plan["stop"] if plan["outcome"] == "stop" else plan["target"]
                 yInfo = self._yAtPrice(price)
                 if yInfo is not None:
                     x = self._xAtAbs(plan["exitBar"], edges)
                     painter.setPen(QColor("#1565C0" if plan["outcome"] == "stop" else "#C62828"))
                     painter.drawText(int(x - 4), int(yInfo[0] - 2), "✕" if plan["outcome"] == "stop" else "✓")
-            if plan.get("provisional") and plan.get("extend"):
+            anchor = plan.get("signal") if plan.get("entryBar") is None else plan.get("entryBar")
+            inView = atrHitInView(anchor, start, count) or bool(plan.get("extend"))
+            if plan.get("provisional") and plan.get("extend") and inView:
                 yInfo = self._yAtPrice(plan.get("entry"))
                 if yInfo is not None:
                     painter.setPen(QColor("#616161"))
                     painter.drawText(int(yInfo[1] + 6), int(yInfo[0] - 2), "예상")
-            if plan.get("label"):
+            if plan.get("label") and inView:
                 yStop = self._yAtPrice(plan.get("stop"))
                 yTgt = self._yAtPrice(plan.get("target"))
                 if yStop is not None:

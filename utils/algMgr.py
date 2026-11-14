@@ -91,7 +91,22 @@ def modeLabel(spec, settings, algCd):
     return "불명확"
 
 
-def algMgrRows(specs, settings, versions=None, counts=None, pnl=None):
+def classifyAlgRun(configuredOn, runnerStarted, tradingDay, nowHm, sessionEnd="153000", specBlocked=False):
+    """운행중·대기·중지·미기동. 러너가 실제로 떠 있는지만 본다."""
+    if specBlocked and not runnerStarted:
+        return "미기동"
+    if not configuredOn:
+        return "중지"
+    if not runnerStarted:
+        return "미기동"
+    hm = str(nowHm or "000000").zfill(6)[-6:]
+    end = str(sessionEnd or "153000").zfill(6)[-6:]
+    if not tradingDay or hm >= end:
+        return "대기"
+    return "운행중"
+
+
+def algMgrRows(specs, settings, versions=None, counts=None, pnl=None, runs=None, nowHm="120000", tradingDay=True):
     """조회 행. DB 가 없으면 수량·손익은 0 이나 '-'."""
     from trading.deskLiveAlgs import effectiveAlgEnabled
 
@@ -105,13 +120,21 @@ def algMgrRows(specs, settings, versions=None, counts=None, pnl=None):
         code = _norm(spec.get("algCd"))
         if not code:
             continue
+        from utils.algSpecDoc import easyFirstSentence, easyText
+
         on = effectiveAlgEnabled(code, spec, settings)
+        configured = _configuredOn(code, settings, spec)
+        blocked = code == "SRG01" and spec.get("enabled") is not True
+        started = bool((runs or {}).get(code))
+        runState = classifyAlgRun(configured, started, tradingDay, nowHm, specBlocked=blocked)
         ver = versions.get(code) or {}
         money = pnl.get(code) or {}
         out.append({
             "algCd": code,
             "name": str(spec.get("name") or code),
-            "summary": _oneLine(spec),
+            "summary": easyFirstSentence(code),
+            "easy": easyText(code),
+            "runState": runState,
             "version": spec.get("version") or "-",
             "status": "사용" if on else "중지",
             "enabled": bool(on),
@@ -123,6 +146,56 @@ def algMgrRows(specs, settings, versions=None, counts=None, pnl=None):
             "specGate": code == "SRG01" and spec.get("enabled") is not True,
         })
     return out
+
+
+def _configuredOn(code, settings, spec):
+    """저장 스위치. SRG01 은 스펙 enabled 가 꺼지면 저장값과 상관없이 막힌다."""
+    settings = settings if isinstance(settings, dict) else {}
+    if code == "MTS01":
+        mt = settings.get("maTouchLive")
+        if isinstance(mt, dict) and "enabled" in mt:
+            return bool(mt.get("enabled"))
+    row = (settings.get("stratLive") or {}).get(code)
+    if isinstance(row, dict) and "enabled" in row:
+        return bool(row.get("enabled"))
+    return bool((spec or {}).get("enabled"))
+
+
+def readRunnerStarted():
+    """이 프로세스에서 기동 스레드가 떠 있는지. 없으면 False."""
+    flags = {}
+
+    def _flag(mod, name, code):
+        try:
+            flags[code] = bool(getattr(mod, name))
+        except Exception:
+            flags[code] = False
+
+    try:
+        import trading.surgeTradeLive as surge
+
+        _flag(surge, "_started", "SRG01")
+    except Exception:
+        flags["SRG01"] = False
+    try:
+        import trading.maTouchLive as touch
+
+        _flag(touch, "_workerStarted", "MTS01")
+    except Exception:
+        flags["MTS01"] = False
+    try:
+        import trading.manualMgrLive as mmg
+
+        _flag(mmg, "_workerStarted", "MMG01")
+    except Exception:
+        flags["MMG01"] = False
+    try:
+        import trading.maSupportEodLive as mse
+
+        _flag(mse, "_workerStarted", "MSE01")
+    except Exception:
+        flags["MSE01"] = False
+    return flags
 
 
 def _oneLine(spec):

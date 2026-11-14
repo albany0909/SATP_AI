@@ -1,14 +1,18 @@
 # 급등주매매 (SRG01)
 
+## 쉽게 말하면
+
+당일 10% 이상 오른 종목 가운데, 같은 이슈의 첫 급등만 모의로 삽니다. 15:18부터 정규장 마감 전에 약 100만 원어치를 한 번 삽니다. 수익률이 -5%면 1주만 남기고 팔고, -10%면 나머지를 팝니다. 15:15 이후 수익 중인데 음봉으로 20일선 아래로 내려가면 전량 팝니다. 오르는 날이 아니면 맞지 않습니다. 예를 들어 10,000원에 사면 9,500원에서 대부분을 팔고 9,000원에서 나머지를 팝니다.
+
 - 전략ID: `surgeTrade_v1`
-- 버전: 36
+- 버전: 38
 - 상태: draft
 - 명세 enabled: False
 - 주기: D
 
 ## 목적
 
-v36. Day-chart ATR stop and target lines are chart series, so they stay on the candles. The axis includes only the lines in view. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file.
+v38. Algorithm specs start with a plain-language summary, and the manager shows whether each runner is actually up. ATR hit marks stay inside the visible bars. SRG01 spec enabled stays false. Trading rules are unchanged.
 
 ## 대상 종목
 
@@ -136,5 +140,7 @@ v36. Day-chart ATR stop and target lines are chart series, so they stay on the c
 - 2026-11-14 v34 v34 일봉 차트에 ATR 손절·익절선을 그린다. 매수 조건은 그대로. 주문은 계속 비활성.
 - 2026-11-14 v35 v35 차트 시그널에 전체 체크를 둔다. 매수 조건은 그대로. 주문은 계속 비활성.
 - 2026-11-14 v36 v36 ATR 손절·익절선을 차트 시리즈로 고쳐 일봉 위에 보이게 한다. 매수 조건은 그대로. 주문은 계속 비활성.
+- 2026-11-14 v37 v37 알고리즘 관리에서 사용·중지와 명세를 본다. 매매 규칙은 그대로. 주문은 계속 비활성.
+- 2026-11-14 v38 v38 명세에 쉬운 설명을 넣고 운행 상태를 보여 준다. ATR 체결 표시는 보이는 봉만. 주문은 계속 비활성.
 
 보유를 중단 버튼으로 자동 매도하지 않는다.

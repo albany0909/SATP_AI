@@ -2,8 +2,10 @@
 
 from datetime import datetime
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -36,15 +38,15 @@ def _docVersions(specs):
 
 def _readFacts():
     """SELECT 만 한다. 테이블을 만들지 않는다."""
-    counts, pnl = {}, {}
+    counts, pnl, events = {}, {}, {}
     try:
         from utils.dbConn import isLocalDbEnabled, openDbConn
 
         if not isLocalDbEnabled():
-            return counts, pnl
+            return counts, pnl, events
         conn = openDbConn()
     except Exception:
-        return counts, pnl
+        return counts, pnl, events
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -54,6 +56,18 @@ def _readFacts():
                 if isinstance(row, dict):
                     counts[row.get("ALG_CD")] = int(row.get("CNT") or 0)
         with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT ALG_CD, EVT_TP, COUNT(*) CNT
+                FROM AI_ALG_EVT
+                WHERE TRADE_DT=%s AND EVT_TP IN ('BUY','SELL')
+                GROUP BY ALG_CD, EVT_TP
+                """,
+                (datetime.now().strftime("%Y%m%d"),),
+            )
+            for row in cur.fetchall() or []:
+                if isinstance(row, dict):
+                    events.setdefault(row.get("ALG_CD"), {})[row.get("EVT_TP")] = int(row.get("CNT") or 0)
             cur.execute(
                 """
                 SELECT ALG_CD, TDY_PNL, TOT_PNL
@@ -70,13 +84,13 @@ def _readFacts():
                     continue
                 pnl[code] = {"today": row.get("TDY_PNL"), "cum": row.get("TOT_PNL")}
     except Exception:
-        return counts, pnl
+        return counts, pnl, events
     finally:
         try:
             conn.close()
         except Exception:
             pass
-    return counts, pnl
+    return counts, pnl, events
 
 
 class AlgMgrPane(QWidget):
@@ -89,9 +103,15 @@ class AlgMgrPane(QWidget):
         self.note.setWordWrap(True)
         self.note.setStyleSheet("color: #555; font-size: 11px;")
         lay.addWidget(self.note)
-        self.table = QTableWidget(0, 10)
+        self.summary = QLabel("운행중 0 · 대기 0 · 중지 0 · 미기동 0")
+        self.summary.setStyleSheet("font-weight: 700;")
+        lay.addWidget(self.summary)
+        self.onlyRun = QCheckBox("운행중만 보기")
+        self.onlyRun.toggled.connect(lambda _c: self._paintRows())
+        lay.addWidget(self.onlyRun)
+        self.table = QTableWidget(0, 11)
         self.table.setHorizontalHeaderLabels([
-            "코드", "이름", "요약", "버전", "상태", "모드", "버전일", "종목수", "당일", "누적",
+            "코드", "이름", "요약", "버전", "상태", "운행", "모드", "버전일", "종목수", "당일", "누적",
         ])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -108,6 +128,10 @@ class AlgMgrPane(QWidget):
         row.addWidget(self.btnSpec)
         row.addStretch(1)
         lay.addLayout(row)
+        self._timer = QTimer(self)
+        self._timer.setInterval(30000)
+        self._timer.timeout.connect(self.reload)
+        self._timer.start()
         self.reload()
 
     def reload(self):
@@ -125,24 +149,66 @@ class AlgMgrPane(QWidget):
             settings = loadSettings() or {}
         except Exception:
             settings = {}
-        counts, pnl = _readFacts()
+        counts, pnl, self._events = _readFacts()
         versions = _docVersions(specs)
-        self._rows = algMgrRows(specs, settings, versions, counts, pnl)
-        self.table.setRowCount(len(self._rows))
-        keys = ("algCd", "name", "summary", "version", "status", "mode", "verYmd", "stkCnt", "todayPnl", "cumPnl")
-        for r, row in enumerate(self._rows):
+        from datetime import datetime as _dt
+        from config.krHoliday import isTradingDay
+        from utils.algMgr import readRunnerStarted
+
+        now = _dt.now()
+        self._rows = algMgrRows(
+            specs, settings, versions, counts, pnl,
+            runs=readRunnerStarted(),
+            nowHm=now.strftime("%H%M%S"),
+            tradingDay=bool(isTradingDay(now)),
+        )
+        self._paintRows()
+
+    def _paintRows(self):
+        rows = self._rows
+        if self.onlyRun.isChecked():
+            rows = [row for row in rows if row.get("runState") == "운행중"]
+        counts = {"운행중": 0, "대기": 0, "중지": 0, "미기동": 0}
+        modes = {"모의": 0, "실전": 0}
+        for row in self._rows:
+            counts[row.get("runState")] = counts.get(row.get("runState"), 0) + 1
+            if row.get("runState") == "운행중":
+                modes[row.get("mode")] = modes.get(row.get("mode"), 0) + 1
+        buy = sell = 0
+        for item in (getattr(self, "_events", None) or {}).values():
+            buy += int(item.get("BUY") or 0)
+            sell += int(item.get("SELL") or 0)
+        self.summary.setText(
+            f"운행중 {counts['운행중']} · 대기 {counts['대기']} · 중지 {counts['중지']} · 미기동 {counts['미기동']}"
+            f"  (운행 모의 {modes.get('모의', 0)} · 실전 {modes.get('실전', 0)}"
+            f" · 오늘 진입 {buy} · 청산 {sell})"
+        )
+        self._visible = rows
+        self.table.setRowCount(len(rows))
+        keys = (
+            "algCd", "name", "summary", "version", "status", "runState",
+            "mode", "verYmd", "stkCnt", "todayPnl", "cumPnl",
+        )
+        for r, row in enumerate(rows):
+            live = row.get("runState") == "운행중"
             for c, key in enumerate(keys):
                 item = QTableWidgetItem(str(row.get(key) if row.get(key) is not None else ""))
-                if key == "status":
-                    item.setForeground(Qt.GlobalColor.darkGreen if row.get("enabled") else Qt.GlobalColor.darkRed)
+                if key == "summary":
+                    item.setToolTip(str(row.get("easy") or ""))
+                if live:
+                    item.setBackground(QColor("#E8F5E9"))
+                    font = QFont(item.font())
+                    font.setBold(True)
+                    item.setFont(font)
                 self.table.setItem(r, c, item)
         self.table.resizeColumnsToContents()
 
     def _selected(self):
         row = self.table.currentRow()
-        if row < 0 or row >= len(self._rows):
+        shown = getattr(self, "_visible", self._rows)
+        if row < 0 or row >= len(shown):
             return None
-        return self._rows[row]
+        return shown[row]
 
     def _toggle(self, turnOn):
         picked = self._selected()
