@@ -107,6 +107,8 @@ def renderAlgSpec(spec, hist=None):
         "",
         easyText(code),
         "",
+        "중지해도 이미 가진 종목의 손절·익절은 계속 보고, 새 매수는 하지 않습니다.",
+        "",
         f"- 전략ID: `{spec.get('stratId') or '불명확'}`",
         f"- 버전: {spec.get('version') if spec.get('version') is not None else '불명확'}",
         f"- 상태: {spec.get('status') or '불명확'}",

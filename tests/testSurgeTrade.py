@@ -2868,6 +2868,123 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(table.item(0, 0).background().color().name().upper(), "#FFF59D")
         app.processEvents()
 
+    def test_stopped_exits_pnl_report_and_chart_retry(self):
+        import importlib.util
+        import tempfile
+        from pathlib import Path
+
+        from utils.algMgr import actionsWhenStopped, classifyAlgRun
+        from utils.chartUnifFetch import fetchWithRetry, isHttp429, paceSeconds
+        from trading.surgeTradeLive import liveTick
+
+        self.assertEqual(classifyAlgRun(False, True, True, "100000", openCount=2), "중지(청산만)")
+        self.assertEqual(classifyAlgRun(False, False, True, "100000"), "중지")
+        kept = actionsWhenStopped(False, [
+            {"act": "EXIT", "cd": "005930"},
+            {"act": "ADD", "cd": "005930"},
+            {"act": "SCOUT", "cd": "000660"},
+        ])
+        self.assertEqual([row["act"] for row in kept], ["EXIT"])
+        easy = Path("docs/algSpec/SRG01.md").read_text(encoding="utf-8")
+        self.assertIn("새 매수는 하지 않습니다", easy)
+
+        def heldBook():
+            book = SurgeBook(self.cal)
+            book.position("005930").update({
+                "phase": "OPEN", "qty": 10, "avgPx": 10000, "costPxQty": 100000,
+                "entryYmd": "20261106", "entryKind": "INITIAL", "stage": 0,
+            })
+            return book
+
+        now = datetime(2026, 11, 9, 15, 18, 10)
+        quotes = {
+            "005930": q(9000, now, broker=10),
+            "000660": q(11000, now, broker=0),
+        }
+        fresh = cand(now, event="EVT9")
+        fresh["stkCd"] = "000660"
+        own = {"005930": True, "000660": True}
+        opened = heldBook().decide(now, quotes, [fresh], 5_000_000, own)
+        self.assertTrue(sells(opened["actions"]))
+        self.assertTrue(buys(opened["actions"]))
+        stopped = heldBook().decide(now, quotes, [fresh], 5_000_000, own, entryOk={})
+        self.assertEqual(sells(stopped["actions"])[0]["reason"], "FULL_STOP")
+        self.assertEqual(buys(stopped["actions"]), [])
+        sent = []
+
+        def broker(action, session):
+            sent.append(action.get("side"))
+            return {"ok": True, "sent": True, "ordNo": "1"}
+
+        tick = liveTick(
+            heldBook(), now, quotes, [fresh], 5_000_000, own,
+            session=paperSession(), broker=broker, enabled=False,
+        )
+        self.assertEqual(sent, ["SELL"])
+        self.assertTrue(tick.get("ran"))
+        idle = liveTick(
+            SurgeBook(self.cal), now, {}, [], 0, {},
+            session=paperSession(), broker=broker, enabled=False,
+        )
+        self.assertEqual(idle["reason"], "DISABLED")
+
+        self.assertTrue(isHttp429({"ok": False, "errMsg": "HTTP 429 [1700] too many"}))
+        state = {"n": 0}
+
+        def flaky():
+            state["n"] += 1
+            if state["n"] < 3:
+                return {"ok": False, "errMsg": "HTTP 429", "bars": []}
+            return {"ok": True, "bars": [{"tradeDt": "20261114"}]}
+
+        slept = []
+        logs = []
+        got = fetchWithRetry(
+            flaky, label="006400 week",
+            sleep=lambda sec: slept.append(sec), log=logs.append,
+        )
+        self.assertTrue(got["ok"])
+        self.assertEqual(slept, [1.5, 3.0])
+        self.assertTrue(any("[deskChart] 통합봉 재시도 006400 week 1/3" in line for line in logs))
+        always = {"n": 0}
+
+        def blocked():
+            always["n"] += 1
+            return {"ok": False, "errMsg": "HTTP 429", "bars": []}
+
+        fetchWithRetry(blocked, label="006400 week", sleep=lambda sec: None, log=lambda _line: None)
+        self.assertEqual(always["n"], 4)
+        self.assertAlmostEqual(paceSeconds(10.0, 10.1, 0.4), 0.3)
+        self.assertEqual(paceSeconds(0, 99, 0.4), 0.0)
+
+        spec = importlib.util.spec_from_file_location("algPnlReport", "scripts/algPnlReport.py")
+        report = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(report)
+        events = [
+            {"EVT_ID": 1, "ALG_CD": "SRG01", "TRADE_DT": "20261113", "EVT_TM": "151800", "EVT_TP": "BUY", "STK_CD": "005930", "PX": 10000, "QTY": 10, "MODE": "paper"},
+            {"EVT_ID": 2, "ALG_CD": "SRG01", "TRADE_DT": "20261114", "EVT_TM": "100000", "EVT_TP": "SELL", "STK_CD": "005930", "PX": 10000, "QTY": 10, "MODE": "paper"},
+            {"EVT_ID": 3, "ALG_CD": "SRG01", "TRADE_DT": "20261114", "EVT_TM": "110000", "EVT_TP": "BUY", "STK_CD": "000660", "PX": 10000, "QTY": 1, "MODE": "paper"},
+            {"EVT_ID": 4, "ALG_CD": "SRG01", "TRADE_DT": "20261114", "EVT_TM": "120000", "EVT_TP": "SELL", "STK_CD": "000660", "PX": 11000, "QTY": 1, "MODE": "paper"},
+        ]
+        plain = report.summarize(report.roundsFromEvents(events, useCosts=False))
+        day = next(row for row in plain if row["algCd"] == "SRG01" and row["day"] == "20261114")
+        self.assertEqual(day["wins"], 1)
+        self.assertEqual(day["flats"], 1)
+        self.assertEqual(day["losses"], 0)
+        costly = report.summarize(report.roundsFromEvents(events, useCosts=True))
+        dayCost = next(row for row in costly if row["algCd"] == "SRG01" and row["day"] == "20261114")
+        self.assertEqual(dayCost["wins"], 1)
+        self.assertEqual(dayCost["flats"], 0)
+        self.assertEqual(dayCost["losses"], 1)
+        self.assertIn("PX", report.EVENT_COLUMNS)
+        self.assertIn("SELECT", report.SELECT_SQL)
+        self.assertNotIn("INSERT", report.SELECT_SQL.upper())
+        with tempfile.TemporaryDirectory() as folder:
+            written = report.writeReports(folder, plain, useCosts=False)
+            text = Path(written["md"]).read_text(encoding="utf-8")
+            self.assertIn("EVT_ID", text)
+            self.assertTrue(Path(written["csv"]).is_file())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

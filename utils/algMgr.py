@@ -13,8 +13,25 @@ from pathlib import Path
 
 KEEP_POSITION_NOTE = (
     "보유 수량은 그대로 둔다. 중단해도 자동으로 팔지 않는다. "
-    "신규 진입만 막히고, 그 알고리즘의 청산 루프는 기존처럼 함께 쉰다."
+    "신규 진입만 막히고, 이미 가진 종목의 손절·익절 감시는 계속한다."
 )
+
+ENTRY_ACTS = {"BUY", "ADD", "SCOUT"}
+
+
+def actionsWhenStopped(enabled, actions):
+    """중지면 새 매수·추가·정찰만 뺀다. 매도·청산은 남긴다."""
+    kept = []
+    for act in actions or []:
+        if not isinstance(act, dict):
+            continue
+        kind = str(act.get("side") or act.get("act") or "").upper()
+        if kind in ENTRY_ACTS or kind.startswith("BUY"):
+            if enabled:
+                kept.append(act)
+            continue
+        kept.append(act)
+    return kept
 
 
 def _norm(algCd):
@@ -91,8 +108,10 @@ def modeLabel(spec, settings, algCd):
     return "불명확"
 
 
-def classifyAlgRun(configuredOn, runnerStarted, tradingDay, nowHm, sessionEnd="153000", specBlocked=False):
-    """운행중·대기·중지·미기동. 러너가 실제로 떠 있는지만 본다."""
+def classifyAlgRun(configuredOn, runnerStarted, tradingDay, nowHm, sessionEnd="153000", specBlocked=False, openCount=0):
+    """운행중·대기·중지·중지(청산만)·미기동."""
+    if not configuredOn and int(openCount or 0) > 0:
+        return "중지(청산만)"
     if specBlocked and not runnerStarted:
         return "미기동"
     if not configuredOn:
@@ -106,13 +125,15 @@ def classifyAlgRun(configuredOn, runnerStarted, tradingDay, nowHm, sessionEnd="1
     return "운행중"
 
 
-def algMgrRows(specs, settings, versions=None, counts=None, pnl=None, runs=None, nowHm="120000", tradingDay=True):
+def algMgrRows(specs, settings, versions=None, counts=None, pnl=None, runs=None, nowHm="120000", tradingDay=True, holds=None):
     """조회 행. DB 가 없으면 수량·손익은 0 이나 '-'."""
     from trading.deskLiveAlgs import effectiveAlgEnabled
 
     versions = versions or {}
     counts = counts or {}
     pnl = pnl or {}
+    if holds is None:
+        holds = readOpenCounts()
     out = []
     for spec in specs or []:
         if not isinstance(spec, dict):
@@ -126,7 +147,10 @@ def algMgrRows(specs, settings, versions=None, counts=None, pnl=None, runs=None,
         configured = _configuredOn(code, settings, spec)
         blocked = code == "SRG01" and spec.get("enabled") is not True
         started = bool((runs or {}).get(code))
-        runState = classifyAlgRun(configured, started, tradingDay, nowHm, specBlocked=blocked)
+        runState = classifyAlgRun(
+            configured, started, tradingDay, nowHm,
+            specBlocked=blocked, openCount=int((holds or {}).get(code) or 0),
+        )
         ver = versions.get(code) or {}
         money = pnl.get(code) or {}
         out.append({
@@ -159,6 +183,43 @@ def _configuredOn(code, settings, spec):
     if isinstance(row, dict) and "enabled" in row:
         return bool(row.get("enabled"))
     return bool((spec or {}).get("enabled"))
+
+
+def readOpenCounts():
+    """메모리에 있는 보유 종목 수. 조회가 실패하면 0."""
+    out = {}
+
+    def _take(code, fn):
+        try:
+            out[code] = int(fn() or 0)
+        except Exception:
+            out[code] = 0
+
+    try:
+        from trading.surgeTradeLive import heldPositionCount as surgeHeld
+
+        _take("SRG01", surgeHeld)
+    except Exception:
+        out["SRG01"] = 0
+    try:
+        from trading.maTouchLive import heldPositionCount as mtsHeld
+
+        _take("MTS01", mtsHeld)
+    except Exception:
+        out["MTS01"] = 0
+    try:
+        from trading.manualMgrLive import listMmgPositions
+
+        _take("MMG01", lambda: len(listMmgPositions() or {}))
+    except Exception:
+        out["MMG01"] = 0
+    try:
+        from trading.maSupportEodLive import heldPositionCount as mseHeld
+
+        _take("MSE01", mseHeld)
+    except Exception:
+        out["MSE01"] = 0
+    return out
 
 
 def readRunnerStarted():

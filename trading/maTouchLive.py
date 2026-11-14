@@ -675,6 +675,12 @@ def _patchLedgerPos(stkCd, rec):
         termLog(f"[maTouch] 원장 평단동기 실패: {err}")
 
 
+def heldPositionCount():
+    """메모리에 남은 보유 종목 수."""
+    with _lock:
+        return sum(1 for rec in _pos.values() if int((rec or {}).get("qty") or 0) > 0)
+
+
 def listOpenPosAlgMap():
     """메모리 미청산 {stkCd: algCd}. 원장 적재 전 행번호 색용."""
     out = {}
@@ -2621,8 +2627,6 @@ def onBrokerFill(sideLabel, stkCd, fillQty, fillPx, ordNo="", cmsn=0, tax=0):
     fillQty 는 단위 체결량(ordExecNotifier.resolveUnitFill). cmsn/tax 는 참고용
     (청산 손익은 AI_DESK_LOG 00 로그의 수수료·세금으로 계산한다).
     """
-    if not _isEnabled():
-        return
     cd = normStkCd(stkCd)
     qty = int(fillQty or 0)
     px = abs(int(fillPx or 0))
@@ -3250,7 +3254,7 @@ def _acntSyncLoop():
     while True:
         try:
             time.sleep(_ACNT_SYNC_SEC)
-            if not _isEnabled():
+            if not _isEnabled() and heldPositionCount() <= 0:
                 continue
             _fetchAndSyncAcnt(force=False)
         except Exception as err:
@@ -3680,10 +3684,11 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
     """
     0B 현재가 한 틱. watchRtMonitor 에서 호출.
     주문은 별도 락 안에서 짧게 판단하고, API 는 락 밖에서 호출한다.
+    중지면 보유 종목의 손절·익절만 본다.
     """
-    if not _isEnabled():
-        return
     cd = normStkCd(stkCd)
+    if not _isEnabled() and int((_pos.get(cd) or {}).get("qty") or 0) <= 0:
+        return
     px = _absPrice(curPrcRaw)
     if not cd or px is None or px <= 0:
         return
@@ -3775,7 +3780,7 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
         tp3Ratio = float(_params.get("tp3QtyRatio", 0.5) or 0)
         tp4Pct = float(_params.get("tp4Pct", 7) or 0)
         tp3Taken = bool(rec.get("tp3Taken"))
-        buyBanned = _isBuyBanned(cd)
+        buyBanned = _isBuyBanned(cd) or (not _isEnabled())
         afterHalfStopPct = float(_params.get("afterHalfStopPct") or 0)
         breakevenAfterTp1 = bool(_params.get("breakevenAfterTp1", True))
         reclaimMinPct = float(_params.get("reclaimMinPct", 0))
@@ -4092,7 +4097,8 @@ def onMaTouchTick(stkCd, curPrcRaw, tmRaw="", fluRtRaw=None):
 
         # 절반 익절 종목만 다음날, +N% 이상이면 잔량 절반 추가 (시초 금지시간과 겹치면 안 함)
         if (
-            bool(_params.get("halfAddNextDay", False))
+            _isEnabled()
+            and bool(_params.get("halfAddNextDay", False))
             and halfTaken
             and (not rec.get("halfAddDone"))
             and qtyNow >= 2
@@ -4254,8 +4260,8 @@ def prepareMaTouchSession(codes):
     global _params, _paramsAt
     _params = _loadParams()
     _paramsAt = time.time()
-    if not _params.get("_enabled", True):
-        termLog("[maTouch] 비활성 (settings.maTouchLive.enabled=false)")
+    if not _params.get("_enabled", True) and heldPositionCount() <= 0:
+        termLog("[maTouch] 비활성 (settings.maTouchLive.enabled=false) — 보유 없음")
         return
     _loadState()
     _restoreWaitFromToday()
@@ -4505,11 +4511,15 @@ def startMaTouchLive():
     global _params, _paramsAt, _workerStarted, _acntSyncStarted
     _params = _loadParams()
     _paramsAt = time.time()
-    if not _params.get("_enabled", True):
-        termLog("[maTouch] 비활성 — 기동 생략")
-        return
-    # v41: 1차 +1.5%. MFE 통계로 tp1 을 덮지 않는다.
-    if bool(_params.get("halfTpFromStat", False)):
+    exitOnly = not _params.get("_enabled", True)
+    if exitOnly:
+        _loadState()
+        if heldPositionCount() <= 0:
+            termLog("[maTouch] 비활성 — 보유 없음, 기동 생략")
+            return
+        termLog("[maTouch] 비활성 — 보유 종목 손절·익절만 감시")
+    # v41: 1차 +1.5%. MFE 통계로 tp1 을 덮지 않는다. 청산만 모드에서는 비율을 바꾸지 않는다.
+    if (not exitOnly) and bool(_params.get("halfTpFromStat", False)):
         try:
             from utils.maTouchMfeStats import refreshHalfTpFromLiveTrades
 

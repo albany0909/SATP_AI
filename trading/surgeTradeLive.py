@@ -71,6 +71,22 @@ def pollQuotes(codes, fetchQuote):
     return out
 
 
+def _openPositionCount(book):
+    n = 0
+    for pos in (getattr(book, "pos", None) or {}).values():
+        if int((pos or {}).get("qty") or 0) > 0:
+            n += 1
+    return n
+
+
+def heldPositionCount():
+    """저장된 장부의 보유 종목 수. 파일을 못 읽으면 0."""
+    try:
+        return _openPositionCount(loadBook(_statePath()))
+    except Exception:
+        return 0
+
+
 def runDecisionCycle(
     book,
     now,
@@ -81,6 +97,7 @@ def runDecisionCycle(
     session,
     broker,
     enabled=None,
+    entryOk=None,
 ):
     """판단 후 게이트. enabled 가 아니면 브로커를 호출하지 않는다."""
     if enabled is None:
@@ -89,7 +106,7 @@ def runDecisionCycle(
         return {"ran": False, "reason": "DISABLED", "actions": [], "orders": []}
     if getattr(book, "frozen", ""):
         return {"ran": False, "reason": book.frozen, "actions": [], "orders": []}
-    decided = book.decide(now, quotes, candidates, cash, ownOk)
+    decided = book.decide(now, quotes, candidates, cash, ownOk, entryOk=entryOk)
     orders = []
     events = []
     if not decided.get("ok"):
@@ -494,17 +511,19 @@ def paperBroker(action, session):
 
 
 def liveTick(book, now, quotes, candidates, cash, ownOk, session=None, broker=None, enabled=None):
-    """한 번 판단. 세션이 없거나 비활성이면 주문을 보내지 않는다."""
+    """한 번 판단. 중지면 보유 종목의 매도만 보고, 새 매수는 만들지 않는다."""
     if enabled is None:
         enabled = isSurgeEnabled()
-    if not enabled:
+    held = _openPositionCount(book)
+    if not enabled and held <= 0:
         return {"ran": False, "reason": "DISABLED", "orders": []}
     sess = session if session is not None else loadPaperOrderSession()
     if not sess:
         return {"ran": False, "reason": "PAPER_SESSION_REQUIRED", "orders": []}
     useBroker = broker or paperBroker
     return runDecisionCycle(
-        book, now, quotes, candidates, cash, ownOk, sess, useBroker, enabled=True
+        book, now, quotes, candidates, cash, ownOk, sess, useBroker,
+        enabled=True, entryOk=None if enabled else {},
     )
 
 
@@ -515,7 +534,7 @@ def _statePath():
 
 
 def _loop():
-    """활성화된 뒤에만 돈다. 시세가 없으면 주문을 만들지 않는다."""
+    """중지면 보유 종목의 매도만 본다. 시세가 없으면 주문을 만들지 않는다."""
     import time
     from datetime import datetime
 
@@ -523,9 +542,6 @@ def _loop():
     book = loadBook(path)
     while True:
         try:
-            if not isSurgeEnabled():
-                time.sleep(5)
-                continue
             session = loadPaperOrderSession()
             if session is None:
                 time.sleep(5)
@@ -539,7 +555,7 @@ def _loop():
                 0,
                 {},
                 session=session,
-                enabled=True,
+                enabled=isSurgeEnabled(),
             )
             saveBook(book, path)
         except Exception:
@@ -667,9 +683,9 @@ def startSurgeRankCollector():
 
 
 def startSurgeTradeLive():
-    """비활성이면 스레드를 만들지 않는다. 설정 파일을 바꾸지 않는다."""
+    """보유가 없으면 비활성일 때 스레드를 만들지 않는다. 보유가 있으면 청산만 돈다."""
     global _started
-    if not isSurgeEnabled():
+    if not isSurgeEnabled() and heldPositionCount() <= 0:
         try:
             from utils.termLog import termLog
 

@@ -1,5 +1,6 @@
 """차트 통합봉 조회. stk_cd 는 명세의 SOR 코드(6자리_AL). AI_DAY_STK_PRC 에 쓰지 않는다."""
 
+import time
 from datetime import datetime, timedelta
 
 from api.getDayChart import _hdr, _parseBody, getDayChart
@@ -11,6 +12,56 @@ from utils.trRateLimit import acquireTrSlot
 _DAY_KEY = "stk_dt_pole_chart_qry"
 _POLE = {"week": ("ka10082", "stk_stk_pole_chart_qry"), "month": ("ka10083", "stk_mth_pole_chart_qry")}
 _MAX_PAGES = {"day": 40, "week": 20, "month": 8}
+# 종목·페이지 사이 간격. 부팅 때 15종 주봉이 429 로 막히지 않게 한다.
+PACE_SEC = 0.4
+# 429 이면 1.5초, 3초, 6초. 세 번을 넘기면 그 응답을 그대로 돌려준다.
+RETRY_WAITS = (1.5, 3.0, 6.0)
+_lastPaceAt = 0.0
+
+
+def isHttp429(part):
+    if not isinstance(part, dict):
+        return False
+    try:
+        if int(part.get("status") or 0) == 429:
+            return True
+    except (TypeError, ValueError):
+        pass
+    return "429" in str(part.get("errMsg") or "")
+
+
+def paceSeconds(lastAt, now, pace=PACE_SEC):
+    if not lastAt:
+        return 0.0
+    return max(0.0, float(pace) - (float(now) - float(lastAt)))
+
+
+def _pace(sleep=None, now=None):
+    global _lastPaceAt
+    sleep = sleep or time.sleep
+    nowFn = now or time.time
+    wait = paceSeconds(_lastPaceAt, nowFn())
+    if wait > 0:
+        sleep(wait)
+    _lastPaceAt = nowFn()
+
+
+def fetchWithRetry(call, label="", waits=RETRY_WAITS, sleep=None, log=None):
+    """429 만 다시 호출한다. 다른 실패는 그대로 돌려준다."""
+    sleep = sleep or time.sleep
+    log = log or termLog
+    last = {"ok": False, "errMsg": "조회 없음", "bars": []}
+    tries = len(waits)
+    for attempt in range(tries + 1):
+        last = call() or {"ok": False, "errMsg": "빈 응답", "bars": []}
+        if last.get("ok") or not isHttp429(last):
+            return last
+        if attempt >= tries:
+            break
+        wait = float(waits[attempt])
+        log(f"[deskChart] 통합봉 재시도 {label} {attempt + 1}/{tries} {wait:g}s")
+        sleep(wait)
+    return last
 
 
 def _cutoff(today):
@@ -20,7 +71,7 @@ def _cutoff(today):
         return "19900101"
 
 
-def _page(hostUrl, token, stk, baseDt, barTp, contYn, nextKey, tokenType, isPaper):
+def _pageOnce(hostUrl, token, stk, baseDt, barTp, contYn, nextKey, tokenType, isPaper):
     acquireTrSlot("ka10081" if barTp == "day" else _POLE[barTp][0], mode="paper" if isPaper else "real")
     if barTp == "day":
         res = getDayChart(
@@ -49,6 +100,14 @@ def _page(hostUrl, token, stk, baseDt, barTp, contYn, nextKey, tokenType, isPape
         "cont": _hdr(res, "cont-yn", "N").upper(),
         "next": _hdr(res, "next-key", ""),
     }
+
+
+def _page(hostUrl, token, stk, baseDt, barTp, contYn, nextKey, tokenType, isPaper):
+    _pace()
+    return fetchWithRetry(
+        lambda: _pageOnce(hostUrl, token, stk, baseDt, barTp, contYn, nextKey, tokenType, isPaper),
+        label=f"{stk} {barTp}",
+    )
 
 
 def fetchUnifiedPeriod(hostUrl, token, stkCd, barTp, today, tokenType="bearer", isPaper=True, backfill=True):
