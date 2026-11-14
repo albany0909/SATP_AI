@@ -1770,6 +1770,7 @@ class DeskStkChartPane(QWidget):
 
         faintColor = {"stop": "#90CAF9", "target": "#EF9A9A", "entry": "#BDBDBD"}
         solidColor = {"stop": "#1565C0", "target": "#C62828", "entry": "#9E9E9E"}
+        added = 0
         try:
             for plan in plans or []:
                 spans = atrDrawSpans(plan, visStart, visCount)
@@ -1797,21 +1798,71 @@ class DeskStkChartPane(QWidget):
                         line.setPen(pen)
                         line.append(float(span["x1"]), price)
                         line.append(float(span["x2"]), price)
-                        self.candleChart.addSeries(line)
-                        line.attachAxis(axX)
-                        line.attachAxis(axY)
+                        self._attachLineAxes(line, axX, axY)
+                        added += 1
                         for mk in self.candleChart.legend().markers(line):
                             mk.setVisible(False)
             low, high = priceSpanForPlans(lo, hi, plans, visStart, visCount)
             if low is not None and high is not None and high > low:
                 pad = max((high - low) * 0.06, abs(high) * 0.01)
                 axY.setRange(max(0.0, low - pad), high + pad)
+            return added
         except Exception as err:
+            import traceback
+
             termLog(f"[deskChart] ATR 선 시리즈 실패: {err}")
+            termLog(traceback.format_exc())
+            raise
+
+    def _attachLineAxes(self, series, axX, axY):
+        """값축에만 붙인다. 범주축이 같이 붙으면 -0.5 같은 x 가 화면 밖으로 나간다."""
+        self.candleChart.addSeries(series)
+        for ax in list(series.attachedAxes()):
+            horizontal = ax.orientation() == Qt.Orientation.Horizontal
+            if horizontal and ax is not axX:
+                series.detachAxis(ax)
+        if axX not in series.attachedAxes():
+            series.attachAxis(axX)
+        if axY not in series.attachedAxes():
+            series.attachAxis(axY)
+
+    def _logAtr(self, signals=0, plans=0, focus="", extend=False, seriesN=0, yrange="", skip=""):
+        """하루 차트 그리기마다 한 줄. 같은 내용은 30초에 한 번만."""
+        import time
+
+        from utils.chartBarPlan import chartSignalAllState, signalFlags
+        from utils.termLog import termLog
+
+        flags = signalFlags(getattr(self, "_sigOn", None))
+        bars = list(getattr(self, "_bars", None) or [])
+        vis = []
+        try:
+            vis = list(self._visibleBars() or [])
+        except Exception:
+            vis = bars[-20:]
+        first = str((vis[0] if vis else {}).get("tradeDt") or "-")[:8]
+        last = str((vis[-1] if vis else {}).get("tradeDt") or "-")[:8]
+        line = (
+            f"[deskChart] ATR 진단 cd={self._stkCd or '-'} tab={self._barTp or '-'} "
+            f"widget={type(self).__name__} bars={len(bars)} visible={first}..{last} "
+            f"signals={int(signals)} plans={int(plans)} focus={focus or 'none'} "
+            f"extend={bool(extend)} chk눌림={bool(flags.get('pull'))} "
+            f"chkATR={bool(flags.get('atr'))} chk전체={chartSignalAllState(flags)} "
+            f"series_added={int(seriesN)} yrange={yrange or '-'}"
+        )
+        if skip:
+            line += f" skip={skip}"
+        now = time.time()
+        if line == getattr(self, "_atrLogLine", "") and now - float(getattr(self, "_atrLogAt", 0) or 0) < 30:
+            return
+        self._atrLogLine = line
+        self._atrLogAt = now
+        termLog(line)
 
     def _redraw(self):
         allBars = self._bars
         if not allBars:
+            self._logAtr(skip="no bars")
             return
         self.candleView._plotReady = False
         vis = self._visibleBars()
@@ -1850,10 +1901,12 @@ class DeskStkChartPane(QWidget):
             self._timingRows(allBars, allClose, visStart, len(vis)),
             getattr(self, "_sigOn", None),
         )
-        from utils.chartBarPlan import atrStopPlans, filterAtrPlans, pullbackMarks
+        from utils.chartBarPlan import atrStopPlans, filterAtrPlans, pullbackMarks, signalFlags
 
-        rawPlans = atrStopPlans(allBars, pullbackMarks(allBars), self._barTp)
+        marks = pullbackMarks(allBars)
+        rawPlans = atrStopPlans(allBars, marks, self._barTp)
         atrPlans = filterAtrPlans(rawPlans, getattr(self, "_sigOn", None))
+        signalN = sum(1 for mark in marks if mark)
 
         self.candleChart.removeAllSeries()
         for ax in list(self.candleChart.axes()):
@@ -1913,9 +1966,7 @@ class DeskStkChartPane(QWidget):
                 hasPt = True
             if not hasPt:
                 continue
-            self.candleChart.addSeries(line)
-            line.attachAxis(axXma)
-            line.attachAxis(axY)
+            self._attachLineAxes(line, axXma, axY)
 
         hideId = str(self._srHideId or "")
         nVis = max(len(vis) - 1, 1)
@@ -1936,9 +1987,7 @@ class DeskStkChartPane(QWidget):
             hn.setPen(pen)
             hn.append(0.0, px)
             hn.append(float(nVis), px)
-            self.candleChart.addSeries(hn)
-            hn.attachAxis(axXma)
-            hn.attachAxis(axY)
+            self._attachLineAxes(hn, axXma, axY)
             for mk in self.candleChart.legend().markers(hn):
                 mk.setVisible(False)
             if lo is not None and hi is not None:
@@ -1946,9 +1995,39 @@ class DeskStkChartPane(QWidget):
                     axY.setMin(px * 0.995)
                 if px > hi:
                     axY.setMax(px * 1.005)
-        self._addAtrSeries(atrPlans, visStart, len(vis), axXma, axY, lo, hi)
+        seriesN = 0
+        skip = "" if self._barTp == "day" else "not day tab"
+        flags = signalFlags(getattr(self, "_sigOn", None))
+        if self._barTp == "day" and (not flags.get("atr") or not flags.get("pull")):
+            skip = "checkbox off"
+        try:
+            seriesN = int(self._addAtrSeries(atrPlans, visStart, len(vis), axXma, axY, lo, hi) or 0)
+        except Exception:
+            import traceback
+
+            from utils.termLog import termLog
+
+            skip = "exception"
+            termLog(traceback.format_exc())
         self.candleView.setSrHits(hits)
         self.candleView.setXTicks(len(vis), xTicks)
         self.candleView.setTimingMarks(timing)
         self.candleView.setAtrPlans(atrPlans, visStart, len(vis))
+        focus = "none"
+        extend = False
+        if atrPlans:
+            try:
+                focus = str(allBars[int(atrPlans[-1].get("signal"))].get("tradeDt") or "")[:8] or "none"
+            except (TypeError, ValueError, IndexError):
+                focus = "none"
+            extend = bool(atrPlans[-1].get("extend"))
+        yrange = "-"
+        try:
+            yrange = f"{float(axY.min()):.4g}..{float(axY.max()):.4g}"
+        except Exception:
+            yrange = "-"
+        self._logAtr(
+            signals=signalN, plans=len(atrPlans), focus=focus, extend=extend,
+            seriesN=seriesN, yrange=yrange, skip=skip,
+        )
         QTimer.singleShot(0, self._refreshAxisPaint)

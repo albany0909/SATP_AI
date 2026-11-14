@@ -3060,6 +3060,91 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertIn("KOSPI 매수보유", report)
         self.assertIn("잇지 않았습니다", report)
 
+    def test_watch_click_day_bundle_draws_atr(self):
+        try:
+            import os
+
+            os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+            from PySide6.QtGui import QColor
+            from PySide6.QtWidgets import QApplication
+            from ui.deskStkChart import DeskStkChartPane
+        except Exception as err:
+            self.skipTest(f"PySide6 offscreen unavailable: {err}")
+        from utils.chartBarPlan import chartActionForWatchPick, pullbackMarks
+
+        app = QApplication.instance() or QApplication([])
+        from strategies.indicators import calcSmaSeries
+
+        bars = []
+        px = 100.0
+        for i in range(40):
+            opened = px
+            closed = px + 2.0
+            bars.append({
+                "tradeDt": f"20260{1 + i // 28:01d}{(i % 28) + 1:02d}",
+                "open": opened,
+                "high": closed + 0.4,
+                "low": opened - 0.2,
+                "close": closed,
+                "qty": 0,
+            })
+            px = closed
+        last = bars[-1]["close"]
+        for _k in range(3):
+            opened = last
+            closed = last - 1.2
+            bars.append({
+                "tradeDt": "20260220",
+                "open": opened,
+                "high": opened + 0.1,
+                "low": closed,
+                "close": closed,
+                "qty": 0,
+            })
+            last = closed
+        opened = last
+        closed = last + 0.8
+        level = calcSmaSeries([bar["close"] for bar in bars], 10)[-1]
+        bars.append({
+            "tradeDt": "20260221",
+            "open": opened,
+            "high": closed + 0.3,
+            "low": level * 1.002,
+            "close": closed,
+            "qty": 0,
+        })
+        self.assertTrue(any(pullbackMarks(bars)))
+        self.assertEqual(chartActionForWatchPick(True, "005930", chartOpen=False), "open")
+        pane = DeskStkChartPane()
+        pane.resize(980, 720)
+        pane.show()
+        self.assertTrue(pane._sigBoxes["atr"].isChecked())
+        self.assertTrue(pane._sigBoxes["pull"].isChecked())
+        pane.setChartBundle(
+            "005930", "삼성전자",
+            {"day": bars, "week": [], "month": []},
+            liveYmd="20260221",
+        )
+        app.processEvents()
+        dash = [
+            ser for ser in pane.candleChart.series()
+            if ser.pen().color().name().upper() == "#1565C0"
+            and int(ser.pen().style().value) == 2
+        ]
+        self.assertGreaterEqual(len(dash), 1)
+        self.assertIn("ATR 진단", pane._atrLogLine)
+        self.assertIn("cd=005930", pane._atrLogLine)
+        self.assertIn("tab=day", pane._atrLogLine)
+        self.assertIn("widget=DeskStkChartPane", pane._atrLogLine)
+        pane.applyLivePx(bars[-1]["close"] + 1, tickYmd="20260221")
+        app.processEvents()
+        dash2 = [
+            ser for ser in pane.candleChart.series()
+            if ser.pen().color().name().upper() == "#1565C0"
+            and int(ser.pen().style().value) == 2
+        ]
+        self.assertGreaterEqual(len(dash2), 1)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

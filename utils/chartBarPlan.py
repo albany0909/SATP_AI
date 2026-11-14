@@ -284,6 +284,8 @@ def pullbackMarks(bars):
         20: calcSmaSeries(closes, 20),
     }
     vol20 = calcSmaSeries(qtys, 20)
+    # 통합봉에 거래량이 전부 0이면 거래량 조건을 요구하지 않는다. 0<0 은 항상 거짓이라 눌림이 사라진다.
+    hasVol = any(q > 0 for q in qtys)
     lastSwing = None
     look = PULLBACK_LOOKBACK
     rise = PULLBACK_SMA_RISE
@@ -329,13 +331,14 @@ def pullbackMarks(bars):
                 best = period
         if best is None:
             continue
-        dipped = qtys[swingAt + 1:i]
-        climbed = qtys[start:swingAt + 1]
-        dipAvg = (sum(dipped) / len(dipped)) if dipped else qtys[i]
-        climbAvg = (sum(climbed) / len(climbed)) if climbed else 0.0
-        dry = dipAvg < climbAvg or (vol20[i] is not None and qtys[i] < vol20[i])
-        if not dry:
-            continue
+        if hasVol:
+            dipped = qtys[swingAt + 1:i]
+            climbed = qtys[start:swingAt + 1]
+            dipAvg = (sum(dipped) / len(dipped)) if dipped else qtys[i]
+            climbAvg = (sum(climbed) / len(climbed)) if climbed else 0.0
+            dry = dipAvg < climbAvg or (vol20[i] is not None and qtys[i] < vol20[i])
+            if not dry:
+                continue
         body = abs(closes[i] - opens[i])
         wick = min(opens[i], closes[i]) - lows[i]
         if not (closes[i] > opens[i] or wick >= body):

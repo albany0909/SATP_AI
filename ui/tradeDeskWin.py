@@ -2125,6 +2125,12 @@ class TradeDeskWin(QMainWindow):
         from utils.termLog import termLog
 
         termLog(f"[deskChart] {kind} 시간 초과 {code}")
+        termLog(
+            f"[deskChart] ATR 진단 cd={code} tab=- widget=DeskStkChartPane bars=0 "
+            f"visible=-..- signals=0 plans=0 focus=none extend=False "
+            f"chk눌림=- chkATR=- chk전체=- series_added=0 yrange=- "
+            f"skip={kind} 시간 초과로 번들을 그리지 않음"
+        )
         title = f"{name}({code})" if name else str(code)
         self.deskChart.headLbl.setText(f"{title} {kind} 시간 초과")
         btn = getattr(self.deskChart, "btnRefresh", None)
