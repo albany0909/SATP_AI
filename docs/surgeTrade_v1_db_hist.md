@@ -864,7 +864,7 @@ v38 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-14`
 - SRC: `manual`
 - NOTE: `v38 쉬운 설명·운행 상태·ATR 표시 범위. 주문 비활성.`
-- GIT_HASH: `PENDING_V38`
+- GIT_HASH: `10edf8801784`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -872,7 +872,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 38, '2026-11-14',
    'v38 쉬운 설명·운행 상태·ATR 표시 범위. 주문 비활성.',
-   'PENDING_V38', 'manual')
+   '10edf8801784', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
