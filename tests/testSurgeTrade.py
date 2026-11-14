@@ -218,7 +218,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 32)
+        self.assertEqual(int(spec["version"]), 33)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -231,7 +231,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 32)
+        self.assertEqual(payload["algVer"], 33)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -2298,8 +2298,14 @@ class SurgeTradeTest(unittest.TestCase):
         )
 
         flags = chartSignalDefaults()
-        self.assertEqual([key for key, _label in CHART_SIGNAL_GROUPS], ["ma", "brk", "rsi", "macd"])
-        self.assertEqual([label for _key, label in CHART_SIGNAL_GROUPS], ["이평크로스", "돌파", "RSI크로스", "MACD크로스"])
+        self.assertEqual(
+            [key for key, _label in CHART_SIGNAL_GROUPS],
+            ["ma", "brk", "rsi", "macd", "pull"],
+        )
+        self.assertEqual(
+            [label for _key, label in CHART_SIGNAL_GROUPS],
+            ["이평크로스", "돌파", "RSI크로스", "MACD크로스", "눌림"],
+        )
         self.assertTrue(all(flags.values()))
         rows = [
             {"i": 1, "kind": "maGolden", "px": 10},
@@ -2320,6 +2326,127 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(filterCrossMarks(marks, True), marks)
         self.assertEqual(marks, ["golden", None, "dead"])
         self.assertEqual(setChartSignal(flags, "nope", False), flags)
+        hiddenPull = filterPriceSignalMarks(
+            [{"i": 1, "kind": "pullback", "px": 10, "line": 10}],
+            setChartSignal(flags, "pull", False),
+        )
+        self.assertEqual(hiddenPull, [])
+
+    def test_pullback_mark_rule(self):
+        from strategies.indicators import calcSmaSeries
+        from utils.chartBarPlan import pullbackMarks
+
+        def climb(n=40, start=100.0, step=2.0, vol=1000.0):
+            bars = []
+            px = start
+            for _i in range(n):
+                opened = px
+                closed = px + step
+                bars.append({
+                    "open": opened,
+                    "high": closed + 0.4,
+                    "low": opened - 0.2,
+                    "close": closed,
+                    "qty": vol,
+                })
+                px = closed
+            return bars
+
+        bars = climb()
+        last = bars[-1]["close"]
+        for _k in range(3):
+            opened = last
+            closed = last - 1.2
+            bars.append({
+                "open": opened,
+                "high": opened + 0.1,
+                "low": closed,
+                "close": closed,
+                "qty": 200,
+            })
+            last = closed
+        opened = last
+        closed = last + 0.8
+        bars.append({"open": opened, "high": closed + 0.3, "low": closed, "close": closed, "qty": 200})
+        level = calcSmaSeries([bar["close"] for bar in bars], 10)[-1]
+        bars[-1]["low"] = level * 1.002
+        bars[-1]["high"] = max(bars[-1]["high"], bars[-1]["close"], bars[-1]["open"])
+        follow = bars[-1]["close"]
+        bars.append({
+            "open": follow - 0.2,
+            "high": follow + 0.5,
+            "low": follow,
+            "close": follow + 0.3,
+            "qty": 200,
+        })
+        level2 = calcSmaSeries([bar["close"] for bar in bars], 10)[-1]
+        bars[-1]["low"] = level2 * 1.002
+        bars[-1]["high"] = max(bars[-1]["high"], bars[-1]["close"], bars[-1]["open"])
+        got = [mark for mark in pullbackMarks(bars) if mark]
+        self.assertEqual(got, [{"line": 10}])
+
+        loud = climb()
+        last = loud[-1]["close"]
+        for _k in range(3):
+            opened = last
+            closed = last - 1.2
+            loud.append({
+                "open": opened,
+                "high": opened + 0.1,
+                "low": closed,
+                "close": closed,
+                "qty": 8000,
+            })
+            last = closed
+        opened = last
+        closed = last + 0.8
+        loud.append({"open": opened, "high": closed + 0.3, "low": closed, "close": closed, "qty": 8000})
+        level = calcSmaSeries([bar["close"] for bar in loud], 10)[-1]
+        loud[-1]["low"] = level * 1.002
+        loud[-1]["high"] = max(loud[-1]["high"], loud[-1]["close"], loud[-1]["open"])
+        self.assertEqual([mark for mark in pullbackMarks(loud) if mark], [])
+
+        down = []
+        px = 200.0
+        for _i in range(40):
+            opened = px
+            closed = px - 2.0
+            down.append({
+                "open": opened,
+                "high": opened + 0.2,
+                "low": closed - 0.2,
+                "close": closed,
+                "qty": 200,
+            })
+            px = closed
+        self.assertEqual([mark for mark in pullbackMarks(down) if mark], [])
+
+        deep = []
+        px = 100.0
+        for _i in range(36):
+            opened = px
+            closed = px + 0.4
+            deep.append({
+                "open": opened,
+                "high": closed + 0.15,
+                "low": opened - 0.1,
+                "close": closed,
+                "qty": 1000,
+            })
+            px = closed
+        deep.append({"open": px, "high": px + 30.0, "low": px - 0.1, "close": px + 0.3, "qty": 1000})
+        px = deep[-1]["close"]
+        for _k in range(3):
+            opened = px
+            closed = px - 0.8
+            deep.append({"open": opened, "high": opened + 0.05, "low": closed, "close": closed, "qty": 150})
+            px = closed
+        closed = px + 0.6
+        deep.append({"open": px, "high": closed + 0.2, "low": closed, "close": closed, "qty": 150})
+        sma20 = calcSmaSeries([bar["close"] for bar in deep], 20)[-1]
+        deep[-1]["low"] = sma20 * 0.99
+        self.assertGreaterEqual(deep[-1]["close"], sma20)
+        self.assertEqual([mark for mark in pullbackMarks(deep) if mark], [])
 
     def test_chart_signal_checkbox_session(self):
         try:

@@ -158,11 +158,19 @@ CHART_SIGNAL_GROUPS = (
     ("brk", "돌파"),
     ("rsi", "RSI크로스"),
     ("macd", "MACD크로스"),
+    ("pull", "눌림"),
 )
+# 눌림 표시 기준. 매매 조건이 아니다.
+PULLBACK_LOOKBACK = 20
+PULLBACK_LEG_MULT = 1.15
+PULLBACK_SMA_RISE = 5
+PULLBACK_TOUCH_PCT = 0.015
+PULLBACK_MIN_DOWN = 2
+PULLBACK_MAX_RETRACE = 0.618
 
 
 def chartSignalDefaults():
-    """네 표시는 기본으로 켜 둔다."""
+    """시그널 표시는 기본으로 켜 둔다."""
     return {key: True for key, _label in CHART_SIGNAL_GROUPS}
 
 
@@ -185,7 +193,7 @@ def setChartSignal(flags, key, checked):
 
 
 def filterPriceSignalMarks(rows, flags):
-    """이평 삼각과 돌파 꺾쇠만 숨긴다. 입력 목록은 바꾸지 않는다."""
+    """이평 삼각, 돌파 꺾쇠, 눌림만 숨긴다. 입력 목록은 바꾸지 않는다."""
     on = signalFlags(flags)
     kept = []
     for row in rows or []:
@@ -196,9 +204,117 @@ def filterPriceSignalMarks(rows, flags):
         elif kind in ("brkHigh", "brkLow"):
             if on["brk"]:
                 kept.append(row)
+        elif kind == "pullback":
+            if on.get("pull"):
+                kept.append(row)
         elif row:
             kept.append(row)
     return kept
+
+
+def _barNum(bar, key, fallback=0.0):
+    try:
+        return float((bar or {}).get(key) if (bar or {}).get(key) is not None else fallback)
+    except (TypeError, ValueError):
+        return float(fallback)
+
+
+def pullbackMarks(bars):
+    """차트 눌림. 봉마다 None 이거나 {"line": 5|10|20}.
+
+    상승: 종가 > SMA20, SMA20 이 5봉 전보다 높고, 최근 20봉 최고가가
+    그 고점 이전 저가의 1.15배 이상.
+    터치: 저가가 SMA5·10·20 의 ±1.5% 안이고 종가는 그 선 이상. 가장 가까운 선을 적는다.
+    눌림: 최근 스윙 고점 뒤, 표시 봉 전에 종가가 내린 봉이 2개 이상.
+    거래량: 그 하락 봉 평균이 상승 다리 평균보다 작거나, 표시 봉 거래량이 20봉 평균 미만.
+    확인: 양봉(종가>시가) 이거나 아래꼬리 >= 몸통.
+    되돌림이 상승 폭의 61.8% 를 넘으면 제외. 같은 스윙 고점에는 한 번만.
+    """
+    from strategies.indicators import calcSmaSeries
+
+    rows = list(bars or [])
+    n = len(rows)
+    out = [None] * n
+    if n == 0:
+        return out
+    opens, highs, lows, closes, qtys = [], [], [], [], []
+    for bar in rows:
+        close = _barNum(bar, "close", 0.0)
+        openPx = _barNum(bar, "open", close)
+        high = _barNum(bar, "high", max(openPx, close))
+        low = _barNum(bar, "low", min(openPx, close))
+        opens.append(openPx)
+        highs.append(high)
+        lows.append(low)
+        closes.append(close)
+        qtys.append(_barNum(bar, "qty", 0.0))
+    sma = {
+        5: calcSmaSeries(closes, 5),
+        10: calcSmaSeries(closes, 10),
+        20: calcSmaSeries(closes, 20),
+    }
+    vol20 = calcSmaSeries(qtys, 20)
+    lastSwing = None
+    look = PULLBACK_LOOKBACK
+    rise = PULLBACK_SMA_RISE
+    band = PULLBACK_TOUCH_PCT
+    for i in range(n):
+        if sma[20][i] is None or i < rise or sma[20][i - rise] is None:
+            continue
+        if closes[i] <= sma[20][i] or sma[20][i] <= sma[20][i - rise]:
+            continue
+        start = max(0, i - look)
+        if i <= start:
+            continue
+        swingAt = start
+        for j in range(start + 1, i):
+            if highs[j] >= highs[swingAt]:
+                swingAt = j
+        down = 0
+        for j in range(swingAt + 1, i):
+            if closes[j] < closes[j - 1]:
+                down += 1
+        if down < PULLBACK_MIN_DOWN:
+            continue
+        legLow = min(lows[start:swingAt + 1])
+        swing = highs[swingAt]
+        if legLow <= 0 or swing < legLow * PULLBACK_LEG_MULT:
+            continue
+        span = swing - legLow
+        if span <= 0 or (swing - lows[i]) / span > PULLBACK_MAX_RETRACE:
+            continue
+        best = None
+        bestDist = None
+        for period in (5, 10, 20):
+            level = sma[period][i]
+            if level is None or level <= 0:
+                continue
+            if lows[i] > level * (1.0 + band) or lows[i] < level * (1.0 - band):
+                continue
+            if closes[i] < level:
+                continue
+            dist = abs(lows[i] - level) / level
+            if bestDist is None or dist < bestDist:
+                bestDist = dist
+                best = period
+        if best is None:
+            continue
+        dipped = qtys[swingAt + 1:i]
+        climbed = qtys[start:swingAt + 1]
+        dipAvg = (sum(dipped) / len(dipped)) if dipped else qtys[i]
+        climbAvg = (sum(climbed) / len(climbed)) if climbed else 0.0
+        dry = dipAvg < climbAvg or (vol20[i] is not None and qtys[i] < vol20[i])
+        if not dry:
+            continue
+        body = abs(closes[i] - opens[i])
+        wick = min(opens[i], closes[i]) - lows[i]
+        if not (closes[i] > opens[i] or wick >= body):
+            continue
+        if lastSwing is not None and swingAt == lastSwing:
+            continue
+        out[i] = {"line": best}
+        lastSwing = swingAt
+    return out
 
 
 def filterCrossMarks(marks, shown):

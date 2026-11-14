@@ -660,6 +660,11 @@ class CandleChartView(QChartView):
                 self._strokeChevron(painter, x, y - 8, True, "#C62828")
             elif kind == "brkLow":
                 self._strokeChevron(painter, x, y + 8, False, "#1565C0")
+            elif kind == "pullback":
+                self._fillTri(painter, x, y + 16, True, "#00897B")
+                painter.setPen(QColor("#00897B"))
+                painter.setFont(QFont(self.font().family(), 7))
+                painter.drawText(int(x + 6), int(y + 20), f"눌림{row.get('line') or ''}")
 
     def _fillTri(self, painter, x, y, up, color):
         tip = 4.0
@@ -1592,6 +1597,14 @@ class DeskStkChartPane(QWidget):
                 rows.append({"i": j, "kind": "brkHigh", "px": highs[i]})
             if brk in ("low", "both") and i < len(lows):
                 rows.append({"i": j, "kind": "brkLow", "px": lows[i]})
+        from utils.chartBarPlan import pullbackMarks
+
+        for j, mark in enumerate(pullbackMarks(allBars)[start:start + max(0, int(visCount))]):
+            if not mark:
+                continue
+            i = start + j
+            if i < len(lows):
+                rows.append({"i": j, "kind": "pullback", "px": lows[i], "line": mark.get("line")})
         return rows
 
     def _redraw(self):
