@@ -218,7 +218,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 35)
+        self.assertEqual(int(spec["version"]), 36)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -231,7 +231,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 35)
+        self.assertEqual(payload["algVer"], 36)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -2348,6 +2348,96 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(nextAllChartSignals(off), applyAllChartSignals(True))
         self.assertEqual(filterPriceSignalMarks(rows, off), [])
         self.assertEqual(filterAtrPlans([{"entry": 1}], off), [])
+        from utils.chartBarPlan import atrLineSpan, priceSpanForPlans, signalFlags
+
+        self.assertTrue(signalFlags(None)["atr"])
+        self.assertTrue(signalFlags({})["pull"])
+        self.assertTrue(signalFlags({"ma": False})["atr"])
+        self.assertEqual(len(filterAtrPlans([{"entry": 1}], None)), 1)
+        hidden = {"extend": False, "entryBar": 10, "endBar": 20, "signal": 9}
+        self.assertIsNone(atrLineSpan(hidden, 100, 60))
+        shown = {"extend": False, "entryBar": 110, "endBar": 120, "signal": 109}
+        self.assertEqual(atrLineSpan(shown, 100, 60), (10.0, 20.0))
+        extended = {"extend": True, "entryBar": 10, "endBar": 19, "signal": 9, "stop": 40.0, "target": 250.0, "entry": 130.0}
+        self.assertEqual(atrLineSpan(extended, 100, 60)[1], 59.5)
+        low, high = priceSpanForPlans(100.0, 180.0, [extended], 100, 60)
+        self.assertLessEqual(low, 40.0)
+        self.assertGreaterEqual(high, 250.0)
+        self.assertEqual(priceSpanForPlans(100.0, 180.0, [hidden], 100, 60), (100.0, 180.0))
+
+    def test_atr_lines_render_offscreen(self):
+        try:
+            import os
+
+            os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+            from PySide6.QtGui import QColor
+            from PySide6.QtWidgets import QApplication
+            from strategies.indicators import calcSmaSeries
+            from ui.deskStkChart import DeskStkChartPane
+        except Exception as err:
+            self.skipTest(f"PySide6 offscreen unavailable: {err}")
+        app = QApplication.instance() or QApplication([])
+        bars = []
+        px = 100.0
+        for _i in range(40):
+            opened = px
+            closed = px + 2.0
+            bars.append({
+                "tradeDt": "20260101",
+                "open": opened,
+                "high": closed + 0.4,
+                "low": opened - 0.2,
+                "close": closed,
+                "qty": 1000,
+            })
+            px = closed
+        last = bars[-1]["close"]
+        for _k in range(3):
+            opened = last
+            closed = last - 1.2
+            bars.append({
+                "tradeDt": "20260102",
+                "open": opened,
+                "high": opened + 0.1,
+                "low": closed,
+                "close": closed,
+                "qty": 200,
+            })
+            last = closed
+        opened = last
+        closed = last + 0.8
+        bars.append({
+            "tradeDt": "20260103",
+            "open": opened,
+            "high": closed + 0.3,
+            "low": closed,
+            "close": closed,
+            "qty": 200,
+        })
+        level = calcSmaSeries([bar["close"] for bar in bars], 10)[-1]
+        bars[-1]["low"] = level * 1.002
+        bars[-1]["high"] = max(bars[-1]["high"], bars[-1]["close"], bars[-1]["open"])
+        pane = DeskStkChartPane()
+        pane.resize(980, 720)
+        pane.show()
+        pane.setChartBundle("222800", "심텍", {"day": bars}, liveYmd="20261113")
+        app.processEvents()
+        dashBlue = 0
+        for series in pane.candleChart.series():
+            color = series.pen().color().name().upper()
+            if color == "#1565C0" and int(series.pen().style().value) == 2:
+                dashBlue += 1
+        self.assertGreaterEqual(dashBlue, 1)
+        self.assertGreaterEqual(len(pane.candleView._atrPlans), 1)
+        img = pane.grab().toImage()
+        hits = 0
+        for y in range(img.height()):
+            for x in range(0, img.width(), 2):
+                pixel = QColor(img.pixel(x, y))
+                if pixel.blue() > pixel.red() + 25 and pixel.blue() > 90:
+                    hits += 1
+        self.assertGreater(hits, 20)
+        img.save("/tmp/atr-day-lines.png")
 
     def test_atr_stop_plans(self):
         from utils.chartBarPlan import atrStopPlans, atrWilderSeries

@@ -494,11 +494,70 @@ def atrStopPlans(bars, marks, barTp="day"):
 
 
 def filterAtrPlans(plans, flags):
-    """ATR선 또는 눌림이 꺼지면 선을 숨긴다."""
+    """ATR선 또는 눌림이 꺼지면 선을 숨긴다. 키가 없으면 기본은 켜짐."""
     on = signalFlags(flags)
     if not on.get("atr") or not on.get("pull"):
         return []
     return list(plans or [])
+
+
+def atrLineSpan(plan, visStart, visCount):
+    """화면에 걸치는 ATR 선의 x 구간. 화면 밖이고 연장도 아니면 None.
+
+    x 는 보이는 봉의 값축. 왼쪽 끝은 -0.5, 오른쪽 끝은 봉 수 - 0.5.
+    """
+    try:
+        count = int(visCount)
+        origin = int(visStart)
+    except (TypeError, ValueError):
+        return None
+    if count <= 0:
+        return None
+    start = (plan or {}).get("entryBar")
+    if start is None:
+        start = (plan or {}).get("signal")
+    end = (plan or {}).get("endBar")
+    if start is None or end is None:
+        return None
+    try:
+        start = int(start)
+        end = int(end)
+    except (TypeError, ValueError):
+        return None
+    view1 = origin + count - 1
+    right = float(count) - 0.5
+    if (plan or {}).get("extend"):
+        x2 = right
+    else:
+        if end < origin or start > view1:
+            return None
+        x2 = min(right, float(end - origin))
+    x1 = -0.5 if start < origin else float(start - origin)
+    if x2 < x1:
+        return None
+    return x1, x2
+
+
+def priceSpanForPlans(lo, hi, plans, visStart, visCount):
+    """화면에 그리는 ATR 가격만 축에 넣는다. 과거 손절이 차트를 납작하게 만들지 않는다."""
+    try:
+        low = None if lo is None else float(lo)
+        high = None if hi is None else float(hi)
+    except (TypeError, ValueError):
+        low, high = None, None
+    for plan in plans or []:
+        if atrLineSpan(plan, visStart, visCount) is None:
+            continue
+        for key in ("stop", "target", "entry"):
+            try:
+                val = float(plan.get(key))
+            except (TypeError, ValueError):
+                continue
+            if val <= 0:
+                continue
+            low = val if low is None else min(low, val)
+            high = val if high is None else max(high, val)
+    return low, high
 
 
 def filterCrossMarks(marks, shown):

@@ -754,7 +754,15 @@ class CandleChartView(QChartView):
         painter.drawLine(int(min(x1, x2)), int(yInfo[0]), int(max(x1, x2)), int(yInfo[0]))
 
     def _drawAtrPlans(self, painter):
-        """손절은 파란 점선, 익절은 빨간 점선, 진입은 가는 회색 선."""
+        """체결 표시와 오른쪽 글자. 선 자체는 차트 시리즈로 그린다."""
+        try:
+            self._drawAtrMarks(painter)
+        except Exception as err:
+            from utils.termLog import termLog
+
+            termLog(f"[deskChart] ATR 선 그리기 실패: {err}")
+
+    def _drawAtrMarks(self, painter):
         if not self._atrPlans:
             return
         edges = self._plotXs()
@@ -763,19 +771,6 @@ class CandleChartView(QChartView):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setFont(QFont(self.font().family(), 8))
         for plan in self._atrPlans:
-            start = plan.get("entryBar")
-            if start is None:
-                start = plan.get("signal")
-            end = plan.get("endBar")
-            if start is None or end is None:
-                continue
-            x1 = self._xAtAbs(start, edges)
-            x2 = self._xAtAbs(end, edges)
-            if plan.get("extend"):
-                x2 = edges[1]
-            self._strokeHLine(painter, x1, x2, plan.get("stop"), "#1565C0", True)
-            self._strokeHLine(painter, x1, x2, plan.get("target"), "#C62828", True)
-            self._strokeHLine(painter, x1, x2, plan.get("entry"), "#9E9E9E", False)
             if plan.get("outcome") and plan.get("exitBar") is not None:
                 price = plan["stop"] if plan["outcome"] == "stop" else plan["target"]
                 yInfo = self._yAtPrice(price)
@@ -1763,6 +1758,51 @@ class DeskStkChartPane(QWidget):
                 rows.append({"i": j, "kind": "pullback", "px": lows[i], "line": mark.get("line")})
         return rows
 
+    def _addAtrSeries(self, plans, visStart, visCount, axX, axY, lo, hi):
+        """손절·익절·진입을 캔들과 같은 차트 시리즈로 그린다."""
+        from utils.chartBarPlan import atrLineSpan, priceSpanForPlans
+        from utils.termLog import termLog
+
+        try:
+            for plan in plans or []:
+                span = atrLineSpan(plan, visStart, visCount)
+                if span is None:
+                    continue
+                x1, x2 = span
+                specs = (
+                    ("stop", "#1565C0", True, 2),
+                    ("target", "#C62828", True, 2),
+                    ("entry", "#9E9E9E", False, 1),
+                )
+                for key, color, dashed, width in specs:
+                    try:
+                        price = float(plan.get(key))
+                    except (TypeError, ValueError):
+                        continue
+                    if price <= 0:
+                        continue
+                    line = QLineSeries()
+                    line.setName("")
+                    pen = QPen(QColor(color))
+                    pen.setWidth(width)
+                    pen.setCosmetic(True)
+                    if dashed:
+                        pen.setStyle(Qt.PenStyle.DashLine)
+                    line.setPen(pen)
+                    line.append(float(x1), price)
+                    line.append(float(x2), price)
+                    self.candleChart.addSeries(line)
+                    line.attachAxis(axX)
+                    line.attachAxis(axY)
+                    for mk in self.candleChart.legend().markers(line):
+                        mk.setVisible(False)
+            low, high = priceSpanForPlans(lo, hi, plans, visStart, visCount)
+            if low is not None and high is not None and high > low:
+                pad = max((high - low) * 0.06, abs(high) * 0.01)
+                axY.setRange(max(0.0, low - pad), high + pad)
+        except Exception as err:
+            termLog(f"[deskChart] ATR 선 시리즈 실패: {err}")
+
     def _redraw(self):
         allBars = self._bars
         if not allBars:
@@ -1808,16 +1848,6 @@ class DeskStkChartPane(QWidget):
 
         rawPlans = atrStopPlans(allBars, pullbackMarks(allBars), self._barTp)
         atrPlans = filterAtrPlans(rawPlans, getattr(self, "_sigOn", None))
-        for plan in atrPlans:
-            for px in (plan.get("stop"), plan.get("target"), plan.get("entry")):
-                try:
-                    val = float(px)
-                except (TypeError, ValueError):
-                    continue
-                if val <= 0:
-                    continue
-                lo = val if lo is None else min(lo, val)
-                hi = val if hi is None else max(hi, val)
 
         self.candleChart.removeAllSeries()
         for ax in list(self.candleChart.axes()):
@@ -1910,6 +1940,7 @@ class DeskStkChartPane(QWidget):
                     axY.setMin(px * 0.995)
                 if px > hi:
                     axY.setMax(px * 1.005)
+        self._addAtrSeries(atrPlans, visStart, len(vis), axXma, axY, lo, hi)
         self.candleView.setSrHits(hits)
         self.candleView.setXTicks(len(vis), xTicks)
         self.candleView.setTimingMarks(timing)
