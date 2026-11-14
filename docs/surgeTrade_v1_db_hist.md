@@ -887,7 +887,7 @@ v39 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-14`
 - SRC: `manual`
 - NOTE: `v39 마지막 눌림 손절·익절을 오른쪽 끝까지. 주문 비활성.`
-- GIT_HASH: `PENDING_V39`
+- GIT_HASH: `f8053ed34375`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -895,7 +895,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 39, '2026-11-14',
    'v39 마지막 눌림 손절·익절을 오른쪽 끝까지. 주문 비활성.',
-   'PENDING_V39', 'manual')
+   'f8053ed34375', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
