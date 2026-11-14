@@ -910,7 +910,7 @@ v40 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-14`
 - SRC: `manual`
 - NOTE: `v40 모의 전용 정합·백테스트 비용. 주문 비활성.`
-- GIT_HASH: `PENDING_V40`
+- GIT_HASH: `ed1c057f6e5d`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -918,7 +918,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 40, '2026-11-14',
    'v40 모의 전용 정합·백테스트 비용. 주문 비활성.',
-   'PENDING_V40', 'manual')
+   'ed1c057f6e5d', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
