@@ -1522,6 +1522,10 @@ class TradeDeskWin(QMainWindow):
             termLog(f"[desk] MMG01 설정행 실패: {err}")
         settLay.addStretch(1)
         self.sideStack.addWidget(settPane)
+        from ui.algMgrPane import AlgMgrPane
+
+        self.algMgrPane = AlgMgrPane()
+        self.sideStack.addWidget(self.algMgrPane)
         self._loadTradeModeCmb()
         self._loadTradeExchCmb()
 
@@ -1559,6 +1563,7 @@ class TradeDeskWin(QMainWindow):
         self.errTab = self._makeSideTab("오류")
         self.chartTab = self._makeSideTab("차트")
         self.settTab = self._makeSideTab("설정")
+        self.mgrTab = self._makeSideTab("관리")
         self.acctTab.clicked.connect(lambda c: self._onSideTab("acct", c))
         self.stratTab.clicked.connect(lambda c: self._onSideTab("strat", c))
         self.dayTab.clicked.connect(lambda c: self._onSideTab("day", c))
@@ -1566,6 +1571,7 @@ class TradeDeskWin(QMainWindow):
         self.errTab.clicked.connect(lambda c: self._onSideTab("err", c))
         self.chartTab.clicked.connect(lambda c: self._onSideTab("chart", c))
         self.settTab.clicked.connect(lambda c: self._onSideTab("sett", c))
+        self.mgrTab.clicked.connect(lambda c: self._onSideTab("mgr", c))
         railLay.addWidget(self.acctTab)
         railLay.addWidget(self.stratTab)
         railLay.addWidget(self.dayTab)
@@ -1573,6 +1579,7 @@ class TradeDeskWin(QMainWindow):
         railLay.addWidget(self.errTab)
         railLay.addWidget(self.chartTab)
         railLay.addWidget(self.settTab)
+        railLay.addWidget(self.mgrTab)
         railLay.addStretch(1)
         bodyLay.addWidget(rail)
 
@@ -1809,6 +1816,7 @@ class TradeDeskWin(QMainWindow):
             "day": self.dayTab,
             "chart": self.chartTab,
             "sett": self.settTab,
+            "mgr": self.mgrTab,
         }
         if not checked:
             if not any(b.isChecked() for b in tabs.values()):
@@ -1828,6 +1836,7 @@ class TradeDeskWin(QMainWindow):
             "day": "거래",
             "chart": "차트",
             "sett": "설정",
+            "mgr": "알고리즘 관리",
         }
         pages = {
             "acct": 0,
@@ -1837,6 +1846,7 @@ class TradeDeskWin(QMainWindow):
             "err": 4,
             "chart": 5,
             "sett": 6,
+            "mgr": 7,
         }
         self.sideTitle.setText(self._titleText(titles.get(key) or key))
         self.sideStack.setCurrentIndex(pages.get(key, 0))
@@ -1852,6 +1862,8 @@ class TradeDeskWin(QMainWindow):
             self.refreshStratInfo()
         if key == "acct":
             self.refreshAlgPnl()
+        if key == "mgr":
+            self.algMgrPane.reload()
         if key == "sett":
             self._loadTradeModeCmb()
             self._loadTradeExchCmb()

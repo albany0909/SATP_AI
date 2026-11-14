@@ -218,7 +218,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 36)
+        self.assertEqual(int(spec["version"]), 37)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -231,7 +231,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 36)
+        self.assertEqual(payload["algVer"], 37)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -2364,6 +2364,68 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertLessEqual(low, 40.0)
         self.assertGreaterEqual(high, 250.0)
         self.assertEqual(priceSpanForPlans(100.0, 180.0, [hidden], 100, 60), (100.0, 180.0))
+
+    def test_alg_mgr_toggle_and_specs(self):
+        import tempfile
+        from pathlib import Path
+
+        from strategies.specLoader import listStratSpecs, loadStratSpec
+        from trading.deskLiveAlgs import effectiveAlgEnabled
+        from utils.algMgr import appendAlgMgrLog, applyAlgRunToggle
+        from utils.algSpecDoc import specFilePath
+
+        codes = []
+        for row in listStratSpecs():
+            spec = loadStratSpec(row["stratId"])
+            code = spec.get("algCd")
+            codes.append(code)
+            self.assertTrue(specFilePath(code).is_file(), code)
+            text = specFilePath(code).read_text(encoding="utf-8")
+            self.assertIn(code, text)
+            self.assertIn("## 목적", text)
+        self.assertIn("SRG01", codes)
+        self.assertIn("MMG01", codes)
+        self.assertIn("MTS01", codes)
+
+        settings = {
+            "maTouchLive": {"enabled": True, "paperOnly": True},
+            "stratLive": {
+                "MMG01": {"enabled": True, "paperOnly": True},
+                "MTS01": {"enabled": True, "paperOnly": True},
+                "SRG01": {"enabled": False, "paperOnly": True},
+            },
+        }
+        mmg = loadStratSpec("manualMgr_v1")
+        stopped = applyAlgRunToggle(settings, "MMG01", False, reason="중단", now="2026-11-14 10:00:00")
+        self.assertTrue(stopped["ok"])
+        self.assertFalse(stopped["settings"]["stratLive"]["MMG01"]["enabled"])
+        self.assertTrue(stopped["settings"]["stratLive"]["MMG01"]["paperOnly"])
+        self.assertFalse(effectiveAlgEnabled("MMG01", mmg, stopped["settings"]))
+        self.assertTrue(settings["stratLive"]["MMG01"]["enabled"])
+        again = applyAlgRunToggle(stopped["settings"], "MMG01", True, reason="다시 사용")
+        self.assertTrue(effectiveAlgEnabled("MMG01", mmg, again["settings"]))
+        self.assertTrue(again["settings"]["stratLive"]["MMG01"]["paperOnly"])
+
+        mts = loadStratSpec("maTouchScale_v1")
+        mtsOff = applyAlgRunToggle(settings, "MTS01", False)
+        self.assertFalse(mtsOff["settings"]["maTouchLive"]["enabled"])
+        self.assertTrue(mtsOff["settings"]["maTouchLive"]["paperOnly"])
+        self.assertFalse(effectiveAlgEnabled("MTS01", mts, mtsOff["settings"]))
+
+        srg = loadStratSpec("surgeTrade_v1")
+        srgOn = applyAlgRunToggle(settings, "SRG01", True, reason="다시 사용")
+        self.assertTrue(srgOn["settings"]["stratLive"]["SRG01"]["enabled"])
+        self.assertTrue(srgOn["settings"]["stratLive"]["SRG01"]["paperOnly"])
+        self.assertFalse(srg.get("enabled"))
+        self.assertFalse(effectiveAlgEnabled("SRG01", srg, srgOn["settings"]))
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "algMgrLog.json"
+            appendAlgMgrLog(stopped["log"], path)
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved[0]["algCd"], "MMG01")
+            self.assertFalse(saved[0]["new"])
+            self.assertIn("팔지 않는다", saved[0]["positions"])
 
     def test_atr_lines_render_offscreen(self):
         try:
