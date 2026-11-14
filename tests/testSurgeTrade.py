@@ -218,7 +218,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 34)
+        self.assertEqual(int(spec["version"]), 35)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -231,7 +231,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 34)
+        self.assertEqual(payload["algVer"], 35)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -2292,8 +2292,12 @@ class SurgeTradeTest(unittest.TestCase):
         from utils.chartBarPlan import (
             CHART_SIGNAL_GROUPS,
             chartSignalDefaults,
+            applyAllChartSignals,
+            chartSignalAllState,
+            filterAtrPlans,
             filterCrossMarks,
             filterPriceSignalMarks,
+            nextAllChartSignals,
             setChartSignal,
         )
 
@@ -2331,11 +2335,19 @@ class SurgeTradeTest(unittest.TestCase):
             setChartSignal(flags, "pull", False),
         )
         self.assertEqual(hiddenPull, [])
-        from utils.chartBarPlan import filterAtrPlans
-
         self.assertEqual(filterAtrPlans([{"entry": 1}], setChartSignal(flags, "atr", False)), [])
         self.assertEqual(filterAtrPlans([{"entry": 1}], setChartSignal(flags, "pull", False)), [])
         self.assertEqual(len(filterAtrPlans([{"entry": 1}], flags)), 1)
+        self.assertEqual(chartSignalAllState(flags), "checked")
+        mixed = setChartSignal(flags, "atr", False)
+        self.assertEqual(chartSignalAllState(mixed), "partial")
+        self.assertEqual(nextAllChartSignals(mixed), applyAllChartSignals(True))
+        off = applyAllChartSignals(False)
+        self.assertEqual(chartSignalAllState(off), "unchecked")
+        self.assertEqual(nextAllChartSignals(flags), off)
+        self.assertEqual(nextAllChartSignals(off), applyAllChartSignals(True))
+        self.assertEqual(filterPriceSignalMarks(rows, off), [])
+        self.assertEqual(filterAtrPlans([{"entry": 1}], off), [])
 
     def test_atr_stop_plans(self):
         from utils.chartBarPlan import atrStopPlans, atrWilderSeries

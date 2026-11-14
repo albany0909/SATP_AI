@@ -198,6 +198,27 @@ def setChartSignal(flags, key, checked):
     return out
 
 
+def chartSignalAllState(flags):
+    """전체 체크. 여섯이 다 켜지면 checked, 다 꺼지면 unchecked, 섞이면 partial."""
+    on = signalFlags(flags)
+    values = [bool(on[key]) for key, _label in CHART_SIGNAL_GROUPS]
+    if all(values):
+        return "checked"
+    if not any(values):
+        return "unchecked"
+    return "partial"
+
+
+def applyAllChartSignals(turnOn):
+    """여섯 표시를 같이 켜거나 끈다."""
+    return {key: bool(turnOn) for key, _label in CHART_SIGNAL_GROUPS}
+
+
+def nextAllChartSignals(flags):
+    """전체 클릭. 전부 켜져 있으면 끄고, 꺼짐·섞임이면 전부 켠다."""
+    return applyAllChartSignals(chartSignalAllState(flags) != "checked")
+
+
 def filterPriceSignalMarks(rows, flags):
     """이평 삼각, 돌파 꺾쇠, 눌림만 숨긴다. 입력 목록은 바꾸지 않는다."""
     on = signalFlags(flags)

@@ -1219,11 +1219,20 @@ class DeskStkChartPane(QWidget):
         nameRow.setSpacing(6)
         nameRow.addWidget(self.headLbl, 0, Qt.AlignmentFlag.AlignTop)
         self._sigOn = chartSignalDefaults()
+        self._sigBusy = False
         self._sigBoxes = {}
         sigGrid = QGridLayout()
         sigGrid.setContentsMargins(0, 0, 0, 0)
         sigGrid.setHorizontalSpacing(8)
         sigGrid.setVerticalSpacing(0)
+        allBox = QCheckBox("전체")
+        allBox.setTristate(True)
+        allBox.setCheckState(Qt.CheckState.Checked)
+        allBox.setStyleSheet("QCheckBox { font-size: 11px; spacing: 2px; }")
+        allBox.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        allBox.clicked.connect(self._onAllSignalsClicked)
+        self._allSigBox = allBox
+        sigGrid.addWidget(allBox, 0, 0)
         for i, (key, label) in enumerate(CHART_SIGNAL_GROUPS):
             box = QCheckBox(label)
             box.setChecked(True)
@@ -1232,7 +1241,8 @@ class DeskStkChartPane(QWidget):
             box.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
             box.toggled.connect(self._onSignalToggled)
             self._sigBoxes[key] = box
-            sigGrid.addWidget(box, i // 2, i % 2)
+            pos = i + 1
+            sigGrid.addWidget(box, pos // 2, pos % 2)
         nameRow.addLayout(sigGrid, 0)
         nameRow.addStretch(1)
         lay.addLayout(nameRow)
@@ -1304,13 +1314,51 @@ class DeskStkChartPane(QWidget):
     def _barTpNm(self):
         return _BAR_TP_NM.get(self._barTp) or "일봉"
 
+    def _onAllSignalsClicked(self, _checked=False):
+        """전체. 다 켜져 있으면 끄고, 아니면 여섯을 켠 뒤 한 번만 다시 그린다."""
+        if getattr(self, "_sigBusy", False):
+            return
+        from utils.chartBarPlan import nextAllChartSignals
+
+        self._sigOn = nextAllChartSignals(getattr(self, "_sigOn", None))
+        self._sigBusy = True
+        try:
+            for key, box in self._sigBoxes.items():
+                box.blockSignals(True)
+                box.setChecked(bool(self._sigOn.get(key)))
+                box.blockSignals(False)
+            self._paintAllBox()
+        finally:
+            self._sigBusy = False
+        if self._bars:
+            self._redraw()
+
+    def _paintAllBox(self):
+        """자식 상태만 반영한다. 다시 그리지 않는다."""
+        box = getattr(self, "_allSigBox", None)
+        if box is None:
+            return
+        from utils.chartBarPlan import chartSignalAllState
+
+        state = chartSignalAllState(getattr(self, "_sigOn", None))
+        shown = {
+            "checked": Qt.CheckState.Checked,
+            "unchecked": Qt.CheckState.Unchecked,
+        }.get(state, Qt.CheckState.PartiallyChecked)
+        box.blockSignals(True)
+        box.setCheckState(shown)
+        box.blockSignals(False)
+
     def _onSignalToggled(self, checked):
         """표시만 바꾼다. 다시 받지 않고, 창이 열려 있는 동안 유지한다."""
+        if getattr(self, "_sigBusy", False):
+            return
         box = self.sender()
         key = str(box.property("sigKey") or "") if box is not None else ""
         from utils.chartBarPlan import setChartSignal
 
         self._sigOn = setChartSignal(getattr(self, "_sigOn", None), key, checked)
+        self._paintAllBox()
         if self._bars:
             self._redraw()
 

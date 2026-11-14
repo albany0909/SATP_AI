@@ -4,7 +4,7 @@
   "englishName": "Surge Trade",
   "name": "급등주매매",
   "status": "draft",
-  "version": 34,
+  "version": 35,
   "enabled": false,
   "timeframe": "D",
   "docPath": "strategies/docs/surgeTrade_v1.md",
@@ -67,5 +67,5 @@
     "closingAuctionTrdeTp": "0",
     "closingAuctionNote": "kt10000 documents no dedicated closing-auction code. 15:20-15:30 uses ordinary limit 0. Market 3 and after-hours 81 are not used in that window."
   },
-  "notes": "v34. Day charts draw ATR stop and target lines for pullback marks. Week and month charts do not. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
+  "notes": "v35. A 전체 checkbox beside the chart name turns all signal marks on or off. A mix shows a partial check. Entry still requires >= 10. Trading stays disabled. Live DB is not updated by this file."
 }
