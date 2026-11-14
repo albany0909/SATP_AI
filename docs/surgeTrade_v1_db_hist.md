@@ -818,7 +818,7 @@ v36 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-14`
 - SRC: `manual`
 - NOTE: `v36 ATR 손절·익절선을 차트 시리즈로. 주문 비활성.`
-- GIT_HASH: `PENDING_V36`
+- GIT_HASH: `635fed4d8058`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -826,7 +826,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 36, '2026-11-14',
    'v36 ATR 손절·익절선을 차트 시리즈로. 주문 비활성.',
-   'PENDING_V36', 'manual')
+   '635fed4d8058', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
