@@ -159,6 +159,7 @@ CHART_SIGNAL_GROUPS = (
     ("rsi", "RSI크로스"),
     ("macd", "MACD크로스"),
     ("pull", "눌림"),
+    ("atr", "ATR선"),
 )
 # 눌림 표시 기준. 매매 조건이 아니다.
 PULLBACK_LOOKBACK = 20
@@ -167,6 +168,11 @@ PULLBACK_SMA_RISE = 5
 PULLBACK_TOUCH_PCT = 0.015
 PULLBACK_MIN_DOWN = 2
 PULLBACK_MAX_RETRACE = 0.618
+# 눌림 다음 봉 시가 기준 ATR 손절·익절. 차트 표시만. 일봉만.
+ATR_PERIOD = 14
+ATR_HOLD_BARS = 10
+ATR_STOP_MULT = {5: 1.5, 10: 2.0, 20: 2.0}
+ATR_TARGET_MULT = {5: 2.0, 10: 3.0, 20: 2.0}
 
 
 def chartSignalDefaults():
@@ -206,6 +212,9 @@ def filterPriceSignalMarks(rows, flags):
                 kept.append(row)
         elif kind == "pullback":
             if on.get("pull"):
+                kept.append(row)
+        elif kind == "atr":
+            if on.get("atr") and on.get("pull"):
                 kept.append(row)
         elif row:
             kept.append(row)
@@ -315,6 +324,160 @@ def pullbackMarks(bars):
         out[i] = {"line": best}
         lastSwing = swingAt
     return out
+
+
+def atrWilderSeries(bars, period=ATR_PERIOD):
+    """Wilder ATR. 전일 종가가 있는 봉부터 TR. 첫 14개 평균은 인덱스 period, 이후 RMA."""
+    rows = list(bars or [])
+    n = len(rows)
+    out = [None] * n
+    p = int(period or 0)
+    if p < 1 or n <= p:
+        return out
+    trs = [None] * n
+    prevClose = _barNum(rows[0], "close", 0.0)
+    for i in range(1, n):
+        high = _barNum(rows[i], "high", _barNum(rows[i], "close", 0.0))
+        low = _barNum(rows[i], "low", _barNum(rows[i], "close", 0.0))
+        close = _barNum(rows[i], "close", 0.0)
+        trs[i] = max(high - low, abs(high - prevClose), abs(low - prevClose))
+        prevClose = close
+    seedAt = p
+    if seedAt >= n or any(trs[j] is None for j in range(1, seedAt + 1)):
+        return out
+    atr = sum(trs[1:seedAt + 1]) / float(p)
+    out[seedAt] = atr
+    for i in range(seedAt + 1, n):
+        atr = (atr * (p - 1) + trs[i]) / float(p)
+        out[i] = atr
+    return out
+
+
+def _atrBarHit(bar, stop, target):
+    """같은 봉에서 손절과 익절이 같이 닿으면 손절. 시가 갭도 체결로 본다."""
+    close = _barNum(bar, "close", 0.0)
+    opened = _barNum(bar, "open", close)
+    high = _barNum(bar, "high", max(opened, close))
+    low = _barNum(bar, "low", min(opened, close))
+    stopGap = opened <= stop
+    targetGap = opened >= target
+    if stopGap and targetGap:
+        return "stop"
+    if stopGap:
+        return "stop"
+    if targetGap:
+        return "target"
+    stopTouch = low <= stop
+    targetTouch = high >= target
+    if stopTouch and targetTouch:
+        return "stop"
+    if stopTouch:
+        return "stop"
+    if targetTouch:
+        return "target"
+    return None
+
+
+def atrStopPlans(bars, marks, barTp="day"):
+    """눌림 봉의 ATR14 로 손절·익절. 주·월은 빈 목록.
+
+    진입은 다음 봉 시가. 눌림5 는 1.5/2, 눌림10 은 2/3, 눌림20 은 2/2 배.
+    보유는 진입 봉 포함 10봉. 마지막 봉이 신호면 종가를 예상 진입으로 둔다.
+    """
+    if str(barTp or "day") != "day":
+        return []
+    rows = list(bars or [])
+    flags = list(marks or [])
+    n = len(rows)
+    if n == 0:
+        return []
+    atr = atrWilderSeries(rows, ATR_PERIOD)
+    plans = []
+    for i, mark in enumerate(flags):
+        if not mark or i >= n:
+            continue
+        try:
+            line = int(mark.get("line") or 0)
+        except (TypeError, ValueError):
+            continue
+        if line not in ATR_STOP_MULT or atr[i] is None:
+            continue
+        width = float(atr[i])
+        if width <= 0:
+            continue
+        stopMult = ATR_STOP_MULT[line]
+        targetMult = ATR_TARGET_MULT[line]
+        if i == n - 1:
+            entry = _barNum(rows[i], "close", 0.0)
+            if entry <= 0:
+                continue
+            plans.append({
+                "signal": i,
+                "line": line,
+                "atr": width,
+                "entry": entry,
+                "stop": entry - stopMult * width,
+                "target": entry + targetMult * width,
+                "entryBar": None,
+                "endBar": i,
+                "exitBar": None,
+                "outcome": None,
+                "provisional": True,
+                "extend": False,
+                "label": False,
+            })
+            continue
+        entryBar = i + 1
+        entry = _barNum(rows[entryBar], "open", _barNum(rows[entryBar], "close", 0.0))
+        if entry <= 0:
+            continue
+        stop = entry - stopMult * width
+        target = entry + targetMult * width
+        lastHold = min(n - 1, entryBar + ATR_HOLD_BARS - 1)
+        outcome = None
+        exitBar = None
+        for j in range(entryBar, lastHold + 1):
+            hit = _atrBarHit(rows[j], stop, target)
+            if hit:
+                outcome = hit
+                exitBar = j
+                break
+        plans.append({
+            "signal": i,
+            "line": line,
+            "atr": width,
+            "entry": entry,
+            "stop": stop,
+            "target": target,
+            "entryBar": entryBar,
+            "endBar": exitBar if exitBar is not None else lastHold,
+            "exitBar": exitBar,
+            "outcome": outcome,
+            "provisional": False,
+            "extend": False,
+            "label": False,
+        })
+    focus = None
+    for plan in reversed(plans):
+        if plan["provisional"]:
+            focus = plan
+            break
+        if plan["outcome"] is None and plan["entryBar"] is not None:
+            if (n - 1) - int(plan["entryBar"]) < ATR_HOLD_BARS:
+                focus = plan
+                break
+    if focus is not None:
+        focus["extend"] = True
+        focus["label"] = not focus["provisional"]
+    return plans
+
+
+def filterAtrPlans(plans, flags):
+    """ATR선 또는 눌림이 꺼지면 선을 숨긴다."""
+    on = signalFlags(flags)
+    if not on.get("atr") or not on.get("pull"):
+        return []
+    return list(plans or [])
 
 
 def filterCrossMarks(marks, shown):

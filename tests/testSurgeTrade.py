@@ -218,7 +218,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 33)
+        self.assertEqual(int(spec["version"]), 34)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -231,7 +231,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 33)
+        self.assertEqual(payload["algVer"], 34)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -2300,11 +2300,11 @@ class SurgeTradeTest(unittest.TestCase):
         flags = chartSignalDefaults()
         self.assertEqual(
             [key for key, _label in CHART_SIGNAL_GROUPS],
-            ["ma", "brk", "rsi", "macd", "pull"],
+            ["ma", "brk", "rsi", "macd", "pull", "atr"],
         )
         self.assertEqual(
             [label for _key, label in CHART_SIGNAL_GROUPS],
-            ["이평크로스", "돌파", "RSI크로스", "MACD크로스", "눌림"],
+            ["이평크로스", "돌파", "RSI크로스", "MACD크로스", "눌림", "ATR선"],
         )
         self.assertTrue(all(flags.values()))
         rows = [
@@ -2331,6 +2331,91 @@ class SurgeTradeTest(unittest.TestCase):
             setChartSignal(flags, "pull", False),
         )
         self.assertEqual(hiddenPull, [])
+        from utils.chartBarPlan import filterAtrPlans
+
+        self.assertEqual(filterAtrPlans([{"entry": 1}], setChartSignal(flags, "atr", False)), [])
+        self.assertEqual(filterAtrPlans([{"entry": 1}], setChartSignal(flags, "pull", False)), [])
+        self.assertEqual(len(filterAtrPlans([{"entry": 1}], flags)), 1)
+
+    def test_atr_stop_plans(self):
+        from utils.chartBarPlan import atrStopPlans, atrWilderSeries
+
+        def flat(n, **over):
+            bar = {"open": 105.0, "high": 110.0, "low": 100.0, "close": 105.0, "qty": 1}
+            bar.update(over)
+            return [dict(bar) for _i in range(n)]
+
+        bars = flat(40)
+        atr = atrWilderSeries(bars)
+        self.assertIsNone(atr[13])
+        self.assertAlmostEqual(atr[14], 10.0)
+        self.assertAlmostEqual(atr[20], 10.0)
+
+        def one(line, n=40):
+            marks = [None] * n
+            marks[20] = {"line": line}
+            return atrStopPlans(flat(n), marks, "day")
+
+        plan5 = one(5)[0]
+        self.assertEqual(plan5["entryBar"], 21)
+        self.assertAlmostEqual(plan5["entry"], 105.0)
+        self.assertAlmostEqual(plan5["stop"], 105.0 - 15.0)
+        self.assertAlmostEqual(plan5["target"], 105.0 + 20.0)
+        plan10 = one(10)[0]
+        self.assertAlmostEqual(plan10["stop"], 105.0 - 20.0)
+        self.assertAlmostEqual(plan10["target"], 105.0 + 30.0)
+        plan20 = one(20)[0]
+        self.assertAlmostEqual(plan20["stop"], 105.0 - 20.0)
+        self.assertAlmostEqual(plan20["target"], 105.0 + 20.0)
+
+        both = flat(40)
+        both[22] = {"open": 105.0, "high": 140.0, "low": 80.0, "close": 105.0, "qty": 1}
+        marks = [None] * 40
+        marks[20] = {"line": 5}
+        hit = atrStopPlans(both, marks, "day")[0]
+        self.assertEqual(hit["outcome"], "stop")
+        self.assertEqual(hit["exitBar"], 22)
+        self.assertEqual(hit["endBar"], 22)
+
+        gapStop = flat(40)
+        gapStop[22] = {"open": 80.0, "high": 140.0, "low": 80.0, "close": 100.0, "qty": 1}
+        self.assertEqual(atrStopPlans(gapStop, marks, "day")[0]["outcome"], "stop")
+        gapTarget = flat(40)
+        gapTarget[22] = {"open": 130.0, "high": 140.0, "low": 100.0, "close": 130.0, "qty": 1}
+        self.assertEqual(atrStopPlans(gapTarget, marks, "day")[0]["outcome"], "target")
+
+        late = flat(45)
+        late[31] = {"open": 105.0, "high": 110.0, "low": 80.0, "close": 100.0, "qty": 1}
+        marks45 = [None] * 45
+        marks45[20] = {"line": 5}
+        capped = atrStopPlans(late, marks45, "day")[0]
+        self.assertIsNone(capped["outcome"])
+        self.assertEqual(capped["endBar"], 30)
+        self.assertFalse(capped["extend"])
+
+        last = flat(30)
+        lastMarks = [None] * 30
+        lastMarks[-1] = {"line": 10}
+        prov = atrStopPlans(last, lastMarks, "day")[0]
+        self.assertTrue(prov["provisional"])
+        self.assertIsNone(prov["entryBar"])
+        self.assertAlmostEqual(prov["entry"], 105.0)
+        self.assertTrue(prov["extend"])
+        self.assertFalse(prov["label"])
+
+        live = flat(25)
+        liveMarks = [None] * 25
+        liveMarks[20] = {"line": 5}
+        active = atrStopPlans(live, liveMarks, "day")[0]
+        self.assertIsNone(active["outcome"])
+        self.assertTrue(active["extend"])
+        self.assertTrue(active["label"])
+
+        self.assertEqual(atrStopPlans(bars, marks, "week"), [])
+        self.assertEqual(atrStopPlans(bars, marks, "month"), [])
+        early = [None] * 40
+        early[5] = {"line": 5}
+        self.assertEqual(atrStopPlans(bars, early, "day"), [])
 
     def test_pullback_mark_rule(self):
         from strategies.indicators import calcSmaSeries
