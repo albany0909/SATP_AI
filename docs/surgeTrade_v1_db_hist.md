@@ -841,7 +841,7 @@ v37 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-14`
 - SRC: `manual`
 - NOTE: `v37 알고리즘 관리 조회·중지·명세. 주문 비활성.`
-- GIT_HASH: `PENDING_V37`
+- GIT_HASH: `ecba45192168`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -849,7 +849,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 37, '2026-11-14',
    'v37 알고리즘 관리 조회·중지·명세. 주문 비활성.',
-   'PENDING_V37', 'manual')
+   'ecba45192168', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
