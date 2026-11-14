@@ -676,6 +676,32 @@ class CandleChartView(QChartView):
                 painter.setPen(QColor("#00897B"))
                 painter.setFont(QFont(self.font().family(), 7))
                 painter.drawText(int(x + 6), int(y + 20), f"눌림{row.get('line') or ''}")
+            elif kind == "n52":
+                self._drawStar(painter, x, y - 14, "#F9A825")
+                painter.setPen(QColor("#F9A825"))
+                painter.setFont(QFont(self.font().family(), 8, QFont.Weight.Bold))
+                painter.drawText(int(x + 7), int(y - 10), "N52")
+
+    def _drawStar(self, painter, x, y, color):
+        """봉 위 금색 별. 차트 표시만."""
+        import math
+
+        path = QPainterPath()
+        outer = 7.0
+        inner = 3.0
+        for k in range(10):
+            radius = outer if k % 2 == 0 else inner
+            ang = math.radians(-90 + k * 36)
+            px = x + radius * math.cos(ang)
+            py = y + radius * math.sin(ang)
+            if k == 0:
+                path.moveTo(px, py)
+            else:
+                path.lineTo(px, py)
+        path.closeSubpath()
+        painter.setPen(QPen(QColor("#F57F17")))
+        painter.setBrush(QColor(color))
+        painter.drawPath(path)
 
     def _fillTri(self, painter, x, y, up, color):
         tip = 4.0
@@ -1241,6 +1267,8 @@ class DeskStkChartPane(QWidget):
             box.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
             if key == "atr":
                 box.setToolTip("ATR01. 눌림 진입, 손절 진입-2×ATR14, 익절 진입+2×ATR14, 보유 10거래일")
+            if key == "n52":
+                box.setToolTip("52주 신고가 최초봉. 일봉은 직전 250종가, 주봉은 52봉. 월봉은 표시하지 않는다. 매매와 무관.")
             box.toggled.connect(self._onSignalToggled)
             self._sigBoxes[key] = box
             pos = i + 1
@@ -1763,6 +1791,33 @@ class DeskStkChartPane(QWidget):
             i = start + j
             if i < len(lows):
                 rows.append({"i": j, "kind": "pullback", "px": lows[i], "line": mark.get("line")})
+        from utils.newHigh52 import firstNewHighIndices, loadNewHigh52Options, newHighLookback
+
+        lookback = newHighLookback(self._barTp)
+        opts = getattr(self, "_n52Opt", None) or loadNewHigh52Options()
+        self._n52Count = 0
+        self._n52Basis = str((opts or {}).get("basis") or "close")
+        if lookback is not None:
+            found = firstNewHighIndices(
+                allBars,
+                lookback=lookback,
+                gapBars=(opts or {}).get("gapBars", 20),
+                basis=self._n52Basis,
+            )
+            self._n52Count = len(found)
+            for idx in found:
+                if idx < start or idx >= start + max(0, int(visCount)):
+                    continue
+                bar = allBars[idx] if idx < len(allBars) else {}
+                try:
+                    top = float(bar.get("high") or 0)
+                except (TypeError, ValueError):
+                    top = 0.0
+                if top <= 0:
+                    top = float(bar.get("close") or 0)
+                if top <= 0:
+                    continue
+                rows.append({"i": idx - start, "kind": "n52", "px": top})
         return rows
 
     def _addAtrSeries(self, plans, visStart, visCount, axX, axY, lo, hi):
@@ -1861,10 +1916,46 @@ class DeskStkChartPane(QWidget):
         self._atrLogAt = now
         termLog(line)
 
+    def _logNewHigh52(self):
+        """일·주봉을 그릴 때마다 한 줄. 같은 문장은 30초에 한 번만."""
+        import time
+
+        from utils.termLog import termLog
+
+        code = self._stkCd or "-"
+        kind = self._barTp or "-"
+        basis = getattr(self, "_n52Basis", "close")
+        basisNm = "고가" if basis == "high" else "종가"
+        count = int(getattr(self, "_n52Count", 0) or 0)
+        if kind == "month":
+            line = f"[deskChart] 52주신고 {code} month 표시안함 마커0개"
+        elif not getattr(self, "_bars", None):
+            line = f"[deskChart] 52주신고 {code} {kind} {basisNm} 마커0개"
+        else:
+            flags = {}
+            try:
+                from utils.chartBarPlan import signalFlags
+
+                flags = signalFlags(getattr(self, "_sigOn", None))
+            except Exception:
+                flags = {}
+            if not flags.get("n52", True):
+                line = f"[deskChart] 52주신고 {code} {kind} {basisNm} 마커0개"
+            else:
+                line = f"[deskChart] 52주신고 {code} {kind} {basisNm} 마커{count}개"
+        now = time.time()
+        if line == getattr(self, "_n52LogLine", "") and now - float(getattr(self, "_n52LogAt", 0) or 0) < 30:
+            return
+        self._n52LogLine = line
+        self._n52LogAt = now
+        termLog(line)
+
     def _redraw(self):
         allBars = self._bars
         if not allBars:
+            self._n52Count = 0
             self._logAtr(skip="no bars")
+            self._logNewHigh52()
             return
         self.candleView._plotReady = False
         vis = self._visibleBars()
@@ -2032,4 +2123,5 @@ class DeskStkChartPane(QWidget):
             signals=signalN, plans=len(atrPlans), focus=focus, extend=extend,
             seriesN=seriesN, yrange=yrange, skip=skip,
         )
+        self._logNewHigh52()
         QTimer.singleShot(0, self._refreshAxisPaint)

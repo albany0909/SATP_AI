@@ -218,7 +218,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(spec["algCd"], "SRG01")
         self.assertEqual(spec["englishName"], "Surge Trade")
         self.assertEqual(spec["name"], "급등주매매")
-        self.assertEqual(int(spec["version"]), 40)
+        self.assertEqual(int(spec["version"]), 41)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         self.assertFalse(isSurgeEnabled())
@@ -231,7 +231,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertTrue(lossSellRequiresTelegramApproval("TPX01"))
         self.assertIsNone(lossSellRequiresTelegramApproval("MTS01"))
         payload = algVerHistPayload("abc1234")
-        self.assertEqual(payload["algVer"], 40)
+        self.assertEqual(payload["algVer"], 41)
         evt = buildAlgVerEvent("BUY", "005930", "INITIAL", "20261106", "151810")
         self.assertEqual(evt["algVer"], ALG_VER)
         self.assertEqual(evt["algCd"], ALG_CD)
@@ -2304,11 +2304,11 @@ class SurgeTradeTest(unittest.TestCase):
         flags = chartSignalDefaults()
         self.assertEqual(
             [key for key, _label in CHART_SIGNAL_GROUPS],
-            ["ma", "brk", "rsi", "macd", "pull", "atr"],
+            ["ma", "brk", "rsi", "macd", "pull", "atr", "n52"],
         )
         self.assertEqual(
             [label for _key, label in CHART_SIGNAL_GROUPS],
-            ["이평크로스", "돌파", "RSI크로스", "MACD크로스", "눌림", "ATR선"],
+            ["이평크로스", "돌파", "RSI크로스", "MACD크로스", "눌림", "ATR선", "52주신고"],
         )
         self.assertTrue(all(flags.values()))
         rows = [
@@ -3182,6 +3182,78 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertNotEqual(rows[0]["runState"], "운행중")
         self.assertFalse(rows[0]["enabled"])
         self.assertFalse(Path("trading/atrPullbackLive.py").exists())
+
+    def test_new_high_52_rules(self):
+        from utils.newHigh52 import firstNewHighIndices, loadNewHigh52Options, newHighLookback
+
+        base = [10.0] * 250
+        streak = base + [11.0, 12.0, 13.0]
+        self.assertEqual(firstNewHighIndices(streak), [250])
+        quiet = [9.0] * 20
+        again = streak + quiet + [14.0]
+        self.assertEqual(firstNewHighIndices(again, gapBars=20), [250, 273])
+        self.assertEqual(firstNewHighIndices(again, gapBars=21), [250])
+        shortGap = base + [11.0] + [9.0] * 19 + [14.0]
+        self.assertEqual(firstNewHighIndices(shortGap, gapBars=20), [250])
+        highs = [{"close": 10.0, "high": 10.0}] * 250 + [{"close": 10.0, "high": 30.0}]
+        self.assertEqual(firstNewHighIndices(highs, basis="high"), [250])
+        self.assertEqual(firstNewHighIndices(highs, basis="close"), [])
+        noHigh = [{"close": 10.0}] * 250 + [{"close": 11.0}]
+        self.assertEqual(firstNewHighIndices(noHigh, basis="high"), [250])
+        self.assertEqual(firstNewHighIndices(base + [11.0])[:1], [250])
+        future = base + [11.0, 9.0]
+        later = future + [50.0]
+        self.assertEqual(
+            [i for i in firstNewHighIndices(later) if i < len(future)],
+            firstNewHighIndices(future),
+        )
+        self.assertEqual(firstNewHighIndices([1, 2, 3], lookback=250), [])
+        self.assertEqual(newHighLookback("day"), 250)
+        self.assertEqual(newHighLookback("week"), 52)
+        self.assertIsNone(newHighLookback("month"))
+        self.assertEqual(loadNewHigh52Options({})["gapBars"], 20)
+        self.assertEqual(loadNewHigh52Options({})["basis"], "close")
+        self.assertEqual(loadNewHigh52Options({"chartNewHigh52": {"gapBars": 5, "basis": "high"}}), {"gapBars": 5, "basis": "high"})
+
+    def test_new_high_52_offscreen(self):
+        try:
+            import os
+
+            os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+            from PySide6.QtGui import QColor
+            from PySide6.QtWidgets import QApplication
+            from ui.deskStkChart import DeskStkChartPane
+        except Exception as err:
+            self.skipTest(f"PySide6 offscreen unavailable: {err}")
+        from utils.chartBarPlan import chartActionForWatchPick
+
+        app = QApplication.instance() or QApplication([])
+        bars = [{"tradeDt": f"202001{i:02d}" if i < 28 else f"202002{(i % 28) + 1:02d}", "open": 10, "high": 10, "low": 9, "close": 10, "qty": 0} for i in range(1, 251)]
+        bars.append({"tradeDt": "20201201", "open": 10, "high": 12, "low": 10, "close": 12, "qty": 0})
+        bars.append({"tradeDt": "20201202", "open": 12, "high": 13, "low": 11, "close": 13, "qty": 0})
+        self.assertEqual(chartActionForWatchPick(True, "005930", chartOpen=False), "open")
+        pane = DeskStkChartPane()
+        pane.resize(980, 720)
+        pane.show()
+        self.assertTrue(pane._sigBoxes["n52"].isChecked())
+        pane._showN = len(bars)
+        pane.setChartBundle("005930", "삼성전자", {"day": bars, "week": list(bars), "month": list(bars)}, liveYmd="20201202")
+        app.processEvents()
+        kinds = [row.get("kind") for row in pane.candleView._timingMarks]
+        self.assertEqual(kinds.count("n52"), 1)
+        self.assertIn("[deskChart] 52주신고 005930 day 종가 마커1개", pane._n52LogLine)
+        img = pane.grab().toImage()
+        gold = 0
+        for y in range(img.height()):
+            for x in range(0, img.width(), 2):
+                pixel = QColor(img.pixel(x, y))
+                if pixel.red() > 180 and pixel.green() > 120 and pixel.blue() < 80:
+                    gold += 1
+        self.assertGreater(gold, 5)
+        pane._onBarTpClicked(pane.barTpBtns["month"])
+        app.processEvents()
+        self.assertNotIn("n52", [row.get("kind") for row in pane.candleView._timingMarks])
+        self.assertIn("표시안함", pane._n52LogLine)
 
 
 if __name__ == "__main__":

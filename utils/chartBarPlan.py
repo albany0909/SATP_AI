@@ -160,6 +160,7 @@ CHART_SIGNAL_GROUPS = (
     ("macd", "MACD크로스"),
     ("pull", "눌림"),
     ("atr", "ATR선"),
+    ("n52", "52주신고"),
 )
 # 눌림 표시 기준. 매매 조건이 아니다.
 PULLBACK_LOOKBACK = 20
@@ -233,6 +234,9 @@ def filterPriceSignalMarks(rows, flags):
                 kept.append(row)
         elif kind == "pullback":
             if on.get("pull"):
+                kept.append(row)
+        elif kind == "n52":
+            if on.get("n52"):
                 kept.append(row)
         elif kind == "atr":
             if on.get("atr") and on.get("pull"):

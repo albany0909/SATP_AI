@@ -7,14 +7,14 @@
 중지해도 이미 가진 종목의 손절·익절은 계속 보고, 새 매수는 하지 않습니다.
 
 - 전략ID: `surgeTrade_v1`
-- 버전: 40
+- 버전: 41
 - 상태: draft
 - 명세 enabled: False
 - 주기: D
 
 ## 목적
 
-v40. Paper-only flags are aligned to the safe side. Backtests charge fee, sell tax, and slippage, and do not count a flat return as a win. SRG01 stays disabled. Trading rules are unchanged.
+v41. The chart marks the first 52-week high bar. It is display only and is not wired to orders. SRG01 stays disabled. Trading rules are unchanged.
 
 ## 대상 종목
 
@@ -146,5 +146,6 @@ v40. Paper-only flags are aligned to the safe side. Backtests charge fee, sell t
 - 2026-11-14 v38 v38 명세에 쉬운 설명을 넣고 운행 상태를 보여 준다. ATR 체결 표시는 보이는 봉만. 주문은 계속 비활성.
 - 2026-11-14 v39 v39 마지막 눌림의 손절·익절·매수를 오른쪽 끝까지 가격과 함께 보여 준다. 주문은 계속 비활성.
 - 2026-11-14 v40 v40 모의 전용을 안전한 쪽으로 맞추고, 백테스트에 수수료·세금·슬리피지와 체결가정을 넣는다. 중지해도 보유 종목의 손절·익절은 계속 보고 새 매수는 하지 않는다. 주문은 계속 비활성.
+- 2026-11-14 v41 v41 차트에 52주 신고가 최초봉을 표시한다. 매매에는 연결하지 않는다. 주문은 계속 비활성.
 
 보유를 중단 버튼으로 자동 매도하지 않는다.
