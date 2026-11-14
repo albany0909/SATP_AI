@@ -89,6 +89,7 @@
     "takeProfit": "intraday: 1st +1.4% sell 50%; 2nd +4% sell 50% of remaining; no 3rd/4th; residual trail 4/-3; 15:15 flat 0~4%; qty=1 flattens at TP1/TP2"
   },
   "fill": {
+    "signalTiming": "intraday",
     "entryPrice": "sma20NearTickLimit",
     "exitPrice": "closeOrTick",
     "feeRate": 0.0015,

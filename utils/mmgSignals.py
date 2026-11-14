@@ -133,6 +133,22 @@ def updateStops(pos, ind, p=None):
     return pos
 
 
+def bt4SameCloseFill(signalTiming="afterClose", fillMode="close"):
+    """bt4/bt5 문서의 결정일 종가 체결.
+
+    신호가 그날 종가를 본 뒤에만 성립하면 같은 종가 체결은 거부한다.
+    15:15 장중 판단이면 signalTiming='intraday' 로 15:18 분봉을 고를 수 있다.
+    기본 체결은 다음 거래일 시가다. 외부 mmgbt 스크립트는 이 저장소에 없다.
+    """
+    if str(fillMode or "") == "close" and str(signalTiming or "") != "intraday":
+        return {
+            "ok": False,
+            "flag": "LOOKAHEAD",
+            "reason": "결정일 종가 체결은 장마감 뒤에야 아는 신호에 쓸 수 없다",
+        }
+    return {"ok": True, "flag": "", "reason": ""}
+
+
 def eodExitReason(pos, ind, p=None):
     """EOD 전량청산 사유 또는 None. (runA: 종가<SMA50 또는 SMA150, 고점−3ATR)"""
     p = p or DEFAULTS

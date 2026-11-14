@@ -2822,10 +2822,13 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(defaultFillMode(day + nxt), "nextOpen")
         trade = {"type": "BUY", "price": 110, "tradeDt": "20261113", "barIdx": 0}
         self.assertEqual(resolveFillPrice(trade, day + nxt, "nextOpen"), 111)
-        self.assertEqual(resolveFillPrice(trade, day + nxt, "close"), 110)
+        from backtest.engine import FillRefused
+
+        with self.assertRaises(FillRefused):
+            resolveFillPrice(trade, day + nxt, "close")
         intra = day + [{"tradeDt": "20261113", "barTm": "151900", "open": 109, "close": 108}]
-        self.assertEqual(defaultFillMode(intra), "auction")
-        self.assertEqual(resolveFillPrice(trade, intra, "auction"), 110)
+        self.assertEqual(defaultFillMode(intra), "nextOpen")
+        self.assertEqual(resolveFillPrice(trade, intra, "auction", "intraday"), 110)
 
         root = Path("config/data")
         settings = json.loads((root / "settings.json").read_text(encoding="utf-8"))
@@ -2984,6 +2987,78 @@ class SurgeTradeTest(unittest.TestCase):
             text = Path(written["md"]).read_text(encoding="utf-8")
             self.assertIn("EVT_ID", text)
             self.assertTrue(Path(written["csv"]).is_file())
+
+    def test_fill_tax_and_kospi_baseline(self):
+        from backtest.engine import (
+            FillRefused,
+            formatBtResult,
+            kospiBuyHold,
+            netExecutionPrice,
+            resolveFillPrice,
+        )
+        from config.sellTax import sellTaxFor
+        from utils.mmgSignals import bt4SameCloseFill
+
+        bars = [
+            {"tradeDt": "20261113", "barTm": "151800", "open": 100, "close": 110, "qty": 1},
+            {"tradeDt": "20261114", "barTm": "090000", "open": 111, "close": 112, "qty": 10},
+            {"tradeDt": "20261114", "barTm": "090100", "open": 112, "close": 114, "qty": 30},
+            {"tradeDt": "20261114", "barTm": "090500", "open": 115, "close": 116, "qty": 10},
+        ]
+        trade = {"type": "BUY", "price": 110, "tradeDt": "20261113", "barIdx": 0}
+        self.assertEqual(resolveFillPrice(trade, bars, "nextOpen"), 111)
+        self.assertAlmostEqual(resolveFillPrice(trade, bars, "vwap:2"), (112 * 10 + 114 * 30) / 40)
+        self.assertEqual(resolveFillPrice(trade, bars, "time:090500"), 116)
+        self.assertEqual(resolveFillPrice(trade, bars, "time:151800", "intraday"), 110)
+        with self.assertRaises(FillRefused):
+            resolveFillPrice(trade, bars[:1], "vwap:5")
+        with self.assertRaises(FillRefused):
+            resolveFillPrice(trade, bars, "close", "afterClose")
+        self.assertFalse(bt4SameCloseFill()["ok"])
+        self.assertEqual(bt4SameCloseFill()["flag"], "LOOKAHEAD")
+        self.assertTrue(bt4SameCloseFill("intraday", "time:151800")["ok"])
+
+        self.assertEqual(sellTaxFor("20240101"), 0.0020)
+        self.assertEqual(sellTaxFor("20250601"), 0.0015)
+        self.assertEqual(sellTaxFor("20251228"), 0.0015)
+        self.assertEqual(sellTaxFor("20251229"), 0.0020)
+        self.assertAlmostEqual(
+            netExecutionPrice(10000, "sell", 0, 0, None, 0, "20250601"),
+            10000 * (1 - 0.0015),
+        )
+        self.assertAlmostEqual(
+            netExecutionPrice(10000, "sell", 0, 0, None, 0, "20251229"),
+            10000 * (1 - 0.0020),
+        )
+        held = kospiBuyHold(
+            "20261113",
+            "20261120",
+            [
+                {"tradeDt": "20261113", "close": 2500},
+                {"tradeDt": "20261114", "close": 2550},
+            ],
+            "20261114",
+        )
+        self.assertTrue(held["pastEnd"])
+        self.assertAlmostEqual(held["retPct"], 2.0)
+        self.assertIn("잇지 않았습니다", held["note"])
+        self.assertNotIn("20261120", held["to"] if False else held["note"].split("요청")[0])
+        report = formatBtResult({
+            "ok": True,
+            "name": "점검",
+            "stkCd": "005930",
+            "startDt": "20261113",
+            "endDt": "20261120",
+            "barCnt": 2,
+            "fillMode": "nextOpen",
+            "stats": {
+                "tradeCnt": 0, "winCnt": 0, "lossCnt": 0, "flatCnt": 0,
+                "winRate": 0, "avgRetPct": 0, "finalRetPct": 0, "maxDdPct": 0,
+            },
+            "kospi": held,
+        })
+        self.assertIn("KOSPI 매수보유", report)
+        self.assertIn("잇지 않았습니다", report)
 
 
 if __name__ == "__main__":

@@ -45,6 +45,7 @@
     "reset": "if flat and close < SMA5 → clear breakout flag"
   },
   "fill": {
+    "signalTiming": "afterClose",
     "entryPrice": "dayClose",
     "exitPrice": "dayClose",
     "feeRate": 0.0015,
