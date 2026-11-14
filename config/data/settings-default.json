@@ -37,6 +37,10 @@
     },
     "MMG01": {
       "paperOnly": true
+    },
+    "ATR01": {
+      "enabled": false,
+      "paperOnly": true
     }
   },
   "batchSched": {

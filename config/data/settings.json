@@ -51,6 +51,10 @@
     "RAM01": {
       "enabled": false,
       "paperOnly": false
+    },
+    "ATR01": {
+      "enabled": false,
+      "paperOnly": true
     }
   },
   "batchSched": {

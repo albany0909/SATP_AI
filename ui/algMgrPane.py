@@ -168,7 +168,7 @@ class AlgMgrPane(QWidget):
         rows = self._rows
         if self.onlyRun.isChecked():
             rows = [row for row in rows if row.get("runState") == "운행중"]
-        counts = {"운행중": 0, "대기": 0, "중지": 0, "중지(청산만)": 0, "미기동": 0}
+        counts = {"운행중": 0, "대기": 0, "중지": 0, "중지(청산만)": 0, "미기동": 0, "미구현": 0}
         modes = {"모의": 0, "실전": 0}
         for row in self._rows:
             counts[row.get("runState")] = counts.get(row.get("runState"), 0) + 1
@@ -179,7 +179,7 @@ class AlgMgrPane(QWidget):
             buy += int(item.get("BUY") or 0)
             sell += int(item.get("SELL") or 0)
         self.summary.setText(
-            f"운행중 {counts['운행중']} · 대기 {counts['대기']} · 중지 {counts['중지']} · 청산만 {counts['중지(청산만)']} · 미기동 {counts['미기동']}"
+            f"운행중 {counts['운행중']} · 대기 {counts['대기']} · 중지 {counts['중지']} · 청산만 {counts['중지(청산만)']} · 미구현 {counts['미구현']} · 미기동 {counts['미기동']}"
             f"  (운행 모의 {modes.get('모의', 0)} · 실전 {modes.get('실전', 0)}"
             f" · 오늘 진입 {buy} · 청산 {sell})"
         )

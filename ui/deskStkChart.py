@@ -790,13 +790,13 @@ class CandleChartView(QChartView):
                 if yTgt is not None:
                     painter.setPen(QColor("#C62828"))
                     extra = f"  {status}" if status else ""
-                    painter.drawText(int(yTgt[1] + 6), int(yTgt[0] + 4), f"익절 {_fmtWon(plan.get('target'))}{extra}")
+                    painter.drawText(int(yTgt[1] + 6), int(yTgt[0] + 4), f"ATR01 익절 {_fmtWon(plan.get('target'))}{extra}")
                 if yStop is not None:
                     painter.setPen(QColor("#1565C0"))
-                    painter.drawText(int(yStop[1] + 6), int(yStop[0] + 4), f"손절 {_fmtWon(plan.get('stop'))}")
+                    painter.drawText(int(yStop[1] + 6), int(yStop[0] + 4), f"ATR01 손절 {_fmtWon(plan.get('stop'))}")
                 if yEnt is not None:
                     painter.setPen(QColor("#616161"))
-                    painter.drawText(int(yEnt[1] + 6), int(yEnt[0] + 4), f"매수 {_fmtWon(plan.get('entry'))}")
+                    painter.drawText(int(yEnt[1] + 6), int(yEnt[0] + 4), f"ATR01 매수 {_fmtWon(plan.get('entry'))}")
 
 
 class RsiPane(QWidget):
@@ -1239,6 +1239,8 @@ class DeskStkChartPane(QWidget):
             box.setProperty("sigKey", key)
             box.setStyleSheet("QCheckBox { font-size: 11px; spacing: 2px; }")
             box.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+            if key == "atr":
+                box.setToolTip("ATR01. 눌림 진입, 손절 진입-2×ATR14, 익절 진입+2×ATR14, 보유 10거래일")
             box.toggled.connect(self._onSignalToggled)
             self._sigBoxes[key] = box
             pos = i + 1

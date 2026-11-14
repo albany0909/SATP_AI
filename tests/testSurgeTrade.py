@@ -3144,6 +3144,44 @@ class SurgeTradeTest(unittest.TestCase):
             and int(ser.pen().style().value) == 2
         ]
         self.assertGreaterEqual(len(dash2), 1)
+        self.assertIn("ATR01", pane._sigBoxes["atr"].toolTip())
+
+    def test_atr01_registered_not_runnable(self):
+        import json
+        from pathlib import Path
+
+        from strategies.specLoader import loadStratSpec
+        from trading.deskLiveAlgs import effectiveAlgEnabled
+        from utils.algMgr import algMgrRows
+        from utils.algSpecDoc import specFilePath
+
+        spec = loadStratSpec("atrPullback_v1")
+        self.assertEqual(spec["algCd"], "ATR01")
+        self.assertFalse(spec["enabled"])
+        self.assertTrue(spec["params"]["paperOnly"])
+        self.assertEqual(spec["status"], "unimplemented")
+        self.assertEqual(spec["params"]["stopAtr"], 2)
+        self.assertEqual(spec["params"]["targetAtr"], 2)
+        self.assertEqual(spec["params"]["holdBars"], 10)
+        self.assertIn("2.79", spec["notes"])
+        self.assertIn("비용", spec["notes"])
+        self.assertIn("ATR01", spec["notes"])
+        text = specFilePath("ATR01").read_text(encoding="utf-8")
+        self.assertIn("## 쉽게 말하면", text)
+        self.assertIn("## 설정", text)
+        self.assertLess(text.index("## 쉽게 말하면"), text.index("## 목적"))
+        settings = json.loads(Path("config/data/settings.json").read_text(encoding="utf-8"))
+        row = settings["stratLive"]["ATR01"]
+        self.assertFalse(row["enabled"])
+        self.assertTrue(row["paperOnly"])
+        self.assertFalse(effectiveAlgEnabled("ATR01", spec, settings))
+        forced = {"stratLive": {"ATR01": {"enabled": True, "paperOnly": True}}}
+        self.assertFalse(effectiveAlgEnabled("ATR01", spec, forced))
+        rows = algMgrRows([spec], settings, runs={"ATR01": True}, holds={"ATR01": 0})
+        self.assertEqual(rows[0]["runState"], "미구현")
+        self.assertNotEqual(rows[0]["runState"], "운행중")
+        self.assertFalse(rows[0]["enabled"])
+        self.assertFalse(Path("trading/atrPullbackLive.py").exists())
 
 
 if __name__ == "__main__":

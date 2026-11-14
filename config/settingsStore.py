@@ -64,6 +64,7 @@ _FALLBACK = {
         },
         "LDR01": {"paperOnly": True},
         "MMG01": {"paperOnly": True},
+        "ATR01": {"enabled": False, "paperOnly": True},
     },
     "batchSched": {
         "usMorningLoad": True,

@@ -151,6 +151,8 @@ def algMgrRows(specs, settings, versions=None, counts=None, pnl=None, runs=None,
             configured, started, tradingDay, nowHm,
             specBlocked=blocked, openCount=int((holds or {}).get(code) or 0),
         )
+        if str(spec.get("status") or "") == "unimplemented":
+            runState = "미구현"
         ver = versions.get(code) or {}
         money = pnl.get(code) or {}
         out.append({

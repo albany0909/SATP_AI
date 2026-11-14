@@ -343,6 +343,8 @@ def effectiveAlgEnabled(algCd, spec=None, settings=None):
         return False
     if normAlgCd(spec.get("algCd")) != code:
         return False
+    if str(spec.get("status") or "") == "unimplemented":
+        return False
     settings = settings if isinstance(settings, dict) else {}
     if code == "MTS01":
         mt = settings.get("maTouchLive")
