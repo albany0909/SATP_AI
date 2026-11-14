@@ -9,7 +9,7 @@
 - YMD: `2026-11-14`
 - SRC: `manual`
 - NOTE: `v1 눌림 ATR 스펙. 주문 없음. enabled=false, paperOnly=true. 1년 비용 없는 참고 +2.79%/거래, PF 1.52, 153건.`
-- GIT_HASH: `PENDING_ATR01`
+- GIT_HASH: `272937cf33fc`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -17,7 +17,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('ATR01', 'atrPullback_v1', 1, '2026-11-14',
    'v1 눌림 ATR 스펙. 주문 없음. enabled=false, paperOnly=true. 1년 비용 없는 참고 +2.79%/거래, PF 1.52, 153건.',
-   'PENDING_ATR01', 'manual')
+   '272937cf33fc', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
