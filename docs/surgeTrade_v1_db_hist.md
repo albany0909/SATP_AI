@@ -749,7 +749,7 @@ v33 는 별도 행이다. 이 작업에서는 실행하지 않았다.
 - YMD: `2026-11-14`
 - SRC: `manual`
 - NOTE: `v33 차트 눌림 표시. 주문 비활성.`
-- GIT_HASH: `PENDING_V33`
+- GIT_HASH: `fa946dcaf266`
 
 ```sql
 INSERT INTO AI_ALG_VER_HIST
@@ -757,7 +757,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('SRG01', 'surgeTrade_v1', 33, '2026-11-14',
    'v33 차트 눌림 표시. 주문 비활성.',
-   'PENDING_V33', 'manual')
+   'fa946dcaf266', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
