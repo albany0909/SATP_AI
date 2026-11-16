@@ -113,6 +113,20 @@ def collectWatchHoldCds():
     return cds
 
 
+def _appendKospiToday(ymd):
+    """장마감 일봉 적재 때 코스피 지수 오늘 봉만 추가한다. 24개월 백필은 하지 않는다."""
+    try:
+        from utils.kospiIdxLoad import appendKospiIdxToday
+
+        got = appendKospiIdxToday(ymd)
+        if not got.get("ok"):
+            termLog(f"[kospiIdx] {got.get('errMsg')}")
+        return got
+    except Exception as err:
+        termLog(f"[kospiIdx] 오늘 일봉 추가 실패: {err}")
+        return {"ok": False, "errMsg": str(err)}
+
+
 def loadDayPrcForWatchHolds(
     endDt=None,
     months=DEFAULT_MONTHS,
@@ -148,6 +162,7 @@ def loadDayPrcForWatchHolds(
             "upsertCnt": 0,
             "summary": "[관심일봉] 대상 없음",
             "tradeDt": ymd,
+            "kospi": _appendKospiToday(ymd),
         }
     termLog(f"[watchDayPrc] 관심·급등 {len(cds)}종 · 증분 적재 시작 ({ymd})")
     others = [cd for cd in cds if cd not in regime]
@@ -199,4 +214,5 @@ def loadDayPrcForWatchHolds(
         result["pole"] = pole
     except Exception as err:
         termLog(f"[watchDayPrc] 주월봉 실패: {err}")
+    result["kospi"] = _appendKospiToday(ymd)
     return result

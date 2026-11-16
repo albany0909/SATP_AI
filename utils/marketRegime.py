@@ -198,6 +198,60 @@ def reg01Side(monthEndCloses):
     return "ON" if last10[-1] > avg else "OFF"
 
 
+def _barYmd(bar):
+    if not isinstance(bar, dict):
+        return ""
+    raw = bar.get("tradeDt")
+    if raw is None:
+        raw = bar.get("TRADE_DT")
+    text = str(raw or "").strip().replace("-", "")
+    return text[:8]
+
+
+def _barClose(bar):
+    if not isinstance(bar, dict):
+        return None
+    if bar.get("close") is not None:
+        return _f(bar, "close")
+    if bar.get("CLOSE_PRC") is not None:
+        return _f(bar, "CLOSE_PRC")
+    return None
+
+
+def monthEndCloses(bars, asOf):
+    """판정일보다 앞선 달의 월말 종가. 진행 중인 달과 판정일 이후는 넣지 않는다.
+
+    월말은 그 달에 저장된 마지막 거래일이다. 달력으로 휴장을 메우지 않는다.
+    """
+    day = str(asOf or "").replace("-", "")[:8]
+    if len(day) != 8 or not day.isdigit():
+        return []
+    curMonth = day[:6]
+    last = {}
+    for bar in bars or []:
+        ymd = _barYmd(bar)
+        if len(ymd) != 8 or not ymd.isdigit() or ymd > day:
+            continue
+        month = ymd[:6]
+        if month >= curMonth:
+            continue
+        close = _barClose(bar)
+        if close is None:
+            continue
+        prev = last.get(month)
+        if prev is None or ymd >= prev[0]:
+            last[month] = (ymd, close)
+    return [last[key][1] for key in sorted(last)]
+
+
+def reg01Signal(bars, asOf):
+    """확정된 마지막 월말 종가가 그 월말을 포함한 최근 10개 평균보다 크면 ON.
+
+    10개가 안 되면 None. 매매에 쓰지 않는 표시값이다.
+    """
+    return reg01Side(monthEndCloses(bars, asOf))
+
+
 def classifySnapshot(snap, adxMin=ADX_MIN):
     """지표가 이미 계산된 한 봉의 국면.
 
@@ -318,8 +372,12 @@ def judgeBars(bars, slopeBars=SMA_SLOPE_BARS, adxPeriod=ADX_PERIOD, adxMin=ADX_M
     return got
 
 
-def presentRegime(bars, today, nowHm, closeHm="153000", livePx=None, **kw):
-    """장중이면 전일 확정 판정. 현재가는 livePx 참고값으로만 붙인다."""
+def presentRegime(bars, today, nowHm, closeHm="153000", livePx=None, kospiBars=None, **kw):
+    """장중이면 전일 확정 판정. 현재가는 livePx 참고값으로만 붙인다.
+
+    kospiBars 가 있으면 판정일의 REG01 을 계산해 붙인다. 호출자가 reg01 을
+    넘기면 그 값을 유지한다.
+    """
     rows = list(bars or [])
     day = str(today or "")[:8]
     hm = str(nowHm or "000000").zfill(6)[-6:]
@@ -330,6 +388,11 @@ def presentRegime(bars, today, nowHm, closeHm="153000", livePx=None, **kw):
     got["intraday"] = intraday
     got["livePx"] = livePx if intraday else None
     got["asOf"] = str((confirmed[-1].get("tradeDt") if confirmed else "") or "")[:8]
+    if "reg01" in kw:
+        got["reg01"] = kw["reg01"]
+    elif kospiBars is not None:
+        asOf = got.get("asOf") or got.get("tradeDt") or day
+        got["reg01"] = reg01Signal(kospiBars, asOf)
     return got
 
 
@@ -359,6 +422,9 @@ def badgeColors(regime):
 def detailLine(view):
     """배지 옆 한 줄."""
     if not view or not view.get("ok"):
+        reg = (view or {}).get("reg01")
+        if reg in ("ON", "OFF"):
+            return f"데이터 부족 · REG01 {reg}"
         return "데이터 부족"
     bits = [str(view.get("reason") or "")]
     reg = view.get("reg01")

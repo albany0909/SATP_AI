@@ -3253,11 +3253,28 @@ class TradeDeskWin(QMainWindow):
                 live = float(bars[-1].get("close") or 0) or None
             except (TypeError, ValueError):
                 live = None
+        kospiBars = None
+        try:
+            cached = getattr(self, "_kospiBars", None)
+            if cached and getattr(self, "_kospiBarsDay", "") == today:
+                kospiBars = cached
+            else:
+                from utils.kospiIdxLoad import loadStoredKospiBars
+
+                kospiBars = loadStoredKospiBars(today) or []
+                from utils.marketRegime import monthEndCloses
+
+                if len(monthEndCloses(kospiBars, today)) >= 10:
+                    self._kospiBars = kospiBars
+                    self._kospiBarsDay = today
+        except Exception:
+            kospiBars = None
         view = presentRegime(
             bars,
             today,
             now.strftime("%H%M%S"),
             livePx=live,
+            kospiBars=kospiBars,
             slopeBars=opts["smaSlopeBars"],
             adxPeriod=opts["adxPeriod"],
             adxMin=opts["adxMin"],

@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from datetime import datetime
+
 from utils.marketRegime import (
     annVol,
     badgeColors,
@@ -19,8 +21,10 @@ from utils.marketRegime import (
     judgeBars,
     judgmentLine,
     loadMarketRegimeOptions,
+    monthEndCloses,
     presentRegime,
     reg01Side,
+    reg01Signal,
 )
 from utils.marketRegimeStore import recordJudgment
 
@@ -289,6 +293,186 @@ class MarketRegimeTest(unittest.TestCase):
         self.assertTrue(got["ok"])
         self.assertEqual(calls["n"], 2)
         self.assertEqual(got["rows"][0]["TRADE_DT"], "20261114")
+
+    def test_reg01_oct_2026_month_end_is_off(self):
+        """2026-10-30 종가 5730.74 는 그 월말을 포함한 10개월 평균 6605.67 보다 작다."""
+        months = [
+            ("20260130", 6700.00),
+            ("20260227", 6700.00),
+            ("20260331", 6700.00),
+            ("20260430", 6700.00),
+            ("20260529", 6700.00),
+            ("20260630", 6700.00),
+            ("20260731", 6700.00),
+            ("20260831", 6700.00),
+            ("20260930", 6725.96),
+            ("20261029", 5800.00),
+            ("20261030", 5730.74),
+            ("20261116", 9000.00),
+            ("20261231", 1.00),
+        ]
+        bars = [{"tradeDt": ymd, "close": px} for ymd, px in months]
+        closes = monthEndCloses(bars, "20261116")
+        self.assertEqual(len(closes), 10)
+        self.assertAlmostEqual(closes[-1], 5730.74)
+        self.assertAlmostEqual(round(sum(closes) / 10.0, 2), 6605.67)
+        self.assertEqual(reg01Signal(bars, "20261116"), "OFF")
+        self.assertIsNone(reg01Signal(bars, "20261030"))
+        self.assertEqual(reg01Signal(bars + [{"tradeDt": "20261117", "close": 1}], "20261116"), "OFF")
+
+        kodex = _flat(40)
+        kodex[-2]["tradeDt"] = "20261113"
+        kodex[-1]["tradeDt"] = "20261116"
+        view = presentRegime(kodex, "20261116", "100000", kospiBars=bars)
+        self.assertEqual(view["asOf"], "20261113")
+        self.assertEqual(view["reg01"], "OFF")
+        self.assertEqual(detailLine(view), "데이터 부족 · REG01 OFF")
+        kept = presentRegime(kodex, "20261116", "160000", kospiBars=bars, reg01="ON")
+        self.assertEqual(kept["reg01"], "ON")
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "marketRegime.jsonl"
+            first = {
+                "ok": True, "asOf": "20261116", "regime": "하락장",
+                "reason": "종가<200일선", "stkCd": "069500", "reg01": "OFF",
+            }
+            recordJudgment(first, path=path, useDb=False)
+            recordJudgment({**first, "reg01": "ON"}, path=path, useDb=False)
+            saved = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+            self.assertEqual(saved["reg01"], "OFF")
+
+    def test_kospi_inserts_missing_days_only(self):
+        from utils.dayIndsPrcStore import _INSERT_IGNORE_SQL
+        from utils.kospiIdxLoad import appendKospiIdxToday, appendKospiJsonl, loadKospiIdxDays, loadStoredKospiBars
+
+        self.assertIn("INSERT IGNORE", _INSERT_IGNORE_SQL)
+        self.assertNotIn("ON DUPLICATE", _INSERT_IGNORE_SQL)
+        self.assertNotIn("UPDATE", _INSERT_IGNORE_SQL)
+        self.assertNotIn("DELETE", _INSERT_IGNORE_SQL)
+        desk = Path("ui/tradeDeskWin.py").read_text(encoding="utf-8")
+        watch = Path("utils/watchDayPrcLoad.py").read_text(encoding="utf-8")
+        self.assertNotIn("loadKospiIdxDays", desk)
+        self.assertNotIn("loadKospiIdxDays", watch)
+        self.assertIn("appendKospiIdxToday", watch)
+
+        saved = []
+        calls = []
+
+        def _fetch(host, token, code, start, end, **_kw):
+            calls.append((code, start, end))
+            return {"ok": True, "rows": [
+                {"TRADE_DT": "20261030", "CLOSE_PRC": 5730.74, "INDS_CD": "001", "MKT_TP": "KR"},
+                {"TRADE_DT": "20261113", "CLOSE_PRC": 5800, "INDS_CD": "001", "MKT_TP": "KR"},
+                {"TRADE_DT": "20261116", "CLOSE_PRC": 5900, "INDS_CD": "001", "MKT_TP": "KR"},
+            ]}
+
+        def _write(rows):
+            saved.extend(rows)
+            return {"ok": True, "upsertCnt": len(rows), "store": "AI_DAY_INDS_PRC"}
+
+        now = datetime(2026, 11, 16, 10, 0)
+        early = appendKospiIdxToday(
+            "20261116", now=now, session=("paper", "http://h", "t", "bearer"),
+            fetcher=_fetch, writer=_write, existing=lambda _a, _b: set(),
+        )
+        self.assertEqual(early["skipped"], "beforeClose")
+        self.assertEqual(calls, [])
+
+        got = loadKospiIdxDays(
+            months=24, endDt="20261116", now=now,
+            session=("paper", "http://h", "t", "bearer"),
+            fetcher=_fetch, writer=_write, existing=lambda _a, _b: {"20261030"},
+        )
+        self.assertTrue(got["ok"])
+        self.assertEqual(calls[0][0], "001")
+        self.assertEqual([row["TRADE_DT"] for row in saved], ["20261113"])
+        self.assertEqual(got["srcTr"], "ka20006")
+
+        saved.clear()
+        calls.clear()
+        today = appendKospiIdxToday(
+            "20261116", now=datetime(2026, 11, 16, 16, 0),
+            session=("paper", "http://h", "t", "bearer"),
+            fetcher=_fetch, writer=_write, existing=lambda _a, _b: {"20261113"},
+        )
+        self.assertEqual(calls[0][1], calls[0][2])
+        self.assertEqual(calls[0][1], "20261116")
+        self.assertEqual([row["TRADE_DT"] for row in saved], ["20261116"])
+        self.assertTrue(today["ok"])
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "kospiDay.jsonl"
+            path.write_text('{"tradeDt": "20261030", "close": 5730.74}\n', encoding="utf-8")
+            added = appendKospiJsonl([
+                {"TRADE_DT": "20261030", "CLOSE_PRC": 1, "INDS_CD": "001"},
+                {"TRADE_DT": "20261114", "CLOSE_PRC": 5800, "INDS_CD": "001"},
+            ], path)
+            self.assertEqual(added, 1)
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("5730.74", text)
+            self.assertNotIn('"close": 1', text)
+            self.assertEqual(appendKospiJsonl([
+                {"TRADE_DT": "20261114", "CLOSE_PRC": 9999, "INDS_CD": "001"},
+            ], path), 0)
+            self.assertEqual(text, path.read_text(encoding="utf-8"))
+            with patch(
+                "utils.dayIndsPrcStore.loadKospiDayBars",
+                return_value={"ok": False, "missingTable": True, "bars": []},
+            ):
+                stored = loadStoredKospiBars("20261116", path=path)
+            self.assertEqual(stored[-1]["tradeDt"], "20261114")
+            self.assertAlmostEqual(stored[0]["close"], 5730.74)
+
+    def test_inds_day_retries_http_429(self):
+        from api.getDayIndsPrc import fetchDayIndsPrcRange
+
+        class _Res:
+            def __init__(self, code, body, headers=None):
+                self.status_code = code
+                self._body = body
+                self.headers = headers or {}
+                self.text = ""
+
+            def json(self):
+                return self._body
+
+        calls = {"n": 0}
+
+        def _fake(*_a, **_k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _Res(429, {"return_code": 1, "return_msg": "too many"})
+            return _Res(200, {
+                "return_code": 0,
+                "inds_dt_pole_qry": [{
+                    "dt": "20261114",
+                    "open_pric": "573074",
+                    "high_pric": "573074",
+                    "low_pric": "573074",
+                    "cur_prc": "573074",
+                }],
+            }, {"cont-yn": "N"})
+
+        with patch("api.getDayIndsPrc.getDayIndsPrc", _fake), patch("utils.chartUnifFetch.time.sleep", lambda _s: None):
+            got = fetchDayIndsPrcRange("http://h", "t", "001", "20261114", "20261114", isPaper=True)
+        self.assertTrue(got["ok"], got)
+        self.assertEqual(calls["n"], 2)
+        self.assertEqual(got["rows"][0]["TRADE_DT"], "20261114")
+        self.assertAlmostEqual(got["rows"][0]["CLOSE_PRC"], 5730.74)
+
+    def test_watch_load_appends_kospi_today_only(self):
+        with patch("utils.watchDayPrcLoad.collectWatchHoldCds", return_value=[]), patch(
+            "utils.chartBarPlan.collectSurgeChartCds", return_value=[],
+        ), patch(
+            "utils.marketRegime.loadMarketRegimeOptions", return_value={"symbol": ""},
+        ), patch(
+            "utils.kospiIdxLoad.appendKospiIdxToday", return_value={"ok": True, "upsertCnt": 0},
+        ) as app:
+            from utils.watchDayPrcLoad import loadDayPrcForWatchHolds
+
+            got = loadDayPrcForWatchHolds(endDt="20261113")
+        self.assertEqual(got["summary"], "[관심일봉] 대상 없음")
+        self.assertEqual(app.call_args[0][0], "20261113")
 
 
 if __name__ == "__main__":

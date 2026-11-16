@@ -18,11 +18,24 @@
 
 `chartMarketRegime.symbol`(기본 `069500`)은 장마감 일봉 적재 대상에 포함된다. 그 종목은 `AI_DAY_STK_PRC`에 없는 날짜만 INSERT 하고, 이미 있는 행은 고치지 않는다. `chartMarketRegime.autoBackfill`(기본 false)이 true이고 봉이 200개 미만이면 데스크를 열 때 한 번만 최근 12개월을 같은 방식으로 채운다.
 
-판정이 안 되면 `[marketRegime] 판정 판정불가 <날짜> <사유> (069500 봉 N개)` 한 줄을 남긴다. 이 경우는 DB와 jsonl에 쓰지 않는다.
+판정이 안 되면 `[marketRegime] 판정 판정불가 <날짜> <사유> (069500 봉 N개)` 한 줄을 남긴다. 이 경우는 DB와 jsonl에 쓰지 않는다. 판정이 안 되어도 REG01 값이 있으면 보조줄에 `데이터 부족 · REG01 OFF`처럼 붙인다.
+
+## 코스피 일봉
+
+REG01 입력은 코스피 종합지수다. 키움 업종일봉 `ka20006`, 업종코드 `001`이다. 받은 봉은 기존 `AI_DAY_INDS_PRC`(`MKT_TP=KR`)에 없는 날짜만 `INSERT IGNORE` 한다. 있는 행은 수정하거나 삭제하지 않는다. 테이블이 없으면 테이블을 만들지 않고 `config/data/kospiDay.jsonl`에 없는 날짜만 붙인다.
+
+장마감 후 관심·실계좌 일봉 적재가 돌 때 그 날짜 한 건만 추가한다. 봉이 부족하면 아래를 사람이 한 번 실행한다. 데스크가 자동으로 실행하지 않는다.
+
+```python
+from utils.kospiIdxLoad import loadKospiIdxDays
+loadKospiIdxDays(months=24)
+```
+
+키움 HTTP 429는 일봉 조회와 같은 재시도(1.5초, 3초, 6초, 최대 3회)를 탄다. 조회 TR만 사용한다.
 
 ## 보조 표시
 
-- REG01: 월말 코스피 종가가 최근 10개 월말 종가 평균보다 크면 ON, 아니면 OFF. 10개가 없으면 표시하지 않는다. 매매로 이어지지 않는다.
+- REG01: 판정일 이전 달까지 확정된 마지막 월말(그 달의 마지막 거래일) 코스피 종가가, 그 월말을 포함한 최근 10개 월말 종가 평균보다 크면 ON, 아니면 OFF. 같으면 OFF. 10개가 없거나 진행 중인 달만 있으면 비운다. 판정일 이후 봉과 진행 중인 달은 쓰지 않는다. 매매로 이어지지 않는다. 배지 보조줄, `AI_MKT_REGIME.REG01`, jsonl에 같은 값을 넣는다. 이미 저장된 날짜 행은 고치지 않는다.
 - ADX, +DI, -DI
 - 최근 20일 수익률의 표본표준편차 × sqrt(252)
 - 지금까지 고점(고가, 없으면 종가) 대비 마지막 종가
@@ -45,7 +58,7 @@ KODEX200 79,625, 200일선 101,457, 20/60/120일선 86,631/99,493/109,866, ADX 2
 ## 함수
 
 ```python
-from utils.marketRegime import classifySnapshot, judgeBars, presentRegime, reg01Side
+from utils.marketRegime import classifySnapshot, judgeBars, presentRegime, reg01Side, reg01Signal
 
 classifySnapshot({
     "close": 79625, "sma200": 101457,
@@ -55,4 +68,5 @@ classifySnapshot({
 judgeBars(dailyBars)          # 마지막 봉까지
 presentRegime(bars, today, nowHm, closeHm="153000", livePx=None)
 reg01Side(monthEndCloses)     # 길이 10 미만이면 None
+reg01Signal(kospiBars, asOf)  # 진행 중인 달은 빼고, 10개 미만이면 None
 ```
