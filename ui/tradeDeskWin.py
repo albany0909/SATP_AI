@@ -1075,6 +1075,20 @@ class TradeDeskWin(QMainWindow):
         )
         sessLay.addWidget(self.indsLbl, 1)
         outer.addWidget(sessRow)
+        regimeRow = QWidget()
+        regimeLay = QHBoxLayout(regimeRow)
+        regimeLay.setContentsMargins(0, 4, 0, 4)
+        regimeLay.setSpacing(10)
+        self.regimeBadge = QLabel("판정불가")
+        self.regimeBadge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.regimeBadge.setMinimumWidth(120)
+        self.regimeDetail = QLabel("데이터 부족")
+        self.regimeDetail.setWordWrap(True)
+        self.regimeDetail.setStyleSheet("font-size: 13px; color: #212121;")
+        regimeLay.addWidget(self.regimeBadge)
+        regimeLay.addWidget(self.regimeDetail, 1)
+        outer.addWidget(regimeRow)
+        self._applyRegimeBadge({"regime": "판정불가", "ok": False})
         self._paintIndsBar()
         self._opsAlgTimer = QTimer(self)
         self._opsAlgTimer.timeout.connect(self.refreshOpsAlgBar)
@@ -3176,6 +3190,71 @@ class TradeDeskWin(QMainWindow):
                 self._rebuildWatchAlgTabs()
         except Exception:
             pass
+        try:
+            self._paintMarketRegime()
+        except Exception:
+            pass
+
+    def _applyRegimeBadge(self, view):
+        """상단 배지. 판정 결과만 그린다."""
+        from utils.marketRegime import badgeColors, detailLine
+
+        regime = str((view or {}).get("regime") or "판정불가")
+        bg, fg = badgeColors(regime)
+        badge = getattr(self, "regimeBadge", None)
+        detail = getattr(self, "regimeDetail", None)
+        if badge is None:
+            return
+        badge.setText(regime)
+        badge.setStyleSheet(
+            f"font-size: 22px; font-weight: 800; color: {fg}; background: {bg}; "
+            "padding: 6px 16px; border-radius: 6px;"
+        )
+        if detail is not None:
+            detail.setText(detailLine(view or {}))
+
+    def _paintMarketRegime(self):
+        """KODEX200 일봉으로 배지를 갱신한다. 주문은 하지 않는다."""
+        from datetime import datetime
+
+        from utils.marketRegime import loadMarketRegimeOptions, presentRegime
+        from utils.marketRegimeStore import recordJudgment
+
+        opts = loadMarketRegimeOptions()
+        bars = []
+        try:
+            from utils.chartBarLoad import loadStoredDayBars
+
+            bars = loadStoredDayBars(opts["symbol"]) or []
+        except Exception:
+            bars = []
+        now = datetime.now()
+        today = now.strftime("%Y%m%d")
+        live = None
+        if bars and str(bars[-1].get("tradeDt") or "")[:8] == today:
+            try:
+                live = float(bars[-1].get("close") or 0) or None
+            except (TypeError, ValueError):
+                live = None
+        view = presentRegime(
+            bars,
+            today,
+            now.strftime("%H%M%S"),
+            livePx=live,
+            slopeBars=opts["smaSlopeBars"],
+            adxPeriod=opts["adxPeriod"],
+            adxMin=opts["adxMin"],
+            volBars=opts["volBars"],
+        )
+        view["stkCd"] = opts["symbol"]
+        if view.get("ok") and not view.get("intraday"):
+            def _send(text):
+                from telegram.telSend import sendTelegramMsg
+
+                sendTelegramMsg(text)
+
+            recordJudgment(view, sender=_send, useDb=True)
+        self._applyRegimeBadge(view)
 
     def _rebuildStratAlgTabs(self):
         """전략 설명 탭 — 유효 가동 알고리즘만. 보유로 켜짐 여부를 판단하지 않는다."""
