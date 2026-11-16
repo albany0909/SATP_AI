@@ -139,6 +139,14 @@ class MarketRegimeTest(unittest.TestCase):
         self.assertEqual(opt["smaSlopeBars"], 5)
         self.assertEqual(opt["adxMin"], 20.0)
         self.assertEqual(opt["symbol"], "069500")
+        self.assertFalse(opt["autoBackfill"])
+        self.assertTrue(loadMarketRegimeOptions({"chartMarketRegime": {"autoBackfill": True}})["autoBackfill"])
+        from utils.marketRegime import unjudgedLine
+
+        self.assertEqual(
+            unjudgedLine("069500", "20261116", "데이터 부족", 0),
+            "[marketRegime] 판정 판정불가 20261116 데이터 부족 (069500 봉 0개)",
+        )
 
     def test_drawdown_and_vol(self):
         bars = _flat(5, px=100)
@@ -206,6 +214,81 @@ class MarketRegimeTest(unittest.TestCase):
         self.assertEqual(label.text(), "하락장")
         self.assertIn("#1565C0", label.styleSheet())
         self.assertIn("regimeBadge", Path("ui/tradeDeskWin.py").read_text(encoding="utf-8"))
+
+    def test_regime_symbol_insert_only_and_backfill_gate(self):
+        from utils.dayStkPrcStore import _INSERT_IGNORE_SQL
+        from utils.watchDayPrcLoad import maybeBackfillRegimeBars
+
+        self.assertIn("INSERT IGNORE", _INSERT_IGNORE_SQL)
+        self.assertNotIn("ON DUPLICATE", _INSERT_IGNORE_SQL)
+        maybeBackfillRegimeBars.done = False
+        calls = []
+
+        def _loader(codes, months=12, insertOnly=False, refetchLastDay=True, **_kw):
+            calls.append((list(codes), months, insertOnly, refetchLastDay))
+            return {"ok": True}
+
+        off = maybeBackfillRegimeBars(
+            counter=lambda _cd: 0,
+            loader=_loader,
+            options={"symbol": "069500", "autoBackfill": False},
+        )
+        self.assertEqual(off["skipped"], "autoBackfill")
+        self.assertEqual(calls, [])
+        maybeBackfillRegimeBars.done = False
+        on = maybeBackfillRegimeBars(
+            counter=lambda _cd: 12,
+            loader=_loader,
+            options={"symbol": "069500", "autoBackfill": True},
+        )
+        self.assertEqual(calls, [(["069500"], 12, True, False)])
+        self.assertTrue(on["ok"])
+        maybeBackfillRegimeBars.done = False
+        enough = maybeBackfillRegimeBars(
+            counter=lambda _cd: 200,
+            loader=_loader,
+            options={"symbol": "069500", "autoBackfill": True},
+        )
+        self.assertEqual(enough["skipped"], "enough")
+        self.assertEqual(len(calls), 1)
+
+    def test_day_price_retries_http_429(self):
+        from unittest.mock import patch
+
+        from api.getDayStkPrc import fetchDayStkPrcRange
+
+        class _Res:
+            def __init__(self, code, body, headers=None):
+                self.status_code = code
+                self._body = body
+                self.headers = headers or {}
+                self.text = ""
+
+            def json(self):
+                return self._body
+
+        calls = {"n": 0}
+
+        def _fake(*_a, **_k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _Res(429, {"return_code": 1, "return_msg": "too many"})
+            return _Res(200, {
+                "return_code": 0,
+                "daly_stkpc": [{
+                    "date": "20261114",
+                    "open_pric": "100",
+                    "high_pric": "110",
+                    "low_pric": "90",
+                    "close_pric": "105",
+                }],
+            }, {"cont-yn": "N"})
+
+        with patch("api.getDayStkPrc.getDayStkPrc", _fake), patch("utils.chartUnifFetch.time.sleep", lambda _s: None):
+            got = fetchDayStkPrcRange("http://h", "t", "069500", "20261114", "20261114", isPaper=True)
+        self.assertTrue(got["ok"])
+        self.assertEqual(calls["n"], 2)
+        self.assertEqual(got["rows"][0]["TRADE_DT"], "20261114")
 
 
 if __name__ == "__main__":

@@ -993,6 +993,7 @@ class TradeDeskWin(QMainWindow):
         self._chartLoadTok = 0
         self._chartSelBusy = False
         self._buildUi()
+        self._startRegimeBackfillOnce()
         self._bindTradeLog()
         self._bindDeskErr()
         try:
@@ -3195,6 +3196,22 @@ class TradeDeskWin(QMainWindow):
         except Exception:
             pass
 
+    def _startRegimeBackfillOnce(self):
+        """autoBackfill 이 켜져 있고 봉이 부족할 때만, 시작 시 한 번 채운다."""
+        import threading
+
+        def _run():
+            try:
+                from utils.watchDayPrcLoad import maybeBackfillRegimeBars
+
+                maybeBackfillRegimeBars()
+            except Exception as err:
+                from utils.termLog import termLog
+
+                termLog(f"[marketRegime] 과거 일봉 채우기 실패: {err}")
+
+        threading.Thread(target=_run, name="regimeBackfill", daemon=True).start()
+
     def _applyRegimeBadge(self, view):
         """상단 배지. 판정 결과만 그린다."""
         from utils.marketRegime import badgeColors, detailLine
@@ -3247,6 +3264,19 @@ class TradeDeskWin(QMainWindow):
             volBars=opts["volBars"],
         )
         view["stkCd"] = opts["symbol"]
+        if not view.get("ok"):
+            from utils.marketRegime import unjudgedLine
+            from utils.termLog import termLog
+
+            failLine = unjudgedLine(
+                opts["symbol"],
+                view.get("asOf") or today,
+                view.get("reason"),
+                len(bars),
+            )
+            if failLine != getattr(self, "_regimeFailLine", ""):
+                self._regimeFailLine = failLine
+                termLog(failLine)
         if view.get("ok") and not view.get("intraday"):
             def _send(text):
                 from telegram.telSend import sendTelegramMsg

@@ -30,6 +30,7 @@ def loadMarketRegimeOptions(settings=None):
         "adxPeriod": _posInt(block.get("adxPeriod"), ADX_PERIOD),
         "adxMin": _posFloat(block.get("adxMin"), ADX_MIN),
         "volBars": _posInt(block.get("volBars"), VOL_BARS),
+        "autoBackfill": _asBool(block.get("autoBackfill"), False),
     }
 
 
@@ -39,6 +40,19 @@ def _posInt(raw, default):
     except (TypeError, ValueError):
         return default
     return n if n > 0 else default
+
+
+def _asBool(raw, default):
+    if raw is None:
+        return default
+    if isinstance(raw, bool):
+        return raw
+    text = str(raw).strip().lower()
+    if text in ("1", "true", "y", "yes", "on"):
+        return True
+    if text in ("0", "false", "n", "no", "off"):
+        return False
+    return default
 
 
 def _posFloat(raw, default):
@@ -321,6 +335,12 @@ def presentRegime(bars, today, nowHm, closeHm="153000", livePx=None, **kw):
 
 def judgmentLine(regime, ymd, reason):
     return f"[marketRegime] 판정 {regime} {ymd} {reason}"
+
+
+def unjudgedLine(symbol, ymd, reason, barCount):
+    """봉이 부족해 판정이 안 될 때. 저장은 하지 않는다."""
+    why = reason or "데이터 부족"
+    return f"[marketRegime] 판정 판정불가 {ymd} {why} ({symbol} 봉 {int(barCount or 0)}개)"
 
 
 def changeLine(prev, cur, ymd, reason):

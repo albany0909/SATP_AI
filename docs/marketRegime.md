@@ -16,6 +16,10 @@
 
 이평은 단순이평이다. ADX와 DI는 Wilder 14다. ADX 기준 20은 `chartMarketRegime.adxMin` 으로 바꿀 수 있다. 이 코드는 `settings.json` 을 쓰지 않으며, 키가 없으면 기본값을 쓴다.
 
+`chartMarketRegime.symbol`(기본 `069500`)은 장마감 일봉 적재 대상에 포함된다. 그 종목은 `AI_DAY_STK_PRC`에 없는 날짜만 INSERT 하고, 이미 있는 행은 고치지 않는다. `chartMarketRegime.autoBackfill`(기본 false)이 true이고 봉이 200개 미만이면 데스크를 열 때 한 번만 최근 12개월을 같은 방식으로 채운다.
+
+판정이 안 되면 `[marketRegime] 판정 판정불가 <날짜> <사유> (069500 봉 N개)` 한 줄을 남긴다. 이 경우는 DB와 jsonl에 쓰지 않는다.
+
 ## 보조 표시
 
 - REG01: 월말 코스피 종가가 최근 10개 월말 종가 평균보다 크면 ON, 아니면 OFF. 10개가 없으면 표시하지 않는다. 매매로 이어지지 않는다.

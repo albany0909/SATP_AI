@@ -231,28 +231,42 @@ def fetchDayStkPrcRange(
         if pageUsed > 0:
             time.sleep(waitSec)
 
-        try:
-            res = getDayStkPrc(
-                hostUrl,
-                token,
-                code,
-                qryDt,
-                indcTp=indcTp,
-                contYn=contYn,
-                nextKey=nextKey,
-                tokenType=tokenType,
-            )
-        except Exception as err:
-            return {"ok": False, "errMsg": f"요청 실패: {err}"}
+        def _onePage():
+            try:
+                res = getDayStkPrc(
+                    hostUrl,
+                    token,
+                    code,
+                    qryDt,
+                    indcTp=indcTp,
+                    contYn=contYn,
+                    nextKey=nextKey,
+                    tokenType=tokenType,
+                )
+            except Exception as err:
+                return {"ok": False, "errMsg": f"요청 실패: {err}"}
+            ok, parsed = _parseBody(res)
+            if not ok:
+                return {
+                    "ok": False,
+                    "errMsg": parsed.get("errMsg"),
+                    "body": parsed.get("body"),
+                }
+            return {"ok": True, "parsed": parsed, "res": res}
 
-        pageUsed += 1
-        ok, parsed = _parseBody(res)
-        if not ok:
+        from utils.chartUnifFetch import fetchWithRetry
+
+        part = fetchWithRetry(_onePage, label=f"{code} ka10086")
+        if not part.get("ok"):
             return {
                 "ok": False,
-                "errMsg": parsed.get("errMsg"),
-                "body": parsed.get("body"),
+                "errMsg": part.get("errMsg"),
+                "body": part.get("body"),
             }
+        parsed = part["parsed"]
+        res = part["res"]
+
+        pageUsed += 1
 
         rows = parsed.get("daly_stkpc") or []
         pageOldest = None
