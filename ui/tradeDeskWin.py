@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -1060,6 +1061,20 @@ class TradeDeskWin(QMainWindow):
         outer = QVBoxLayout(root)
         outer.setContentsMargins(8, 8, 8, 8)
 
+        self.deskHead = QWidget()
+        self.deskHead.setObjectName("deskHead")
+        self.deskHead.setFixedHeight(28)
+        headLay = QHBoxLayout(self.deskHead)
+        headLay.setContentsMargins(10, 2, 10, 2)
+        self.deskHeadLbl = QLabel("천둥이")
+        self.deskHeadLbl.setStyleSheet(
+            "font-weight: 700; font-size: 14px; color: #FFFFFF; background: transparent;"
+        )
+        headLay.addWidget(self.deskHeadLbl)
+        outer.addWidget(self.deskHead)
+        self._headChromeKey = None
+        self._regimeView = {"regime": "판정불가", "ok": False}
+
         sessRow = QWidget()
         sessLay = QHBoxLayout(sessRow)
         sessLay.setContentsMargins(0, 0, 0, 0)
@@ -1084,19 +1099,6 @@ class TradeDeskWin(QMainWindow):
         )
         sessLay.addWidget(self.indsLbl, 1)
         outer.addWidget(sessRow)
-        regimeRow = QWidget()
-        regimeLay = QHBoxLayout(regimeRow)
-        regimeLay.setContentsMargins(0, 4, 0, 4)
-        regimeLay.setSpacing(10)
-        self.regimeBadge = QLabel("판정불가")
-        self.regimeBadge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.regimeBadge.setMinimumWidth(120)
-        self.regimeDetail = QLabel("데이터 부족")
-        self.regimeDetail.setWordWrap(True)
-        self.regimeDetail.setStyleSheet("font-size: 13px; color: #212121;")
-        regimeLay.addWidget(self.regimeBadge)
-        regimeLay.addWidget(self.regimeDetail, 1)
-        outer.addWidget(regimeRow)
         self.pbkBoard = QLabel("[PBK01] 후보 0건 · 보유 0/5 · 최근 재스캔 --:--")
         self.pbkBoard.setWordWrap(False)
         self.pbkBoard.setFixedHeight(22)
@@ -1541,6 +1543,16 @@ class TradeDeskWin(QMainWindow):
         settHint.setStyleSheet("color: #666; font-size: 12px;")
         settHint.setWordWrap(True)
         settLay.addWidget(settHint)
+        regimeBox = QGroupBox("시장 국면")
+        regimeBoxLay = QVBoxLayout(regimeBox)
+        self.regimeSettLbl = QLabel("데이터 부족")
+        self.regimeSettLbl.setWordWrap(True)
+        self.regimeSettLbl.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.regimeSettLbl.setStyleSheet("font-size: 12px; color: #212121;")
+        regimeBoxLay.addWidget(self.regimeSettLbl)
+        settLay.addWidget(regimeBox)
         try:
             from ui.mmgSettRow import addMmgSettRow
 
@@ -2877,6 +2889,8 @@ class TradeDeskWin(QMainWindow):
             ver = ""
         verTxt = f" · {ver}" if ver else ""
         self.setWindowTitle(f"천둥이 {roleTxt}{verTxt}")
+        self._deskHeadCore = f"천둥이 {roleTxt}{verTxt}"
+        self._applyHeaderChrome(getattr(self, "_regimeView", None))
 
     def _refreshTokenAliveLbl(self):
         """상단 토큰유효/무효/확인중. 만료시각은 표시하지 않는다."""
@@ -3266,22 +3280,41 @@ class TradeDeskWin(QMainWindow):
         threading.Thread(target=_run, name="regimeBackfill", daemon=True).start()
 
     def _applyRegimeBadge(self, view):
-        """상단 배지. 판정 결과만 그린다."""
-        from utils.marketRegime import badgeColors, detailLine
+        """헤더 색과 설정 탭 근거. 판정 계산은 하지 않는다."""
+        self._regimeView = dict(view or {})
+        self._applyHeaderChrome(self._regimeView)
 
-        regime = str((view or {}).get("regime") or "판정불가")
-        bg, fg = badgeColors(regime)
-        badge = getattr(self, "regimeBadge", None)
-        detail = getattr(self, "regimeDetail", None)
-        if badge is None:
+    def _applyHeaderChrome(self, view):
+        """맨 위 헤더 줄 배경과 짧은 국면 글자. 값이 같을 때는 스타일을 다시 쓰지 않는다."""
+        if QThread.currentThread() is not self.thread():
+            self._onGui(lambda: self._applyHeaderChrome(view))
             return
-        badge.setText(regime)
-        badge.setStyleSheet(
-            f"font-size: 22px; font-weight: 800; color: {fg}; background: {bg}; "
-            "padding: 6px 16px; border-radius: 6px;"
-        )
-        if detail is not None:
-            detail.setText(detailLine(view or {}))
+        from utils.marketRegime import detailLine, headerChrome
+
+        shown = view or {}
+        regime = str(shown.get("regime") or "판정불가")
+        if not shown.get("ok") and regime == "":
+            regime = "판정불가"
+        chrome = headerChrome(regime)
+        core = getattr(self, "_deskHeadCore", None) or "천둥이"
+        text = f"{core}   {chrome['label']}"
+        note = detailLine(shown)
+        key = (chrome["bg"], chrome["fg"], text, note)
+        if key == getattr(self, "_headChromeKey", None):
+            return
+        self._headChromeKey = key
+        head = getattr(self, "deskHead", None)
+        label = getattr(self, "deskHeadLbl", None)
+        if head is not None:
+            head.setStyleSheet(f"background-color: {chrome['bg']};")
+        if label is not None:
+            label.setText(text)
+            label.setStyleSheet(
+                f"font-weight: 700; font-size: 14px; color: {chrome['fg']}; background: transparent;"
+            )
+        noteLbl = getattr(self, "regimeSettLbl", None)
+        if noteLbl is not None and noteLbl.text() != note:
+            noteLbl.setText(note)
 
     def _paintMarketRegime(self):
         """KODEX200 일봉으로 배지를 갱신한다. 주문은 하지 않는다."""

@@ -14,6 +14,7 @@ from datetime import datetime
 from utils.marketRegime import (
     annVol,
     badgeColors,
+    headerChrome,
     changeLine,
     classifySnapshot,
     detailLine,
@@ -217,7 +218,23 @@ class MarketRegimeTest(unittest.TestCase):
         app.processEvents()
         self.assertEqual(label.text(), "하락장")
         self.assertIn("#1565C0", label.styleSheet())
-        self.assertIn("regimeBadge", Path("ui/tradeDeskWin.py").read_text(encoding="utf-8"))
+        src = Path("ui/tradeDeskWin.py").read_text(encoding="utf-8")
+        self.assertIn("headerChrome", src)
+        self.assertIn("deskHead", src)
+        self.assertIn("regimeSettLbl", src)
+
+    def test_header_chrome_colors(self):
+        bear = headerChrome("하락장")
+        bull = headerChrome("상승장")
+        side = headerChrome("횡보장")
+        none = headerChrome("판정불가")
+        self.assertEqual(bear["label"], "하락장")
+        self.assertEqual(bear["fg"], "#FFFFFF")
+        self.assertTrue(bear["bg"].startswith("#B"))
+        self.assertEqual(bull["bg"], "#1B5E20")
+        self.assertEqual(side["bg"], none["bg"])
+        self.assertNotEqual(bear["bg"], bull["bg"])
+        self.assertEqual(headerChrome("하락장"), bear)
 
     def test_regime_symbol_insert_only_and_backfill_gate(self):
         from utils.dayStkPrcStore import _INSERT_IGNORE_SQL

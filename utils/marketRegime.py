@@ -410,6 +410,21 @@ def changeLine(prev, cur, ymd, reason):
     return f"[marketRegime] {prev}→{cur} {ymd} {reason}"
 
 
+def headerChrome(regime):
+    """앱 헤더 줄 색. 하락은 빨강, 상승은 초록, 그 외는 회색.
+
+    창 제목 막대(네이티브 타이틀바)는 바꾸지 않는다.
+    """
+    name = str(regime or "").strip() or "판정불가"
+    if name == "하락장":
+        bg, fg = "#B71C1C", "#FFFFFF"
+    elif name == "상승장":
+        bg, fg = "#1B5E20", "#FFFFFF"
+    else:
+        bg, fg = "#616161", "#FFFFFF"
+    return {"bg": bg, "fg": fg, "label": name}
+
+
 def badgeColors(regime):
     """상승 빨강, 하락 파랑, 그 외 회색."""
     if regime == "상승장":
