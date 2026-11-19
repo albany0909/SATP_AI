@@ -630,7 +630,7 @@ def formatBoardLine(candidates, positions, scannedAt="", slotLimit=SLOT_COUNT):
     for row in candidates or []:
         if isinstance(row, dict) and str(row.get("stkCd") or "").strip():
             n += 1
-    hm = str(scannedAt or "").strip().replace("\n", " ")
+    hm = "" if scannedAt is None else str(scannedAt).strip().replace("\n", " ")
     if len(hm) >= 5 and hm[2:3] == ":":
         hm = hm[:5]
     else:

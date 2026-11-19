@@ -529,17 +529,23 @@ class RsiDelegate(QStyledItemDelegate):
 
 
 class SurgeSortItem(QTableWidgetItem):
-    """표시는 콤마 문자열, 정렬은 UserRole+1 숫자."""
+    """표시는 콤마 문자열, 정렬은 UserRole+1 숫자.
+
+    QTableWidgetItem.__lt__ 를 부르면 정렬 중 이 메서드로 다시 들어와
+    Python 3.14 에서 접근 위반으로 죽는다. 글자만 직접 비교한다.
+    """
 
     def __lt__(self, other):
+        if not isinstance(other, QTableWidgetItem):
+            return False
         av = self.data(Qt.ItemDataRole.UserRole + 1)
-        bv = other.data(Qt.ItemDataRole.UserRole + 1) if isinstance(other, QTableWidgetItem) else None
-        if av is None or bv is None:
-            return QTableWidgetItem.__lt__(self, other)
-        try:
-            return float(av) < float(bv)
-        except (TypeError, ValueError):
-            return QTableWidgetItem.__lt__(self, other)
+        bv = other.data(Qt.ItemDataRole.UserRole + 1)
+        if av is not None and bv is not None:
+            try:
+                return float(av) < float(bv)
+            except (TypeError, ValueError):
+                return str(av) < str(bv)
+        return str(self.text()) < str(other.text())
 
 
 class SurgeNameDelegate(QStyledItemDelegate):
@@ -3216,8 +3222,18 @@ class TradeDeskWin(QMainWindow):
         except Exception:
             pass
 
+    def _onGui(self, fn):
+        """표·상단 갱신은 GUI 스레드에서만 실행한다."""
+        if QThread.currentThread() is self.thread():
+            fn()
+            return
+        QTimer.singleShot(0, self, fn)
+
     def _paintPbkBoard(self):
         """상단은 한 줄 요약만. 종목 나열은 관심종목 표에 둔다."""
+        if QThread.currentThread() is not self.thread():
+            self._onGui(self._paintPbkBoard)
+            return
         board = getattr(self, "pbkBoard", None)
         if board is None:
             return
@@ -4788,6 +4804,9 @@ class TradeDeskWin(QMainWindow):
 
     def refreshTradeWatch(self):
         """현재 알고리즘 탭의 관리종목(AI_ALG_STK ∪ 미청산)을 그리드에 채운다."""
+        if QThread.currentThread() is not self.thread():
+            self._onGui(self.refreshTradeWatch)
+            return
         if getattr(self, "_watchRefreshBusy", False):
             return
         if not hasattr(self, "tradeWatchFrozen") or not hasattr(self, "tradeWatchTbl"):
@@ -5634,11 +5653,26 @@ class TradeDeskWin(QMainWindow):
             self._fitWatchFrozenWidth()
         finally:
             frz.setUpdatesEnabled(True)
-            frz.setSortingEnabled(True)
         self._syncWatchScrollBars()
+        QTimer.singleShot(0, self, self._enablePbkSort)
+
+    def _enablePbkSort(self):
+        """행을 다 넣은 뒤에만 정렬을 켠다."""
+        if QThread.currentThread() is not self.thread():
+            self._onGui(self._enablePbkSort)
+            return
+        if str(getattr(self, "_watchAlgCd", "") or "") != "pbk":
+            return
+        frz = getattr(self, "tradeWatchFrozen", None)
+        if frz is None or getattr(self, "_watchRefreshBusy", False):
+            return
+        frz.setSortingEnabled(True)
 
     def _tickPbkWatchPx(self):
         """PBK 표의 현재가만 0B 또는 장외 종가로 고친다."""
+        if QThread.currentThread() is not self.thread():
+            self._onGui(self._tickPbkWatchPx)
+            return
         if str(getattr(self, "_watchAlgCd", "") or "") != "pbk":
             return
         frz = getattr(self, "tradeWatchFrozen", None)
