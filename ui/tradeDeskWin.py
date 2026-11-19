@@ -3306,7 +3306,8 @@ class TradeDeskWin(QMainWindow):
         if colorKey == getattr(self, "_titleBarColorKey", None):
             return
         try:
-            hwnd = int(self.winId() or 0)
+            host = self.window() or self
+            hwnd = int(host.winId() or 0)
         except Exception:
             hwnd = 0
         if not hwnd:
