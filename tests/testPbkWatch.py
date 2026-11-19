@@ -9,15 +9,18 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from strategies.impl.pullbackTwoStep import formatBoardLine, formatCandidateLog
 from utils.pbkWatchScreen import (
     backupWatchOnce,
     bootWatchSelection,
     collectionCodes,
     ensurePbkTab,
     ensureWatchBackup,
+    formatPx,
     loadScreenRows,
     readWatchBackup,
     restoreLegacyWatch,
+    screenPrice,
     touchDelta,
     unionRows,
     watchScreenOn,
@@ -98,6 +101,33 @@ class PbkWatchScreenTest(unittest.TestCase):
             self.assertEqual(by["263860"], "후보")
             self.assertEqual(by["009830"], "보유")
             self.assertEqual(by["035420"], "보유")
+
+    def test_board_line_and_live_price(self):
+        line = formatBoardLine(
+            [{"stkCd": "263860", "ma5": 32000}, {"stkCd": "005930"}],
+            [{"stkCd": "009830", "qty": 4}],
+            "08:40:12",
+        )
+        self.assertEqual(line, "[PBK01] 후보 2건 · 보유 1/5 · 최근 재스캔 08:40")
+        self.assertNotIn("\n", line)
+        self.assertNotIn("263860", line)
+        detail = formatCandidateLog([{"stkCd": "263860", "ma5": 32000, "ma20": 30000, "expireDt": "20261231"}])
+        self.assertIn("263860", detail)
+        self.assertEqual(formatPx(13800000000), "13,800,000,000")
+        self.assertEqual(formatPx(None), "-")
+        live = screenPrice({"src": "0B", "curPrc": "33300"}, closePx=25800, inSession=True)
+        closed = screenPrice({"src": "0B", "curPrc": "33300"}, closePx=25800, inSession=False)
+        self.assertEqual(live, 33300)
+        self.assertEqual(closed, 25800)
+        seeded = screenPrice({"src": "dayClose", "curPrc": "25800"}, inSession=False)
+        self.assertEqual(seeded, 25800)
+        rows = unionRows(
+            [{"stkCd": "263860", "ma5": 32000, "ma20": 30000, "expireDt": "20261231"}],
+            [],
+            [],
+        )
+        self.assertEqual(rows[0]["ma5"], 32000)
+        self.assertEqual(rows[0]["ma20"], 30000)
 
 
 if __name__ == "__main__":

@@ -609,6 +609,35 @@ def touchesFromCandidates(candidates, quotes, owned=None):
     return out
 
 
+def heldSlotCount(positions):
+    """수량이 있거나 1·2차가 있는 슬롯 수."""
+    used = 0
+    for pos in positions or []:
+        if not isinstance(pos, dict):
+            continue
+        try:
+            qty = int(pos.get("qty") or 0)
+        except (TypeError, ValueError):
+            qty = 0
+        if qty > 0 or pos.get("leg1") or pos.get("leg2"):
+            used += 1
+    return used
+
+
+def formatBoardLine(candidates, positions, scannedAt="", slotLimit=SLOT_COUNT):
+    """상단 한 줄. 종목 나열과 줄바꿈은 넣지 않는다."""
+    n = 0
+    for row in candidates or []:
+        if isinstance(row, dict) and str(row.get("stkCd") or "").strip():
+            n += 1
+    hm = str(scannedAt or "").strip().replace("\n", " ")
+    if len(hm) >= 5 and hm[2:3] == ":":
+        hm = hm[:5]
+    else:
+        hm = "--:--"
+    return f"[PBK01] 후보 {n}건 · 보유 {heldSlotCount(positions)}/{int(slotLimit)} · 최근 재스캔 {hm}"
+
+
 def formatCandidateLog(rows):
     bits = []
     for row in rows or []:

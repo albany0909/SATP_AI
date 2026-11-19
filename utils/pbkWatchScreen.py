@@ -65,6 +65,8 @@ def unionRows(candidates, positions, accountHolds):
                 "holding": False,
                 "signalDt": "",
                 "expireDt": "",
+                "ma5": None,
+                "ma20": None,
                 "grpCd": "",
             }
             by[code] = row
@@ -83,6 +85,10 @@ def unionRows(candidates, positions, accountHolds):
             row["stkNm"] = name
         row["signalDt"] = str(item.get("signalDt") or "")
         row["expireDt"] = str(item.get("expireDt") or "")
+        if item.get("ma5") is not None:
+            row["ma5"] = item.get("ma5")
+        if item.get("ma20") is not None:
+            row["ma20"] = item.get("ma20")
         row["grpCd"] = row["grpCd"] or "PBK01"
     for item in list(positions or []) + list(accountHolds or []):
         if not _held(item):
@@ -125,6 +131,41 @@ def loadScreenRows(statePath=None, accountHolds=None):
         candidates = []
         positions = []
     return unionRows(candidates, positions, accountHolds)
+
+
+def _px(raw):
+    if raw is None or raw == "":
+        return None
+    try:
+        num = float(str(raw).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+    if num <= 0:
+        return None
+    return num
+
+
+def formatPx(value):
+    """가격을 천 단위 쉼표로. 없으면 빈칸 대신 대시."""
+    num = _px(value)
+    if num is None:
+        return "-"
+    return f"{int(round(num)):,}"
+
+
+def screenPrice(quote, closePx=None, inSession=False):
+    """장중에는 0B 현재가, 장외에는 최근 종가."""
+    quote = quote or {}
+    live = _px(quote.get("curPrc") or quote.get("krxPrc") or quote.get("nxtPrc"))
+    close = _px(closePx)
+    src = str(quote.get("src") or "")
+    if close is None and src == "dayClose":
+        close = live
+    if inSession and src != "dayClose" and live:
+        return live
+    if close:
+        return close
+    return live
 
 
 def screenCodes(rows):

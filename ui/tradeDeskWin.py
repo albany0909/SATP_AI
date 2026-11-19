@@ -1015,6 +1015,7 @@ class TradeDeskWin(QMainWindow):
         # 실계좌 탭 현재가/손익% 0B 캐시 반영 (2초 스로틀)
         self._acntWatchPxTimer = QTimer(self)
         self._acntWatchPxTimer.timeout.connect(self._tickRealAcntWatchPx)
+        self._acntWatchPxTimer.timeout.connect(self._tickPbkWatchPx)
         self._acntWatchPxTimer.start(2000)
         # 거래일 08:00 에 전날 로그/거래를 비우고 당일 분으로 바꾼다.
         self._deskDayTimer = QTimer(self)
@@ -1090,8 +1091,10 @@ class TradeDeskWin(QMainWindow):
         regimeLay.addWidget(self.regimeBadge)
         regimeLay.addWidget(self.regimeDetail, 1)
         outer.addWidget(regimeRow)
-        self.pbkBoard = QLabel("PBK01 중지 · 매수 후보 0건")
-        self.pbkBoard.setWordWrap(True)
+        self.pbkBoard = QLabel("[PBK01] 후보 0건 · 보유 0/5 · 최근 재스캔 --:--")
+        self.pbkBoard.setWordWrap(False)
+        self.pbkBoard.setFixedHeight(22)
+        self.pbkBoard.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.pbkBoard.setStyleSheet("font-size: 12px; color: #37474F;")
         outer.addWidget(self.pbkBoard)
         self._applyRegimeBadge({"regime": "판정불가", "ok": False})
@@ -1931,17 +1934,25 @@ class TradeDeskWin(QMainWindow):
         if frz is None:
             return "", ""
         row = frz.currentRow()
+        if row < 0:
+            return "", ""
+        head0 = ""
+        try:
+            head0 = str(frz.horizontalHeaderItem(0).text() or "")
+        except Exception:
+            head0 = ""
+        if head0 == "구분":
+            codeCell = frz.item(row, 1)
+            nameCell = frz.item(row, 2)
+            cd = normStkCd(codeCell.text() if codeCell is not None else "") or ""
+            nm = str(nameCell.text() or "").strip() if nameCell is not None else ""
+            return cd, nm
         cds = list(getattr(self, "_watchPaintCds", None) or [])
-        if row < 0 or row >= len(cds):
+        if row >= len(cds):
             return "", ""
         cd = normStkCd(cds[row]) or ""
         nm = ""
-        _nc = 0
-        try:
-            if str(frz.horizontalHeaderItem(0).text()) == "변동":
-                _nc = 1
-        except Exception:
-            pass
+        _nc = 1 if head0 == "변동" else 0
         cell = frz.item(row, _nc)
         if cell is not None:
             nm = str(cell.text() or "").strip()
@@ -3206,16 +3217,21 @@ class TradeDeskWin(QMainWindow):
             pass
 
     def _paintPbkBoard(self):
-        """매수 후보와 슬롯. 주문은 하지 않는다."""
+        """상단은 한 줄 요약만. 종목 나열은 관심종목 표에 둔다."""
         board = getattr(self, "pbkBoard", None)
         if board is None:
             return
         try:
             from trading.pbk01Live import deskBoardText
 
-            board.setText(deskBoardText())
+            text = str(deskBoardText() or "").replace("\n", " ")
         except Exception:
-            board.setText("PBK01 중지 · 매수 후보 0건")
+            text = "[PBK01] 후보 0건 · 보유 0/5 · 최근 재스캔 --:--"
+        board.setToolTip(text)
+        width = int(board.width() or 0)
+        if width > 40:
+            text = board.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, width - 8)
+        board.setText(text)
 
     def _startRegimeBackfillOnce(self):
         """autoBackfill 이 켜져 있고 봉이 부족할 때만, 시작 시 한 번 채운다."""
@@ -5467,11 +5483,13 @@ class TradeDeskWin(QMainWindow):
             table.setVisible(surge)
         if surge:
             self._fillSurgeWatch()
-        elif kind in ("leader", "rank20"):
-            self._fillRiseRankWatch()
         elif kind == "pbk":
             self._fillPbkWatch()
+        elif kind in ("leader", "rank20"):
+            self._restoreWatchGrid()
+            self._fillRiseRankWatch()
         else:
+            self._restoreWatchGrid()
             self._fillRealAcntWatch()
         try:
             self._syncLeaderRankTools()
@@ -5496,16 +5514,30 @@ class TradeDeskWin(QMainWindow):
         if not show and timer.isActive():
             timer.stop()
 
+    def _restoreWatchGrid(self):
+        """다른 탭은 틀고정 5열과 오른쪽 표를 다시 쓴다."""
+        frz = getattr(self, "tradeWatchFrozen", None)
+        tbl = getattr(self, "tradeWatchTbl", None)
+        if frz is not None:
+            frz.setSortingEnabled(False)
+            if frz.columnCount() != 5:
+                frz.setColumnCount(5)
+            frz.setVisible(True)
+        if tbl is not None:
+            tbl.setVisible(True)
+
     def _fillPbkWatch(self):
-        """PBK 후보와 모의 보유만 그린다. 예전 관심종목 행은 DB 에 그대로 둔다."""
+        """PBK 후보와 모의 보유. 가격 칸은 정렬용 숫자를 따로 둔다."""
         from utils.appPaths import configDataDir
         from utils.pbkWatchScreen import (
             ensureWatchBackup,
+            formatPx,
             legacyWatchRows,
             loadScreenRows,
             noteScreenRefresh,
             readWatchBackup,
             screenCodes,
+            screenPrice,
             watchScreenOn,
         )
 
@@ -5515,9 +5547,31 @@ class TradeDeskWin(QMainWindow):
             pass
         frz = self.tradeWatchFrozen
         tbl = self.tradeWatchTbl
-        frz.setHorizontalHeaderLabels(["구분", "종목", "코드", "신호일", "만료"])
-        self._WATCH_FRZ_W = (72, 96, 72, 80, 80)
-        tbl.setHorizontalHeaderLabels(["", "", "", ""])
+        headers = ["구분", "코드", "종목명", "MA5가", "MA20가", "현재가", "만료일"]
+        frz.setSortingEnabled(False)
+        if frz.columnCount() != len(headers):
+            frz.setColumnCount(len(headers))
+        frz.setHorizontalHeaderLabels(headers)
+        plain = QStyledItemDelegate(frz)
+        for col in range(len(headers)):
+            frz.setItemDelegateForColumn(col, plain)
+        self._WATCH_FRZ_W = (72, 72, 110, 80, 80, 80, 88)
+        if tbl is not None:
+            tbl.setVisible(False)
+        inSession = False
+        try:
+            from trading.watchRtMonitor import _isQuoteSessionNow
+
+            inSession = bool(_isQuoteSessionNow())
+        except Exception:
+            inSession = False
+        quotes = {}
+        try:
+            from trading.watchRtMonitor import getWatchLastPxMap
+
+            quotes = getWatchLastPxMap() or {}
+        except Exception:
+            quotes = {}
         if not watchScreenOn():
             rows = legacyWatchRows() or readWatchBackup(configDataDir())
             view = []
@@ -5529,8 +5583,6 @@ class TradeDeskWin(QMainWindow):
                     "role": str((row or {}).get("GRP_CD") or (row or {}).get("grpCd") or "관심"),
                     "stkNm": str((row or {}).get("STK_NM") or (row or {}).get("stkNm") or code),
                     "stkCd": code,
-                    "signalDt": "",
-                    "expireDt": "",
                 })
             title = f"관심종목 이전 목록 · {len(view)}종"
         else:
@@ -5541,38 +5593,85 @@ class TradeDeskWin(QMainWindow):
             except Exception:
                 pass
         self.tradeWatchTitle.setText(self._titleText(title))
-        n = len(view) or 1
         if not view:
-            view = [{"role": "", "stkNm": "후보·보유 없음", "stkCd": "", "signalDt": "", "expireDt": ""}]
+            view = [{"role": "", "stkNm": "후보·보유 없음", "stkCd": ""}]
         frz.setUpdatesEnabled(False)
-        tbl.setUpdatesEnabled(False)
         try:
-            frz.setRowCount(n)
-            tbl.setRowCount(n)
+            frz.setRowCount(len(view))
             paint = []
             for i, row in enumerate(view):
+                code = str(row.get("stkCd") or "")
+                quote = quotes.get(code) or {}
+                px = screenPrice(quote, inSession=inSession)
+                expire = str(row.get("expireDt") or "")
+                if len(expire) == 8 and expire.isdigit():
+                    expireTxt = f"{expire[:4]}-{expire[4:6]}-{expire[6:8]}"
+                else:
+                    expireTxt = expire or "-"
                 vals = [
-                    str(row.get("role") or ""),
-                    str(row.get("stkNm") or ""),
-                    str(row.get("stkCd") or ""),
-                    str(row.get("signalDt") or ""),
-                    str(row.get("expireDt") or ""),
+                    (str(row.get("role") or ""), None),
+                    (code, code),
+                    (str(row.get("stkNm") or code or ""), None),
+                    (formatPx(row.get("ma5")), row.get("ma5")),
+                    (formatPx(row.get("ma20")), row.get("ma20")),
+                    (formatPx(px), px),
+                    (expireTxt, expire),
                 ]
-                paint.append(str(row.get("stkCd") or ""))
-                for col, val in enumerate(vals):
-                    item = QTableWidgetItem(val)
+                paint.append(code)
+                for col, (text, sortVal) in enumerate(vals):
+                    item = SurgeSortItem(text)
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    if col == 1 and row.get("stkCd"):
-                        item.setData(Qt.ItemDataRole.UserRole + 1, row.get("stkCd"))
+                    if sortVal not in (None, ""):
+                        try:
+                            item.setData(Qt.ItemDataRole.UserRole + 1, float(sortVal))
+                        except (TypeError, ValueError):
+                            item.setData(Qt.ItemDataRole.UserRole + 1, str(sortVal))
+                    if col == 2 and code:
+                        item.setData(Qt.ItemDataRole.UserRole, code)
                     frz.setItem(i, col, item)
-                for col in range(4):
-                    tbl.setItem(i, col, QTableWidgetItem(""))
             self._watchPaintCds = paint
+            self._pbkPxCol = 5
             self._fitWatchFrozenWidth()
         finally:
             frz.setUpdatesEnabled(True)
-            tbl.setUpdatesEnabled(True)
+            frz.setSortingEnabled(True)
         self._syncWatchScrollBars()
+
+    def _tickPbkWatchPx(self):
+        """PBK 표의 현재가만 0B 또는 장외 종가로 고친다."""
+        if str(getattr(self, "_watchAlgCd", "") or "") != "pbk":
+            return
+        frz = getattr(self, "tradeWatchFrozen", None)
+        if frz is None or not frz.isVisible():
+            return
+        col = int(getattr(self, "_pbkPxCol", 5) or 5)
+        if col >= frz.columnCount():
+            return
+        try:
+            from trading.watchRtMonitor import _isQuoteSessionNow, peekWatchLastPx
+            from utils.pbkWatchScreen import formatPx, screenPrice
+
+            inSession = bool(_isQuoteSessionNow())
+        except Exception:
+            return
+        sorting = frz.isSortingEnabled()
+        frz.setSortingEnabled(False)
+        try:
+            for i in range(frz.rowCount()):
+                codeItem = frz.item(i, 1)
+                code = str(codeItem.text() if codeItem is not None else "")
+                if not code:
+                    continue
+                quote = peekWatchLastPx(code) or {}
+                px = screenPrice(quote, inSession=inSession)
+                item = frz.item(i, col)
+                if item is None:
+                    continue
+                item.setText(formatPx(px))
+                if px is not None:
+                    item.setData(Qt.ItemDataRole.UserRole + 1, float(px))
+        finally:
+            frz.setSortingEnabled(sorting)
 
     def _fillSurgeWatch(self):
         """저장된 스냅샷만 그린다. 여기서 주문을 내지 않는다. 다시 그리는 동안 차트 탭을 열지 않는다."""

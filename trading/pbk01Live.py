@@ -74,8 +74,8 @@ def isPbkEnabled():
 
 
 def deskBoardText(path=None):
-    """저장본이 있으면 그 후보·슬롯을 보여 준다. 주문은 하지 않는다."""
-    from strategies.impl.pullbackTwoStep import formatCandidateLog, formatSlotLog
+    """상단 한 줄. 로그·텔레그램용 후보 나열은 formatCandidateLog 를 쓴다."""
+    from strategies.impl.pullbackTwoStep import formatBoardLine
 
     try:
         from utils.pbk01Store import latestByKind, pbkPath
@@ -83,11 +83,11 @@ def deskBoardText(path=None):
         row = latestByKind(path or pbkPath("pbk01_state.jsonl"), "state") or {}
     except Exception:
         row = {}
-    cand = formatCandidateLog(row.get("candidates") or [])
-    slots = formatSlotLog(row.get("positions") or [])
-    if not row:
-        return "PBK01 중지 · 매수 후보 0건"
-    return cand + "\n" + slots
+    return formatBoardLine(
+        row.get("candidates") or [],
+        row.get("positions") or [],
+        row.get("scannedAt") or "",
+    )
 
 
 def candidateSignature(rows):
@@ -127,6 +127,7 @@ def announceCandidates(rows, positions, ymd, sender=None, log=None, path=None):
     appendRow(filePath, {
         "kind": "state",
         "announcedYmd": str(ymd),
+        "scannedAt": datetime.now().strftime("%H:%M"),
         "candidateKey": candidateSignature(rows),
         "candidates": list(rows or []),
         "positions": list(positions or []),

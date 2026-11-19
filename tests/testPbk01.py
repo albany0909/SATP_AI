@@ -285,8 +285,10 @@ class Pbk01Test(unittest.TestCase):
             self.assertEqual([row["stkCd"] for row in first["touches"]], ["005930"])
             self.assertNotIn("999999", [row["stkCd"] for row in first["touches"]])
             board = live.deskBoardText(path)
-            self.assertIn("후보", board)
-            self.assertIn("005930", board)
+            self.assertNotIn("\n", board)
+            self.assertNotIn("005930", board)
+            self.assertRegex(board, r"\[PBK01\] 후보 \d+건 · 보유 \d+/5 · 최근 재스캔 \d{2}:\d{2}")
+            self.assertIn("005930", sent[0])
             again = live.runPbkCycle(
                 now=now,
                 loader=_loader2,
