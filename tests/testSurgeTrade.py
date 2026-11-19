@@ -828,10 +828,10 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(empty["state"], "NOT_COLLECTED")
         self.assertEqual(empty["rows"], [])
         names = [row["key"] for row in monitorTabCatalog()]
-        self.assertEqual(names, ["acnt", "leader", "surge"])
+        self.assertEqual(names, ["pbk", "acnt", "leader", "surge"])
         self.assertEqual(names, [row["key"] for row in standaloneMonitorTabs()])
         shownTabs = [row["key"] for row in visibleMonitorTabs(settings={})]
-        self.assertEqual(shownTabs, ["surge"])
+        self.assertEqual(shownTabs, ["pbk", "surge"])
         self.assertNotIn("acnt", shownTabs)
         self.assertNotIn("leader", shownTabs)
         rowsAlg = [
@@ -871,9 +871,9 @@ class SurgeTradeTest(unittest.TestCase):
 
     def test_monitor_tabs_reversible_and_operating_bar(self):
         catalog = [row["key"] for row in monitorTabCatalog()]
-        self.assertEqual(catalog, ["acnt", "leader", "surge"])
+        self.assertEqual(catalog, ["pbk", "acnt", "leader", "surge"])
         hidden = [row["key"] for row in visibleMonitorTabs(settings={})]
-        self.assertEqual(hidden, ["surge"])
+        self.assertEqual(hidden, ["pbk", "surge"])
         restored = [
             row["key"]
             for row in visibleMonitorTabs(

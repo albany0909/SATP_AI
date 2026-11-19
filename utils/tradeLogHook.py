@@ -78,10 +78,15 @@ def emitFillLog(sideLabel, stkCd, stkNm, qty, px, ordNo="", cmsn=0, tax=0, cumQt
     except Exception:
         pass
     acntFn = _acntHook
-    if acntFn is None:
-        return
+    if acntFn is not None:
+        try:
+            acntFn()
+        except Exception:
+            pass
     try:
-        acntFn()
+        from utils.pbkWatchScreen import notePaperFill
+
+        notePaperFill(sideLabel, stkCd)
     except Exception:
         pass
 

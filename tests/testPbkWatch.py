@@ -1,0 +1,95 @@
+"""관심종목 화면은 PBK 후보·보유만. 수집 목록과 백업은 따로 둔다."""
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from utils.pbkWatchScreen import (
+    backupWatchOnce,
+    collectionCodes,
+    ensureWatchBackup,
+    loadScreenRows,
+    readWatchBackup,
+    restoreLegacyWatch,
+    touchDelta,
+    unionRows,
+    watchScreenOn,
+)
+from utils.watchDayPrcLoad import collectWatchHoldCds
+
+
+class PbkWatchScreenTest(unittest.TestCase):
+    def test_union_labels_and_paper_guard(self):
+        rows = unionRows(
+            [{"stkCd": "005930", "stkNm": "삼성", "signalDt": "20261104", "expireDt": "20261202"}],
+            [{"stkCd": "009830", "qty": 10, "leg1": {"qty": 1}}],
+            [{"stkCd": "005930", "stkNm": "삼성", "qtyNum": 3}, {"stkCd": "000660", "qty": 0}],
+        )
+        by = {row["stkCd"]: row["role"] for row in rows}
+        self.assertEqual(by["005930"], "후보·보유")
+        self.assertEqual(by["009830"], "보유")
+        self.assertNotIn("000660", by)
+        self.assertEqual([row["stkCd"] for row in rows], ["009830", "005930"])
+        self.assertTrue(watchScreenOn({"deskTradeMode": "paper", "stratLive": {"PBK01": {}}}))
+        self.assertFalse(watchScreenOn({"deskTradeMode": "real", "stratLive": {"PBK01": {}}}))
+        self.assertFalse(watchScreenOn({
+            "deskTradeMode": "paper",
+            "stratLive": {"PBK01": {"watchScreen": False}},
+        }))
+
+    def test_backup_once_and_collection_stays_wide(self):
+        legacy = [
+            {"STK_CD": "005930", "STK_NM": "삼성전자", "GRP_CD": "WEB"},
+            {"STK_CD": "000660", "STK_NM": "SK하이닉스", "GRP_CD": "RANK"},
+        ]
+        with tempfile.TemporaryDirectory() as folder:
+            first = ensureWatchBackup(folder, reader=lambda: legacy)
+            self.assertEqual(first["cnt"], 2)
+            saved = json.loads(Path(first["path"]).read_text(encoding="utf-8"))
+            self.assertEqual(saved[0]["STK_CD"], "005930")
+            self.assertEqual(saved[0]["GRP_CD"], "WEB")
+            again = backupWatchOnce([{"STK_CD": "111111"}], folder)
+            self.assertEqual(again["skipped"], "exists")
+            self.assertEqual(readWatchBackup(folder)[1]["STK_NM"], "SK하이닉스")
+            empty = ensureWatchBackup(folder, reader=lambda: [])
+            self.assertEqual(empty["skipped"], "exists")
+        screen = unionRows([{"stkCd": "263860"}], [], [])
+        wide = collectionCodes(legacy)
+        self.assertIn("005930", wide)
+        self.assertIn("069500", wide)
+        self.assertIn("001", wide)
+        self.assertNotIn("263860", wide)
+        self.assertEqual(screen[0]["stkCd"], "263860")
+        self.assertIn("listActiveWatch", Path("utils/watchDayPrcLoad.py").read_text(encoding="utf-8"))
+        self.assertIn("def collectWatchHoldCds", Path("utils/watchDayPrcLoad.py").read_text(encoding="utf-8"))
+        self.assertTrue(callable(collectWatchHoldCds))
+        delta = touchDelta(["005930", "000660"], ["263860", "005930"], ["000660"])
+        self.assertEqual(delta["added"], ["263860"])
+        self.assertEqual(delta["removed"], [])
+        drop = touchDelta(["263860"], [], [])
+        self.assertEqual(drop["removed"], ["263860"])
+        self.assertIn("def restoreLegacyWatch", Path("utils/pbkWatchScreen.py").read_text(encoding="utf-8"))
+        self.assertTrue(callable(restoreLegacyWatch))
+
+    def test_screen_reads_saved_candidates(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "pbk01_state.jsonl"
+            path.write_text(json.dumps({
+                "kind": "state",
+                "candidates": [{"stkCd": "263860", "signalDt": "20261112", "expireDt": "20261231"}],
+                "positions": [{"stkCd": "009830", "qty": 4, "leg1": {"qty": 1}}],
+            }) + "\n", encoding="utf-8")
+            rows = loadScreenRows(path, accountHolds=[{"stkCd": "035420", "qtyNum": 2, "stkNm": "네이버"}])
+            by = {row["stkCd"]: row["role"] for row in rows}
+            self.assertEqual(by["263860"], "후보")
+            self.assertEqual(by["009830"], "보유")
+            self.assertEqual(by["035420"], "보유")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

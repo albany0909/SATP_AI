@@ -930,6 +930,34 @@ def addWatchRtCodes(codes, reason="장중편입"):
     return len(cds)
 
 
+_pbkTouch = set()
+
+
+def syncPbkTouch(codes, reason="PBK화면"):
+    """PBK 화면 종목만 0B 에 넣고 뺀다. 급등·원장 등 다른 구독은 남긴다."""
+    global _pbkTouch
+    from utils.pbkWatchScreen import touchDelta
+
+    with _lock:
+        registered = list(_regCodes)
+    prev = set(_pbkTouch)
+    keep = [code for code in registered if code not in prev]
+    delta = touchDelta(prev, codes, keep)
+    _pbkTouch = set(delta["screen"])
+    addedN = 0
+    if delta["added"]:
+        addedN = addWatchRtCodes(delta["added"], reason)
+    for code in delta["removed"]:
+        unregWatchStk(code, reason)
+    return {
+        "ok": True,
+        "added": list(delta["added"]),
+        "removed": list(delta["removed"]),
+        "addedN": addedN,
+        "screen": list(delta["screen"]),
+    }
+
+
 def unregWatchStk(stkCd, reason=""):
     """전량 청산 등 — 한 종목만 0B 해지하고 구독 목록에서 뺀다."""
     global _monActive

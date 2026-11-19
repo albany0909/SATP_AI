@@ -257,12 +257,13 @@ def algFgColor(algCd):
 
 # 조회 탭 정의는 유지한다. 숨김은 이 목록을 지우지 않는다.
 _MONITOR_CATALOG = (
+    {"key": "pbk", "name": "PBK", "bg": "#C5E1A5", "kind": "monitor", "algCd": "PBK01"},
     {"key": "acnt", "name": "실계좌", "bg": "#CE93D8", "kind": "shared"},
     {"key": "leader", "name": "주도주", "bg": "#FFCC80", "kind": "shared"},
     {"key": "surge", "name": "급등주", "bg": "#80DEEA", "kind": "monitor", "algCd": "SRG01"},
 )
 # deskMonitorTabs 키가 없을 때의 표시. 실계좌·주도주는 코드만 남기고 숨긴다.
-_DEFAULT_MONITOR_KEYS = ("surge",)
+_DEFAULT_MONITOR_KEYS = ("pbk", "surge")
 
 
 def monitorTabCatalog():

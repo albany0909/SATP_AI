@@ -3525,7 +3525,13 @@ class TradeDeskWin(QMainWindow):
         if bar is None or bar.count() < 1:
             return
         cds = list(getattr(self, "_watchAlgTabCds", None) or [])
-        labels = {"acnt": "실계좌", "leader": "주도주", "rank20": "20일누적", "surge": "급등주"}
+        labels = {
+            "pbk": "PBK",
+            "acnt": "실계좌",
+            "leader": "주도주",
+            "rank20": "20일누적",
+            "surge": "급등주",
+        }
         for i, key in enumerate(cds):
             if i >= bar.count():
                 break
@@ -5440,6 +5446,8 @@ class TradeDeskWin(QMainWindow):
             self._fillSurgeWatch()
         elif kind in ("leader", "rank20"):
             self._fillRiseRankWatch()
+        elif kind == "pbk":
+            self._fillPbkWatch()
         else:
             self._fillRealAcntWatch()
         try:
@@ -5464,6 +5472,84 @@ class TradeDeskWin(QMainWindow):
             timer.start()
         if not show and timer.isActive():
             timer.stop()
+
+    def _fillPbkWatch(self):
+        """PBK 후보와 모의 보유만 그린다. 예전 관심종목 행은 DB 에 그대로 둔다."""
+        from utils.appPaths import configDataDir
+        from utils.pbkWatchScreen import (
+            ensureWatchBackup,
+            legacyWatchRows,
+            loadScreenRows,
+            noteScreenRefresh,
+            readWatchBackup,
+            screenCodes,
+            watchScreenOn,
+        )
+
+        try:
+            ensureWatchBackup(configDataDir())
+        except Exception:
+            pass
+        frz = self.tradeWatchFrozen
+        tbl = self.tradeWatchTbl
+        frz.setHorizontalHeaderLabels(["구분", "종목", "코드", "신호일", "만료"])
+        self._WATCH_FRZ_W = (72, 96, 72, 80, 80)
+        tbl.setHorizontalHeaderLabels(["", "", "", ""])
+        if not watchScreenOn():
+            rows = legacyWatchRows() or readWatchBackup(configDataDir())
+            view = []
+            for row in rows:
+                code = str((row or {}).get("STK_CD") or (row or {}).get("stkCd") or "")
+                if not code:
+                    continue
+                view.append({
+                    "role": str((row or {}).get("GRP_CD") or (row or {}).get("grpCd") or "관심"),
+                    "stkNm": str((row or {}).get("STK_NM") or (row or {}).get("stkNm") or code),
+                    "stkCd": code,
+                    "signalDt": "",
+                    "expireDt": "",
+                })
+            title = f"관심종목 이전 목록 · {len(view)}종"
+        else:
+            view = loadScreenRows(accountHolds=getattr(self, "_acntAllHolds", None) or [])
+            title = f"관심종목 PBK · {len(view)}종"
+            try:
+                noteScreenRefresh("PBK화면", codes=screenCodes(view))
+            except Exception:
+                pass
+        self.tradeWatchTitle.setText(self._titleText(title))
+        n = len(view) or 1
+        if not view:
+            view = [{"role": "", "stkNm": "후보·보유 없음", "stkCd": "", "signalDt": "", "expireDt": ""}]
+        frz.setUpdatesEnabled(False)
+        tbl.setUpdatesEnabled(False)
+        try:
+            frz.setRowCount(n)
+            tbl.setRowCount(n)
+            paint = []
+            for i, row in enumerate(view):
+                vals = [
+                    str(row.get("role") or ""),
+                    str(row.get("stkNm") or ""),
+                    str(row.get("stkCd") or ""),
+                    str(row.get("signalDt") or ""),
+                    str(row.get("expireDt") or ""),
+                ]
+                paint.append(str(row.get("stkCd") or ""))
+                for col, val in enumerate(vals):
+                    item = QTableWidgetItem(val)
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    if col == 1 and row.get("stkCd"):
+                        item.setData(Qt.ItemDataRole.UserRole + 1, row.get("stkCd"))
+                    frz.setItem(i, col, item)
+                for col in range(4):
+                    tbl.setItem(i, col, QTableWidgetItem(""))
+            self._watchPaintCds = paint
+            self._fitWatchFrozenWidth()
+        finally:
+            frz.setUpdatesEnabled(True)
+            tbl.setUpdatesEnabled(True)
+        self._syncWatchScrollBars()
 
     def _fillSurgeWatch(self):
         """저장된 스냅샷만 그린다. 여기서 주문을 내지 않는다. 다시 그리는 동안 차트 탭을 열지 않는다."""

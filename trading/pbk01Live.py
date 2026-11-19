@@ -436,6 +436,12 @@ def runPbkCycle(now=None, loader=None, sender=None, log=None, path=None, quotes=
             log=log,
             path=path,
         )
+        try:
+            from utils.pbkWatchScreen import noteScreenRefresh
+
+            noteScreenRefresh("PBK스캔")
+        except Exception:
+            pass
         _announcedYmd = ymd
         if dueStartup:
             _startupDone = True
