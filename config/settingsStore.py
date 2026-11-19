@@ -5,6 +5,8 @@
 
 import json
 import re
+import shutil
+from datetime import datetime
 from pathlib import Path
 
 from utils.appPaths import configDataDir, resourceRoot
@@ -146,6 +148,47 @@ def _readJson(path):
         return None
 
 
+_recoverOnce = set()
+
+
+def _settingsLog(text):
+    try:
+        from utils.termLog import termLog
+
+        termLog(text)
+    except Exception:
+        pass
+
+
+def backupSettingsFile(path, reason):
+    """덮어쓰기 전에 원본을 옆에 복사하고 로그를 남긴다."""
+    src = Path(path)
+    if not src.is_file():
+        return None
+    stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    dest = src.with_name(f"{src.name}.bak-{stamp}")
+    n = 0
+    while dest.exists():
+        n += 1
+        dest = src.with_name(f"{src.name}.bak-{stamp}-{n}")
+    shutil.copy2(src, dest)
+    _settingsLog(f"[settings] {reason} — 백업 {dest.name}")
+    return dest
+
+
+def salvageDeskTradeMode(text):
+    """깨진 JSON 에서 deskTradeMode 만 꺼낸다. 없으면 빈 문자열."""
+    matched = re.search(r'"deskTradeMode"\s*:\s*"([^"]*)"', str(text or ""))
+    if not matched:
+        return ""
+    raw = matched.group(1).strip().lower()
+    if raw in ("real", "live", "실전"):
+        return "real"
+    if raw in ("paper", "mock", "모의"):
+        return "paper"
+    return ""
+
+
 def _writeJson(path, data):
     """JSON 파일 저장. 디렉터리가 없으면 생성."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -168,12 +211,34 @@ def loadDefaultSettings():
 def loadSettings():
     """
     현재 설정 dict.
-    settings.json이 없거나 깨지면 디폴트로 생성 후 반환한다.
+    파일이 없으면 디폴트로 만든다.
+    파일이 있는데 깨지면 백업만 하고, deskTradeMode 를 읽었을 때만 그 값을 유지한 채 복구본을 쓴다.
+    모드를 못 읽으면 파일을 덮어쓰지 않는다.
     """
     data = _readJson(_SETTINGS_PATH)
     if data is None:
         defaults = loadDefaultSettings()
-        _writeJson(_SETTINGS_PATH, defaults)
+        if not _SETTINGS_PATH.is_file():
+            _writeJson(_SETTINGS_PATH, defaults)
+            _settingsLog("[settings] settings.json 없음 — 디폴트로 생성")
+            return dict(defaults)
+        key = str(_SETTINGS_PATH.resolve())
+        mode = ""
+        try:
+            mode = salvageDeskTradeMode(_SETTINGS_PATH.read_text(encoding="utf-8", errors="replace"))
+        except Exception:
+            mode = ""
+        if key not in _recoverOnce:
+            _recoverOnce.add(key)
+            backupSettingsFile(_SETTINGS_PATH, "파싱 실패")
+            if mode:
+                defaults["deskTradeMode"] = mode
+                _writeJson(_SETTINGS_PATH, defaults)
+                _settingsLog(f"[settings] 파싱 실패 — 복구. deskTradeMode={mode} 유지")
+            else:
+                _settingsLog("[settings] 파싱 실패 — deskTradeMode 를 못 읽어 파일은 그대로 둠")
+        elif mode:
+            defaults["deskTradeMode"] = mode
         return dict(defaults)
 
     defaults = loadDefaultSettings()
@@ -254,10 +319,28 @@ def patchSettings(updates: dict):
 
 def resetSettingsToDefault():
     """
-    settings-default.json 내용으로 settings.json을 덮어쓴다.
-    반환: 복원된 설정 dict
+    settings-default.json 내용으로 되돌린다.
+    기존 파일이 있으면 먼저 백업하고, deskTradeMode 는 기존 값을 유지한다.
     """
     defaults = loadDefaultSettings()
+    mode = ""
+    if _SETTINGS_PATH.is_file():
+        old = _readJson(_SETTINGS_PATH)
+        if isinstance(old, dict):
+            mode = salvageDeskTradeMode(json.dumps(old, ensure_ascii=False))
+        if not mode:
+            try:
+                mode = salvageDeskTradeMode(
+                    _SETTINGS_PATH.read_text(encoding="utf-8", errors="replace")
+                )
+            except Exception:
+                mode = ""
+        backupSettingsFile(_SETTINGS_PATH, "디폴트 복원")
+    if mode:
+        defaults["deskTradeMode"] = mode
+        _settingsLog(f"[settings] 디폴트 복원. deskTradeMode={mode} 유지")
+    else:
+        _settingsLog("[settings] 디폴트 복원. deskTradeMode 는 디폴트")
     saveSettings(defaults)
     return dict(defaults)
 
@@ -512,8 +595,8 @@ def getDeskTradeMode():
     if raw in ("real", "live", "실전"):
         return "real"
     if raw not in ("paper", "mock", "모의"):
-        settings["deskTradeMode"] = "paper"
-        saveSettings(settings)
+        patchSettings({"deskTradeMode": "paper"})
+        _settingsLog("[settings] deskTradeMode 값이 이상해 paper 로 고침")
     return "paper"
 
 
@@ -535,17 +618,15 @@ def getDeskTradeExch():
     if raw == "NXT":
         return "NXT"
     if raw != "KRX":
-        settings["deskTradeExch"] = "KRX"
-        saveSettings(settings)
+        patchSettings({"deskTradeExch": "KRX"})
+        _settingsLog("[settings] deskTradeExch 값이 이상해 KRX 로 고침")
     return "KRX"
 
 
 def setDeskTradeExch(exch):
     """매매 거래소를 저장한다. 반환: 저장된 값."""
     val = "NXT" if str(exch or "").strip().upper() == "NXT" else "KRX"
-    settings = loadSettings()
-    settings["deskTradeExch"] = val
-    saveSettings(settings)
+    patchSettings({"deskTradeExch": val})
     return val
 
 

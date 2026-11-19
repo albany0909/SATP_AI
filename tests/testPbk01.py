@@ -220,7 +220,79 @@ class Pbk01Test(unittest.TestCase):
         )
         self.assertEqual(rows[0]["algCd"], "PBK01")
         self.assertFalse(rows[0]["enabled"])
-        self.assertTrue(rows[0]["specGate"])
+        self.assertFalse(rows[0]["specGate"])
+        from trading.deskLiveAlgs import effectiveAlgEnabled
+        from trading.pbk01Live import isPbkEnabled
+
+        on = {"stratLive": {"PBK01": {"enabled": True, "paperOnly": True}}}
+        self.assertTrue(effectiveAlgEnabled("PBK01", spec, on))
+        with patch("config.settingsStore.loadSettings", return_value=on):
+            self.assertTrue(isPbkEnabled())
+        off = {"stratLive": {"PBK01": {"enabled": False, "paperOnly": True}}}
+        self.assertFalse(effectiveAlgEnabled("PBK01", spec, off))
+
+    def test_startup_scan_announces_once_and_touch_uses_candidates(self):
+        from datetime import datetime
+
+        import trading.pbk01Live as live
+
+        bars = _flat()
+        bars[25]["open"] = 1000
+        bars[25]["close"] = 1200
+        bars[25]["high"] = 1200
+        bars[25]["volume"] = 400
+        day = bars[26]["tradeDt"]
+        sent = []
+
+        def _loader(_ymd):
+            return {
+                "bars": {"005930": bars},
+                "disclosures": [{"title": "영업(잠정)실적", "date": bars[20]["tradeDt"]}],
+                "positions": [],
+                "quotes": {},
+            }
+
+        # disclosures must be keyed by code
+        def _loader2(_ymd):
+            pack = _loader(_ymd)
+            pack["disclosures"] = {"005930": pack["disclosures"]}
+            return pack
+
+        live._announcedYmd = ""
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "pbk01_state.jsonl"
+            now = datetime.strptime(day, "%Y%m%d").replace(hour=16)
+            first = live.runPbkCycle(
+                now=now,
+                loader=_loader2,
+                sender=sent.append,
+                log=lambda _t: None,
+                path=path,
+                quotes={"005930": {"price": 900}, "999999": {"price": 1}},
+                force=True,
+                enabled=True,
+            )
+            self.assertEqual(len(sent), 1)
+            self.assertIn("[PBK01] 후보", sent[0])
+            self.assertIn("005930", sent[0])
+            self.assertEqual([row["stkCd"] for row in first["touches"]], ["005930"])
+            self.assertNotIn("999999", [row["stkCd"] for row in first["touches"]])
+            board = live.deskBoardText(path)
+            self.assertIn("후보", board)
+            self.assertIn("005930", board)
+            again = live.runPbkCycle(
+                now=now,
+                loader=_loader2,
+                sender=sent.append,
+                log=lambda _t: None,
+                path=path,
+                quotes={"005930": {"price": 900}},
+                force=True,
+                enabled=True,
+            )
+            self.assertEqual(len(sent), 1)
+            self.assertEqual(again["touches"][0]["stkCd"], "005930")
+        live._announcedYmd = ""
         self.assertIn("pbkBoard", Path("ui/tradeDeskWin.py").read_text(encoding="utf-8"))
         self.assertIn("v1", Path("strategies/docs/pullbackTwoStep_v1.md").read_text(encoding="utf-8"))
 

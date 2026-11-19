@@ -401,7 +401,11 @@ class LoginWin(QDialog):
                 try:
                     data = json.loads(sp.read_text(encoding="utf-8")) or {}
                 except Exception:
-                    data = {}
+                    from config.settingsStore import backupSettingsFile
+
+                    backupSettingsFile(sp, "로그인 모드 저장 중 파싱 실패")
+                    termLog("[deskLogin] settings.json 파싱 실패 — deskTradeMode 만 고치지 않고 파일은 유지")
+                    return mode
             if not isinstance(data, dict):
                 data = {}
             data["deskTradeMode"] = mode

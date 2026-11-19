@@ -454,6 +454,51 @@ def candidateRows(events, positions, barsByCode, today):
     return out
 
 
+def touchesFromCandidates(candidates, quotes, owned=None):
+    """장중 터치는 계산된 후보(와 이미 잡은 슬롯)만 본다. 목록 밖 종목은 무시한다."""
+    owned = {str(code) for code in (owned or [])}
+    wanted = []
+    for row in candidates or []:
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("stkCd") or "")
+        if not code or code in owned:
+            continue
+        quote = (quotes or {}).get(code) or {}
+        try:
+            px = float(quote.get("price"))
+        except (TypeError, ValueError):
+            continue
+        if px <= 0:
+            continue
+        hit1 = row.get("ma5") is not None and px <= float(row["ma5"])
+        hit2 = row.get("ma20") is not None and px <= float(row["ma20"])
+        if not hit1 and not hit2:
+            continue
+        wanted.append({
+            "stkCd": code,
+            "signalDt": row.get("signalDt") or "",
+            "hitLeg1": hit1,
+            "hitLeg2": hit2,
+            "hasLeg1": False,
+            "hasLeg2": False,
+            "price": px,
+        })
+    allowed = {row["stkCd"] for row in allocateSlotFills(wanted) if row.get("taken")}
+    out = []
+    for row in wanted:
+        if row["stkCd"] not in allowed:
+            continue
+        out.append({
+            "stkCd": row["stkCd"],
+            "leg1": row["hitLeg1"],
+            "leg2": row["hitLeg2"],
+            "price": row["price"],
+            "source": "candidate",
+        })
+    return out
+
+
 def formatCandidateLog(rows):
     bits = []
     for row in rows or []:
@@ -562,4 +607,5 @@ def loadPbkOptions(spec=None):
         "slotCount": slots,
         "slotKrw": int(params.get("slotKrw") or slotBudget(capital, slots)),
         "stopHm": str(params.get("stopHm") or STOP_HM),
+        "scanHm": str(params.get("scanHm") or "08:40"),
     }

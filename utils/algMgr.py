@@ -145,7 +145,7 @@ def algMgrRows(specs, settings, versions=None, counts=None, pnl=None, runs=None,
 
         on = effectiveAlgEnabled(code, spec, settings)
         configured = _configuredOn(code, settings, spec)
-        blocked = code in ("SRG01", "PBK01") and spec.get("enabled") is not True
+        blocked = code == "SRG01" and spec.get("enabled") is not True
         started = bool((runs or {}).get(code))
         runState = classifyAlgRun(
             configured, started, tradingDay, nowHm,
@@ -169,7 +169,7 @@ def algMgrRows(specs, settings, versions=None, counts=None, pnl=None, runs=None,
             "stkCnt": int(counts.get(code) or 0),
             "todayPnl": money.get("today", "-"),
             "cumPnl": money.get("cum", "-"),
-            "specGate": code in ("SRG01", "PBK01") and spec.get("enabled") is not True,
+            "specGate": code == "SRG01" and spec.get("enabled") is not True,
         })
     return out
 

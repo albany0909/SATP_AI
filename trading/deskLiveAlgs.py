@@ -355,13 +355,23 @@ def effectiveAlgEnabled(algCd, spec=None, settings=None):
         if "enabled" in spec:
             return bool(spec.get("enabled"))
         return False
-    if code in ("SRG01", "PBK01"):
+    if code == "SRG01":
         if spec.get("enabled") is not True:
             return False
         if (spec.get("params") or {}).get("paperOnly") is not True:
             return False
         row = (settings.get("stratLive") or {}).get(code)
         return isinstance(row, dict) and row.get("enabled") is True and row.get("paperOnly") is not False
+    if code == "PBK01":
+        # 켜고 끄는 스위치는 settings. 스펙 enabled 는 레포 기본값으로만 둔다.
+        if (spec.get("params") or {}).get("paperOnly") is not True:
+            return False
+        row = (settings.get("stratLive") or {}).get(code)
+        if isinstance(row, dict) and row.get("paperOnly") is False:
+            return False
+        if isinstance(row, dict) and "enabled" in row:
+            return bool(row.get("enabled"))
+        return False
     live = settings.get("stratLive")
     row = live.get(code) if isinstance(live, dict) else None
     if isinstance(row, dict) and "enabled" in row:

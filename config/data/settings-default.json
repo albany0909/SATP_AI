@@ -47,7 +47,8 @@
       "enabled": false,
       "paperOnly": true,
       "capitalKrw": 30000000,
-      "slotCount": 5
+      "slotCount": 5,
+      "scanHm": "08:40"
     }
   },
   "batchSched": {

@@ -29,6 +29,7 @@
     "minAmt20": 300000000,
     "stopRatio": 0.8,
     "stopHm": "151500",
+    "scanHm": "08:40",
     "feeRate": 0.0015
   },
   "rules": {

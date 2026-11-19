@@ -237,6 +237,11 @@ def applyZipUpdate(zipPath, rootDir=None, skipRuntime=True):
             base = Path(name).name
             if base in skipNames or name.endswith(".env"):
                 continue
+            if base == "settings.json" or base.startswith("settings.json.bak"):
+                target = (root / name).resolve()
+                if target.is_file():
+                    termLog(f"[deskUpdate] 기존 설정 유지 — {name}")
+                    continue
             target = (root / name).resolve()
             if not str(target).startswith(str(root.resolve())):
                 continue
@@ -537,7 +542,11 @@ def _syncTradeAppDeskSettings(root: Path, loginInfo=None):
             try:
                 data = json.loads(sp.read_text(encoding="utf-8")) or {}
             except Exception:
-                data = {}
+                from config.settingsStore import backupSettingsFile
+
+                backupSettingsFile(sp, "tradeApp settings 파싱 실패")
+                termLog("[deskUpdate] settings.json 파싱 실패 — 덮어쓰지 않음")
+                return
         if not isinstance(data, dict):
             data = {}
         info = loginInfo or {}
