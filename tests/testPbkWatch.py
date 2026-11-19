@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from strategies.impl.pullbackTwoStep import formatBoardLine, formatCandidateLog
 from utils.pbkWatchScreen import (
+    applyScreenFill,
     backupWatchOnce,
     bootWatchSelection,
     collectionCodes,
@@ -19,9 +20,12 @@ from utils.pbkWatchScreen import (
     formatPx,
     loadScreenRows,
     lookupStkNames,
+    mergeScreenFills,
     readWatchBackup,
+    resetScreenFills,
     restoreLegacyWatch,
     screenPrice,
+    sortRoleGroups,
     touchDelta,
     unionRows,
     watchScreenOn,
@@ -37,10 +41,10 @@ class PbkWatchScreenTest(unittest.TestCase):
             [{"stkCd": "005930", "stkNm": "삼성", "qtyNum": 3}, {"stkCd": "000660", "qty": 0}],
         )
         by = {row["stkCd"]: row["role"] for row in rows}
-        self.assertEqual(by["005930"], "후보·보유")
+        self.assertEqual(by["005930"], "보유")
         self.assertEqual(by["009830"], "보유")
         self.assertNotIn("000660", by)
-        self.assertEqual([row["stkCd"] for row in rows], ["009830", "005930"])
+        self.assertEqual([row["stkCd"] for row in rows], ["005930", "009830"])
         self.assertTrue(watchScreenOn({"deskTradeMode": "paper", "stratLive": {"PBK01": {}}}))
         self.assertFalse(watchScreenOn({"deskTradeMode": "real", "stratLive": {"PBK01": {}}}))
         self.assertFalse(watchScreenOn({
@@ -170,6 +174,45 @@ class PbkWatchScreenTest(unittest.TestCase):
             self.assertEqual(rows[0]["stkNm"], "지니언스")
             kept = loadScreenRows(path, names={})
             self.assertEqual(kept[0]["stkNm"], "263860")
+
+    def test_fill_flips_to_hold_and_flat_keeps_candidate(self):
+        resetScreenFills()
+        base = unionRows(
+            [
+                {"stkCd": "005930", "stkNm": "삼성", "ma5": 70000, "expireDt": "20261231"},
+                {"stkCd": "000660", "stkNm": "하이닉스", "ma5": 200000, "expireDt": "20261231"},
+            ],
+            [],
+            [],
+        )
+        self.assertEqual([row["role"] for row in base], ["후보", "후보"])
+        known = [row["stkCd"] for row in base]
+        self.assertEqual(applyScreenFill("매수", "005930", 3, known=known), 3)
+        self.assertIsNone(applyScreenFill("매수", "999999", 1, known=known))
+        held = mergeScreenFills(base)
+        by = {row["stkCd"]: row["role"] for row in held}
+        self.assertEqual(by["005930"], "보유")
+        self.assertEqual(by["000660"], "후보")
+        self.assertEqual(held[0]["stkCd"], "005930")
+        self.assertEqual(applyScreenFill("매도", "005930", 3, known=known), 0)
+        flat = mergeScreenFills(base)
+        self.assertEqual([row["stkCd"] for row in flat], ["000660", "005930"])
+        self.assertEqual({row["stkCd"]: row["role"] for row in flat}["005930"], "후보")
+        only = unionRows([], [{"stkCd": "009830", "qty": 4, "leg1": {"qty": 1}}], [])
+        self.assertEqual(applyScreenFill("매도", "009830", 4, known=["009830"]), 0)
+        gone = mergeScreenFills(only)
+        self.assertEqual(gone, [])
+        priced = sortRoleGroups(
+            [
+                {"role": "후보", "stkCd": "000660", "ma5": 9},
+                {"role": "보유", "stkCd": "005930", "ma5": 1},
+                {"role": "보유", "stkCd": "035420", "ma5": 5},
+            ],
+            lambda row: row["ma5"],
+            descending=True,
+        )
+        self.assertEqual([row["stkCd"] for row in priced], ["035420", "005930", "000660"])
+        resetScreenFills()
 
 
 if __name__ == "__main__":

@@ -319,6 +319,7 @@ class TradeLogBus(QObject):
     logged = Signal(str, str)
     tradeRow = Signal(object)
     acntRefresh = Signal()
+    watchRefresh = Signal()
 
 
 def initTradeLogBus(parent=None):

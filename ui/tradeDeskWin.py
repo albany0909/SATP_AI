@@ -2293,6 +2293,7 @@ class TradeDeskWin(QMainWindow):
             setAcntRefreshHook,
             setFillLogHook,
             setTradeLogHook,
+            setWatchRefreshHook,
         )
 
         bus = initTradeLogBus(self)
@@ -2301,10 +2302,12 @@ class TradeDeskWin(QMainWindow):
         bus.logged.connect(self.appendTradeLine, queued)
         bus.tradeRow.connect(self.appendDayTrade, queued)
         bus.acntRefresh.connect(self.scheduleAcntRefresh, queued)
+        bus.watchRefresh.connect(self.refreshTradeWatch, queued)
         setTradeLogHook(pushAlgEvtToDesk)
         setFillLogHook(pushFillToDesk)
         # 체결 스레드에서 QTimer.start 직접 호출 금지 — 시그널만 보낸다
         setAcntRefreshHook(lambda: bus.acntRefresh.emit())
+        setWatchRefreshHook(lambda: bus.watchRefresh.emit())
 
     def _bindDeskErr(self):
         """termLog 실패·예외를 오류 탭으로만 받는다."""
@@ -4884,7 +4887,8 @@ class TradeDeskWin(QMainWindow):
         if QThread.currentThread() is not self.thread():
             self._onGui(self.refreshTradeWatch)
             return
-        if getattr(self, "_watchRefreshBusy", False):
+        if getattr(self, "_watchRefreshBusy", False) or getattr(self, "_pbkSortBusy", False):
+            self._watchRefreshPending = True
             return
         if not hasattr(self, "tradeWatchFrozen") or not hasattr(self, "tradeWatchTbl"):
             return
@@ -4897,6 +4901,9 @@ class TradeDeskWin(QMainWindow):
             termLog(f"[매매창] 관심종목 갱신 실패: {err}")
         finally:
             self._watchRefreshBusy = False
+            if getattr(self, "_watchRefreshPending", False):
+                self._watchRefreshPending = False
+                QTimer.singleShot(0, self, self.refreshTradeWatch)
 
     def _fillRiseRankWatch(self):
         """금일·주간·월간 상위 20, 업종 등락 순위."""
@@ -5704,6 +5711,7 @@ class TradeDeskWin(QMainWindow):
                     expireTxt = f"{expire[:4]}-{expire[4:6]}-{expire[6:8]}"
                 else:
                     expireTxt = expire or "-"
+                held = str(row.get("role") or "") == "보유"
                 vals = [
                     (str(row.get("role") or ""), None),
                     (code, code),
@@ -5724,17 +5732,33 @@ class TradeDeskWin(QMainWindow):
                             item.setData(Qt.ItemDataRole.UserRole + 1, str(sortVal))
                     if col == 2 and code:
                         item.setData(Qt.ItemDataRole.UserRole, code)
+                    if held:
+                        item.setBackground(QBrush(QColor("#E8F5E9")))
+                        item.setForeground(QBrush(QColor("#212121")))
                     frz.setItem(i, col, item)
             self._watchPaintCds = paint
             self._pbkPxCol = 5
             self._fitWatchFrozenWidth()
         finally:
             frz.setUpdatesEnabled(True)
+            frz.setSortingEnabled(False)
         self._syncWatchScrollBars()
+        self._bindPbkSortHeader(frz)
+        if getattr(self, "_pbkSortCol", None) is not None:
+            self._reorderPbkRows(frz, self._pbkSortCol, bool(getattr(self, "_pbkSortDesc", False)))
         QTimer.singleShot(0, self, self._enablePbkSort)
 
+    def _bindPbkSortHeader(self, frz):
+        """헤더 클릭은 직접 정렬한다. Qt 정렬은 보유 그룹을 아래로 보낼 수 있다."""
+        header = frz.horizontalHeader()
+        if getattr(self, "_pbkHeaderBound", False):
+            return
+        header.setSortIndicatorShown(True)
+        header.sectionClicked.connect(self._onPbkHeaderClicked)
+        self._pbkHeaderBound = True
+
     def _enablePbkSort(self):
-        """행을 다 넣은 뒤에만 정렬을 켠다."""
+        """갱신이 끝난 뒤에도 Qt 정렬은 켜지 않는다."""
         if QThread.currentThread() is not self.thread():
             self._onGui(self._enablePbkSort)
             return
@@ -5743,7 +5767,65 @@ class TradeDeskWin(QMainWindow):
         frz = getattr(self, "tradeWatchFrozen", None)
         if frz is None or getattr(self, "_watchRefreshBusy", False):
             return
-        frz.setSortingEnabled(True)
+        frz.setSortingEnabled(False)
+        self._bindPbkSortHeader(frz)
+
+    def _onPbkHeaderClicked(self, col):
+        if getattr(self, "_pbkSortBusy", False) or getattr(self, "_watchRefreshBusy", False):
+            self._watchRefreshPending = True
+            return
+        col = int(col)
+        if getattr(self, "_pbkSortCol", None) == col:
+            self._pbkSortDesc = not bool(getattr(self, "_pbkSortDesc", False))
+        else:
+            self._pbkSortCol = col
+            self._pbkSortDesc = False
+        frz = getattr(self, "tradeWatchFrozen", None)
+        if frz is None:
+            return
+        self._reorderPbkRows(frz, col, self._pbkSortDesc)
+
+    def _reorderPbkRows(self, frz, col, descending):
+        """보유 행을 위에 고정하고 그룹 안에서만 순서를 바꾼다."""
+        if getattr(self, "_pbkSortBusy", False):
+            self._watchRefreshPending = True
+            return
+        self._pbkSortBusy = True
+        frz.setSortingEnabled(False)
+        frz.setUpdatesEnabled(False)
+        try:
+            cols = frz.columnCount()
+            packed = []
+            for row in range(frz.rowCount()):
+                items = [frz.takeItem(row, c) for c in range(cols)]
+                roleItem = items[0] if items else None
+                role = str(roleItem.text() if roleItem is not None else "")
+                keyItem = items[col] if 0 <= col < len(items) else None
+                value = None
+                if keyItem is not None:
+                    value = keyItem.data(Qt.ItemDataRole.UserRole + 1)
+                    if value is None:
+                        value = keyItem.text()
+                packed.append({"role": role, "value": value, "index": row, "items": items})
+            from utils.pbkWatchScreen import sortRoleGroups
+
+            ordered = sortRoleGroups(packed, lambda item: item.get("value"), descending=descending)
+            for row, entry in enumerate(ordered):
+                for c, item in enumerate(entry["items"]):
+                    if item is not None:
+                        frz.setItem(row, c, item)
+            header = frz.horizontalHeader()
+            order = (
+                Qt.SortOrder.DescendingOrder if descending else Qt.SortOrder.AscendingOrder
+            )
+            header.setSortIndicator(col, order)
+        finally:
+            frz.setUpdatesEnabled(True)
+            frz.setSortingEnabled(False)
+            self._pbkSortBusy = False
+            if getattr(self, "_watchRefreshPending", False):
+                self._watchRefreshPending = False
+                QTimer.singleShot(0, self, self.refreshTradeWatch)
 
     def _tickPbkWatchPx(self):
         """PBK 표의 현재가만 0B 또는 장외 종가로 고친다."""

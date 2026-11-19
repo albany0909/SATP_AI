@@ -3,6 +3,7 @@
 _hook = None
 _fillHook = None
 _acntHook = None
+_watchHook = None
 
 
 def setTradeLogHook(fn):
@@ -21,6 +22,23 @@ def setAcntRefreshHook(fn):
     """체결 후 계좌/보유 갱신."""
     global _acntHook
     _acntHook = fn
+
+
+def setWatchRefreshHook(fn):
+    """체결 후 관심종목 구분 갱신. GUI 스레드로 넘기는 쪽에서 받는다."""
+    global _watchHook
+    _watchHook = fn
+
+
+def emitWatchRefresh():
+    """관심종목 표를 다시 그리게 한다. 위젯은 건드리지 않는다."""
+    fn = _watchHook
+    if fn is None:
+        return
+    try:
+        fn()
+    except Exception:
+        pass
 
 
 def emitTradeLogRow(row):
@@ -86,13 +104,14 @@ def emitFillLog(sideLabel, stkCd, stkNm, qty, px, ordNo="", cmsn=0, tax=0, cumQt
     try:
         from utils.pbkWatchScreen import notePaperFill
 
-        notePaperFill(sideLabel, stkCd)
+        notePaperFill(sideLabel, stkCd, qty)
     except Exception:
         pass
 
 
 def clearTradeLogHooks():
-    global _hook, _fillHook, _acntHook
+    global _hook, _fillHook, _acntHook, _watchHook
     _hook = None
     _fillHook = None
     _acntHook = None
+    _watchHook = None

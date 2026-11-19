@@ -7,6 +7,7 @@ AI_WATCH_STK 행은 지우지 않는다. 예전 목록은 json 으로 한 번만
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -51,7 +52,7 @@ def _held(row):
 
 
 def unionRows(candidates, positions, accountHolds):
-    """후보와 보유(슬롯·모의 잔고)의 합집합. 구분 칸은 후보/보유/후보·보유."""
+    """후보와 보유(슬롯·모의 잔고)의 합집합. 보유면 구분은 보유, 아니면 후보."""
     by = {}
 
     def slot(code):
@@ -105,16 +106,145 @@ def unionRows(candidates, positions, accountHolds):
             row["grpCd"] = "PAPER" if item.get("leg1") is None and item.get("signalDt") is None else "PBK01"
     out = []
     for row in by.values():
-        if row["candidate"] and row["holding"]:
-            row["role"] = "후보·보유"
-        elif row["holding"]:
+        if row["holding"]:
             row["role"] = "보유"
-        else:
+        elif row["candidate"]:
             row["role"] = "후보"
+        else:
+            continue
         out.append(row)
-    order = {"보유": 0, "후보·보유": 1, "후보": 2}
+    order = {"보유": 0, "후보": 1}
     out.sort(key=lambda row: (order.get(row["role"], 9), row["stkCd"]))
     return out
+
+
+_screenFill = {}
+_screenCodes = []
+_screenLock = threading.Lock()
+
+
+def resetScreenFills():
+    """테스트용. 표시 체결 기억을 비운다."""
+    global _screenCodes
+    with _screenLock:
+        _screenFill.clear()
+        _screenCodes = []
+
+
+def _sideKind(sideLabel):
+    text = str(sideLabel or "")
+    if "매수" in text or text.strip().upper() in ("BUY", "B"):
+        return "BUY"
+    if "매도" in text or text.strip().upper() in ("SELL", "S"):
+        return "SELL"
+    return ""
+
+
+def applyScreenFill(sideLabel, stkCd, qty=0, known=None):
+    """표시용 체결. 매수는 보유, 매도는 전량 청산(0). 매매 상태 파일은 쓰지 않는다.
+
+    known 이 있으면 그 코드(또는 이미 기억한 코드)만 반영한다.
+    """
+    code = _code(stkCd)
+    kind = _sideKind(sideLabel)
+    if not code or not kind:
+        return None
+    try:
+        q = abs(int(qty or 0))
+    except (TypeError, ValueError):
+        q = 0
+    if q <= 0:
+        return None
+    with _screenLock:
+        if known is not None:
+            allowed = {_code(item) for item in known if _code(item)}
+            if code not in allowed and code not in _screenFill:
+                return None
+        if kind == "BUY":
+            _screenFill[code] = int(_screenFill.get(code) or 0) + q
+        else:
+            _screenFill[code] = 0
+        return int(_screenFill[code])
+
+
+def mergeScreenFills(rows):
+    """체결 기억을 구분에 반영한다.
+
+    전량 청산(수량 0)이면 공식 후보일 때만 후보로 남기고, 아니면 뺀다.
+    """
+    by = {}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        code = _code(row.get("stkCd"))
+        if not code:
+            continue
+        item = dict(row)
+        item["stkCd"] = code
+        by[code] = item
+    with _screenLock:
+        for code, qty in list(_screenFill.items()):
+            row = by.get(code)
+            if int(qty or 0) > 0:
+                if row is None:
+                    row = {
+                        "stkCd": code,
+                        "stkNm": code,
+                        "role": "보유",
+                        "candidate": False,
+                        "holding": True,
+                        "signalDt": "",
+                        "expireDt": "",
+                        "ma5": None,
+                        "ma20": None,
+                        "grpCd": "PBK01",
+                    }
+                    by[code] = row
+                row["holding"] = True
+                row["role"] = "보유"
+                continue
+            if row is not None and row.get("candidate"):
+                row["holding"] = False
+                row["role"] = "후보"
+                continue
+            by.pop(code, None)
+            _screenFill.pop(code, None)
+    out = list(by.values())
+    order = {"보유": 0, "후보": 1}
+    out.sort(key=lambda row: (order.get(row.get("role"), 9), row.get("stkCd") or ""))
+    return out
+
+
+def _sortValue(value):
+    if isinstance(value, bool) or value is None or value == "":
+        return (1, 0.0, str(value or ""))
+    if isinstance(value, (int, float)):
+        return (0, float(value), "")
+    text = str(value)
+    try:
+        return (0, float(text.replace(",", "")), "")
+    except (TypeError, ValueError):
+        return (1, 0.0, text)
+
+
+def sortRoleGroups(rows, valueOf, descending=False):
+    """보유를 항상 위에 두고, 그 안에서만 정렬한다."""
+    holds = []
+    cands = []
+    for index, row in enumerate(rows or []):
+        bucket = holds if str((row or {}).get("role") or "") == "보유" else cands
+        bucket.append((index, row))
+
+    def key(pair):
+        kind, num, text = _sortValue(valueOf(pair[1]))
+        if descending:
+            num = -num
+            text = tuple(-ord(ch) for ch in text)
+        return (kind, num, text, pair[0])
+
+    holds.sort(key=key)
+    cands.sort(key=key)
+    return [row for _index, row in holds + cands]
 
 
 _nameCache = {}
@@ -245,7 +375,10 @@ def loadScreenRows(statePath=None, accountHolds=None, names=None):
     except Exception:
         candidates = []
         positions = []
-    rows = unionRows(candidates, positions, accountHolds)
+    rows = mergeScreenFills(unionRows(candidates, positions, accountHolds))
+    global _screenCodes
+    with _screenLock:
+        _screenCodes = [row["stkCd"] for row in rows if row.get("stkCd")]
     if names is None:
         names = lookupStkNames([item["stkCd"] for item in rows if _needsName(item)])
     return applyStkNames(rows, names)
@@ -447,8 +580,18 @@ def noteScreenRefresh(reason, codes=None, accountHolds=None):
         return {"ok": False, "errMsg": str(err), "screen": list(codes or [])}
 
 
-def notePaperFill(sideLabel, stkCd):
-    """모의 매수·매도 체결 뒤에만 화면 시세를 갱신한다."""
+def notePaperFill(sideLabel, stkCd, qty=0):
+    """모의 매수·매도 체결 뒤에 구분과 화면 시세를 갱신한다."""
     if not watchScreenOn():
         return {"ok": True, "skipped": "off"}
+    with _screenLock:
+        known = list(_screenCodes)
+    changed = applyScreenFill(sideLabel, stkCd, qty, known=known)
+    if changed is not None:
+        try:
+            from utils.tradeLogHook import emitWatchRefresh
+
+            emitWatchRefresh()
+        except Exception:
+            pass
     return noteScreenRefresh(f"체결 {sideLabel} {stkCd}")
