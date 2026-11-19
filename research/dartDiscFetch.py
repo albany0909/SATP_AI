@@ -192,6 +192,8 @@ def fetchMarketDisclosures(bgnDe, endDe, corpCls="", pageCount=100, getter=None,
             items.append({
                 "rceptNo": rcept,
                 "stkCd": stock,
+                "corpCode": str(row.get("corp_code") or "").strip(),
+                "corpNm": str(row.get("corp_name") or "").strip(),
                 "reportNm": str(row.get("report_nm") or "").strip(),
                 "rceptDt": str(row.get("rcept_dt") or "").replace("-", "")[:8],
             })

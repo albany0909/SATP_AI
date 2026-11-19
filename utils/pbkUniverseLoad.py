@@ -172,7 +172,8 @@ def planDartRange(oldest, newest, today, lookbackDays=120):
 
 
 def _gapPath(storePath):
-    return Path(storePath).with_name("pbk01_dart_gap.json")
+    path = Path(storePath)
+    return path.with_name(f"{path.stem}_gap.json")
 
 
 def _readGaps(storePath):
@@ -254,7 +255,102 @@ def saveMarketEarnings(items, path=None):
     return appendDisclosures(items, path=path)
 
 
-def runUniverseClose(endDt=None, settings=None, dartFetch=None, codes=None, statFn=None, fetcher=None, writer=None, slot=None, log=None, dartPath=None):
+def _fetchWindows(dartFetch, windows, pblntfTy, log):
+    """구간마다 코스피·코스닥을 받고, 실패한 구간은 남긴다."""
+    items = []
+    failed = []
+    calls = 0
+    for piece in windows:
+        for cls in ("Y", "K"):
+            try:
+                got = dartFetch(piece["start"], piece["end"], corpCls=cls, pblntfTy=pblntfTy) or {}
+            except TypeError:
+                got = dartFetch(piece["start"], piece["end"], corpCls=cls) or {}
+            calls += int(got.get("calls") or 1)
+            items.extend(got.get("items") or [])
+            if not got.get("ok"):
+                if piece not in failed:
+                    failed.append(piece)
+                log(
+                    f"[PBK01] 공시 구간 실패 {piece['start']}~{piece['end']} "
+                    f"{got.get('errMsg') or ''} — 다음에 다시"
+                )
+    return items, failed, calls
+
+
+def backfillPeriodic(end, windows, dartFetch=None, finPath=None, callsLeft=None, log=None):
+    """정기보고서(pblntf_ty=A)를 30일 구간으로 받고 S1 을 jsonl 에 붙인다."""
+    from research.pbkSurprise import (
+        DART_DAILY_LIMIT,
+        evaluateReports,
+        estimateSurpriseCalls,
+        loadStatement,
+        parsePeriodic,
+    )
+    from utils.pbkFinStore import appendFinRows, finPath as defaultFin, seenReceipts
+
+    log = log or termLog
+    store = finPath or defaultFin()
+    est = estimateSurpriseCalls()
+    if not windows:
+        log("[PBK01] 정기보고서 최신")
+        return {"listCalls": 0, "finCalls": 0, "added": 0, "pending": 0, "reports": [], "estimate": est}
+    log(
+        f"[PBK01] 정기보고서 예상 목록 {est['listCalls']}회 · 재무 {est['finCalls']}회 · "
+        f"합계 {est['total']}회 · 일일 한도 {est['dailyLimit']} · 약 {est['seconds'] // 60}분"
+    )
+    if dartFetch is None:
+        from research.dartDiscFetch import fetchMarketDisclosures
+
+        dartFetch = fetchMarketDisclosures
+    items, failed, listCalls = _fetchWindows(dartFetch, windows, "A", log)
+    listed = None
+    try:
+        listed = set(listKospiKosdaq())
+    except Exception:
+        listed = None
+    reports = []
+    for item in items:
+        spec = parsePeriodic(item.get("reportNm") or "", item.get("rceptDt") or "")
+        if not spec:
+            continue
+        code = str(item.get("stkCd") or "")
+        if listed is not None and code not in listed:
+            continue
+        if listed is None and not isCommonStock(code, item.get("corpNm") or "", "", ""):
+            continue
+        if not item.get("corpCode"):
+            continue
+        reports.append(item)
+    budget = DART_DAILY_LIMIT if callsLeft is None else int(callsLeft)
+    budget = max(0, budget - listCalls)
+
+    def _fetch(corp, year, reprt):
+        return loadStatement(corp, year, reprt)
+
+    judged = evaluateReports(reports, seenReceipts(store), _fetch, budget, pauseSec=0.05)
+    added = appendFinRows(judged.get("saved") or [], path=store)
+    pending = list(judged.get("pending") or [])
+    if pending:
+        day = str(pending[0].get("rceptDt") or end)[:8]
+        failed.append({"start": day, "end": str(end)[:8]})
+    _writeGaps(store, failed)
+    finCalls = int(judged.get("calls") or 0)
+    log(
+        f"[PBK01] 정기보고서 목록 {listCalls}회 · 재무 {finCalls}회 · "
+        f"일일 한도 {DART_DAILY_LIMIT} · 저장 {added}건 · 보류 {len(pending)}건"
+    )
+    return {
+        "listCalls": listCalls,
+        "finCalls": finCalls,
+        "added": added,
+        "pending": len(pending),
+        "reports": reports,
+        "estimate": est,
+    }
+
+
+def runUniverseClose(endDt=None, settings=None, dartFetch=None, codes=None, statFn=None, fetcher=None, writer=None, slot=None, log=None, dartPath=None, finPath=None):
     """장마감 후 실적 공시와 없는 일봉을 채운다. universeLoad 가 꺼지면 하지 않는다."""
     if not universeLoadEnabled(settings):
         return {"ok": True, "skipped": "off", "summary": "[PBK01] 전 종목 적재 꺼짐"}
@@ -279,24 +375,33 @@ def runUniverseClose(endDt=None, settings=None, dartFetch=None, codes=None, stat
     for gap in _readGaps(storePath):
         if gap not in windows:
             windows.append(gap)
-    failed = []
-    calls = 0
-    for piece in windows:
-        for cls in ("Y", "K"):
-            got = dartFetch(piece["start"], piece["end"], corpCls=cls) or {}
-            calls += int(got.get("calls") or 1)
-            items.extend(got.get("items") or [])
-            if not got.get("ok"):
-                if piece not in failed:
-                    failed.append(piece)
-                termLog(
-                    f"[PBK01] 공시 구간 실패 {piece['start']}~{piece['end']} "
-                    f"{got.get('errMsg') or ''} — 다음에 다시"
-                )
+    items, failed, calls = _fetchWindows(dartFetch, windows, "I", termLog)
     _writeGaps(storePath, failed)
     termLog(f"[PBK01] 실적 공시 호출 {calls}회 · 실패 구간 {len(failed)}개")
     added = saveMarketEarnings(items, path=storePath)
     termLog(f"[PBK01] 실적 공시 추가 {added}건")
+    from utils.pbkFinStore import finPath as defaultFinPath
+
+    finStore = defaultFinPath() if finPath is None else finPath
+    finOld, finNew = _savedDartSpan(finStore)
+    finWindow = planDartRange(finOld, finNew, end, lookbackDays=lookback)
+    finWindows = []
+    if finWindow is not None:
+        finWindows.extend(splitDartWindows(finWindow["start"], finWindow["end"]))
+    for gap in _readGaps(finStore):
+        if gap not in finWindows:
+            finWindows.append(gap)
+    try:
+        from research.pbkSurprise import DART_DAILY_LIMIT
+
+        surprise = backfillPeriodic(
+            end, finWindows, dartFetch=dartFetch, finPath=finStore,
+            callsLeft=DART_DAILY_LIMIT - calls, log=termLog,
+        )
+    except Exception as err:
+        termLog(f"[PBK01] 정기보고서 판정 실패: {err}")
+        surprise = {}
+    items.extend(surprise.get("reports") or [])
     try:
         _ensureDisclosureBars(items, end, statFn, fetcher, writer, slot, log)
     except Exception as err:

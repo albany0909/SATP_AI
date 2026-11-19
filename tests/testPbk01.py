@@ -14,9 +14,13 @@ from scripts.deployPackUtil import shouldSkipRel
 from strategies.impl.pullbackTwoStep import (
     PaperOnlyError,
     allocateSlotFills,
+    barsCoverAsOf,
+    buySpan,
+    candidateRows,
     disclosureAccepted,
     exitOn,
     findCandleEvent,
+    findCandleEvents,
     floorQty,
     formatCandidateLog,
     inBuyWindow,
@@ -410,9 +414,208 @@ class Pbk01Test(unittest.TestCase):
         self.assertTrue(shouldSkipRel("config/data/_bak/settings.json.20261119"))
         self.assertTrue(shouldSkipRel("config/data/settings.json"))
         self.assertTrue(shouldSkipRel("config/data/pbk01_state.jsonl"))
+        self.assertTrue(shouldSkipRel("config/data/pbk01_fin.jsonl"))
         self.assertFalse(shouldSkipRel("config/data/settings-default.json"))
         default = Path("config/data/settings-default.json").read_text(encoding="utf-8")
         self.assertIn('"deskTradeMode": "paper"', default)
+
+    def _calendar(self, n=80, start="20260803"):
+        from datetime import datetime, timedelta
+
+        cur = datetime.strptime(start, "%Y%m%d")
+        out = []
+        while len(out) < n:
+            if cur.weekday() < 5:
+                out.append(cur.strftime("%Y%m%d"))
+            cur += timedelta(days=1)
+        return out
+
+    def _barsOn(self, dates):
+        rows = []
+        for day in dates:
+            rows.append({
+                "tradeDt": day,
+                "open": 1000.0,
+                "high": 1000.0,
+                "low": 1000.0,
+                "close": 1000.0,
+                "volume": 100.0,
+                "amount": 400_000_000.0,
+            })
+        return rows
+
+    def _markLong(self, bars, idx):
+        bars[idx]["open"] = 1000
+        bars[idx]["close"] = 1200
+        bars[idx]["high"] = 1200
+        bars[idx]["volume"] = 400
+
+    def test_stale_bars_and_calendar_window(self):
+        from trading.pbk01Live import buildScan
+
+        cal = self._calendar()
+        bars = self._barsOn(cal[:30])
+        self._markLong(bars, 24)
+        discs = {"009830": [{"title": "영업(잠정)실적", "date": cal[20], "rceptNo": "a"}]}
+        logs = []
+        _events, rows = buildScan(
+            {"009830": bars},
+            discs,
+            cal[50],
+            asOf=cal[50],
+            calendar=cal,
+            surprises={},
+            log=logs.append,
+        )
+        self.assertEqual(rows, [])
+        self.assertEqual(logs, ["[PBK01] 봉 부족 제외 1건"])
+        self.assertFalse(barsCoverAsOf(bars, cal[50]))
+        full = self._barsOn(cal)
+        self._markLong(full, 24)
+        self.assertTrue(barsCoverAsOf(full, cal[50]))
+        # 종목 봉은 신호일과 나중 두 개뿐이라 봉 개수로는 창이 짧아 보인다.
+        # 달력으로는 41거래일이라 닫혀 있고, 40거래일이면 열려 있다.
+        thin = [full[10], full[51]]
+        self._markLong(thin, 0)
+        events = [{
+            "stkCd": "009830",
+            "signalDt": cal[10],
+            "receiptDt": cal[8],
+        }]
+        self.assertEqual(buySpan(cal[10], cal[51], cal), 41)
+        self.assertEqual(candidateRows(events, [], {"009830": thin}, cal[51], calendar=cal), [])
+        self.assertEqual(buySpan(cal[10], cal[50], cal), 40)
+        openRows = candidateRows(events, [], {"009830": [full[10], full[50]]}, cal[50], calendar=cal)
+        self.assertEqual([row["stkCd"] for row in openRows], ["009830"])
+        self.assertEqual(openRows[0]["expireDt"], cal[50])
+
+    def test_each_filing_can_make_an_event(self):
+        cal = self._calendar()
+        bars = self._barsOn(cal)
+        self._markLong(bars, 24)
+        self._markLong(bars, 48)
+        discs = [
+            {"title": "영업(잠정)실적", "date": cal[20], "rceptNo": "old"},
+            {"title": "연결 잠정실적", "date": cal[44], "rceptNo": "new"},
+        ]
+        found = findCandleEvents(bars, discs, "009830", asOf=cal[-1], calendar=cal)
+        self.assertEqual([row["signalDt"] for row in found], [cal[24], cal[48]])
+        latest = candidateRows(found, [], {"009830": bars}, cal[70], calendar=cal)
+        self.assertEqual(latest[0]["signalDt"], cal[48])
+        held = candidateRows(
+            found,
+            [{"stkCd": "009830", "qty": 10, "leg1": {"qty": 1}}],
+            {"009830": bars},
+            cal[70],
+            calendar=cal,
+        )
+        self.assertEqual(held, [])
+        same = self._barsOn(cal)
+        self._markLong(same, 24)
+        dup = findCandleEvents(same, [
+            {"title": "영업실적", "date": cal[20], "rceptNo": "1"},
+            {"title": "손익구조", "date": cal[22], "rceptNo": "2"},
+        ], "009830", asOf=cal[-1], calendar=cal)
+        self.assertEqual(len(dup), 1)
+        self.assertEqual(dup[0]["signalDt"], cal[24])
+        surprise = findCandleEvents(bars, [
+            {"title": "분기보고서 (2025.09)", "date": cal[44], "rceptNo": "s1", "source": "S1"},
+        ], "263860", asOf=cal[-1], calendar=cal)
+        self.assertEqual(surprise[0]["signalDt"], cal[48])
+        self.assertEqual(surprise[0]["receiptDt"], cal[44])
+        self.assertIsNone(findCandleEvent(bars, [
+            {"title": "분기보고서 (2025.09)", "date": cal[44], "rceptNo": "s1"},
+        ], "263860", asOf=cal[-1], calendar=cal))
+
+    def test_periodic_surprise_rules_and_call_budget(self):
+        from research.pbkSurprise import (
+            DART_DAILY_LIMIT,
+            estimateSurpriseCalls,
+            evaluateReports,
+            loadStatement,
+            parsePeriodic,
+            passesS1,
+        )
+        from utils.pbkFinStore import appendFinRows, surprisesByCode
+
+        self.assertEqual(parsePeriodic("분기보고서 (2025.09)")["quarter"], 3)
+        self.assertEqual(parsePeriodic("반기보고서 (2025.06)")["reprt"], "11012")
+        self.assertEqual(parsePeriodic("사업보고서 (2025.12)")["quarter"], 4)
+        self.assertIsNone(parsePeriodic("[기재정정]분기보고서 (2025.09)"))
+        cumulative = {
+            1: {"sales": 100, "salesLy": 90, "op": 10, "opLy": 10},
+            2: {"sales": 210, "salesLy": 190, "op": 20, "opLy": 18},
+            3: {"sales": 330, "salesLy": 290, "op": 80, "opLy": 40},
+        }
+        got = passesS1(cumulative, 3)
+        self.assertTrue(got["pass"])
+        self.assertAlmostEqual(got["salesYoy"], 0.20)
+        self.assertGreater(got["opYoy"], 0.50)
+        self.assertLess(got["prevSalesYoy"], got["salesYoy"])
+        flat = dict(cumulative)
+        flat[3] = {"sales": 320, "salesLy": 290, "op": 80, "opLy": 40}
+        self.assertFalse(passesS1(flat, 3)["pass"])
+        zero = dict(cumulative)
+        zero[3] = {"sales": 330, "salesLy": 0, "op": 80, "opLy": 40}
+        self.assertFalse(passesS1(zero, 3)["pass"])
+        est = estimateSurpriseCalls(2400, seasons=2)
+        self.assertEqual(est["finCalls"], 7200)
+        self.assertLessEqual(est["total"], DART_DAILY_LIMIT)
+        self.assertGreater(est["seconds"], 0)
+        secret = "DARTSECRET123"
+
+        def _boom(_corp, _year, _reprt):
+            raise RuntimeError("crtfc_key=" + secret)
+
+        hidden = loadStatement("00123456", 2025, "11014", getter=_boom, key=secret)
+        self.assertNotIn(secret, json.dumps(hidden))
+        calls = []
+
+        def _fetch(_corp, year, reprt):
+            calls.append((year, reprt))
+            table = {
+                ("11013", 2025): (100, 90, 10, 10),
+                ("11012", 2025): (210, 190, 20, 18),
+                ("11014", 2025): (330, 290, 80, 40),
+            }
+            sales, salesLy, op, opLy = table[(reprt, year)]
+            return {
+                "ok": True,
+                "calls": 1,
+                "fsDiv": "CFS",
+                "sales": sales,
+                "salesLy": salesLy,
+                "op": op,
+                "opLy": opLy,
+            }
+
+        reports = [
+            {
+                "rceptNo": "h1", "stkCd": "263860", "corpCode": "001",
+                "rceptDt": "20250814", "reportNm": "반기보고서 (2025.06)",
+            },
+            {
+                "rceptNo": "q3", "stkCd": "263860", "corpCode": "001",
+                "rceptDt": "20251113", "reportNm": "분기보고서 (2025.09)",
+            },
+        ]
+        judged = evaluateReports(reports, set(), _fetch, 100, pauseSec=0)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(sorted(calls), [(2025, "11012"), (2025, "11013"), (2025, "11014")])
+        byNo = {row["rceptNo"]: row for row in judged["saved"]}
+        self.assertTrue(byNo["q3"]["pass"])
+        stopped = evaluateReports(reports[:1], set(), _fetch, 1, pauseSec=0)
+        self.assertEqual(stopped["calls"], 0)
+        self.assertEqual(len(stopped["pending"]), 1)
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "pbk01_fin.jsonl"
+            path.write_text(json.dumps({"rceptNo": "keep", "stkCd": "263860", "pass": False}) + "\n", encoding="utf-8")
+            n = appendFinRows(judged["saved"], path=path)
+            self.assertEqual(n, 2)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8").splitlines()[0])["rceptNo"], "keep")
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("crtfc", text)
+            self.assertEqual(list(surprisesByCode(path).keys()), ["263860"])
 
 
 if __name__ == "__main__":

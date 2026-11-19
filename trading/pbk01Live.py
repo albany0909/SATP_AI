@@ -152,25 +152,146 @@ def _barsForSignal(bars):
     return out
 
 
-def buildScan(barsByCode, disclosuresByCode, today, positions=None):
-    """findCandleEvent 로 종목당 신호를 만들고 candidateRows 로 후보를 고른다."""
-    from strategies.impl.pullbackTwoStep import candidateRows, findCandleEvent
+def barAsOf(now):
+    """확정된 마지막 거래일. 장중·장전에는 직전 거래일, 장마감 후면 그날."""
+    from config.krHoliday import isTradingDay, prevTradingDay
 
+    ymd = now.strftime("%Y%m%d")
+    if isTradingDay(now) and now.strftime("%H%M%S") >= "153000":
+        return ymd
+    return prevTradingDay(now) or ymd
+
+
+def sessionDay(now):
+    """매수 창을 재는 세션. 휴일이면 다음 거래일."""
+    from config.krHoliday import isTradingDay, nextTradingDay
+
+    if isTradingDay(now):
+        return now.strftime("%Y%m%d")
+    return nextTradingDay(now) or now.strftime("%Y%m%d")
+
+
+def _loadMarketDates():
+    """코스피 지수 jsonl, 없으면 069500 저장 일봉. 없으면 빈 목록."""
+    dates = []
+    try:
+        from utils.kospiIdxLoad import _readJsonl, kospiJsonlPath
+
+        for row in _readJsonl(kospiJsonlPath()) or []:
+            day = str((row or {}).get("TRADE_DT") or "")[:8]
+            if len(day) == 8:
+                dates.append(day)
+    except Exception:
+        dates = []
+    if len(set(dates)) >= 40:
+        return sorted(set(dates))
+    try:
+        from utils.chartBarLoad import loadStoredDayBars
+
+        for bar in loadStoredDayBars("069500") or []:
+            day = str((bar or {}).get("tradeDt") or "")[:8]
+            if len(day) == 8:
+                dates.append(day)
+    except Exception:
+        pass
+    return sorted(set(dates))
+
+
+def _mergeDisclosures(disclosuresByCode, surprises):
+    out = {}
+    for code, items in (disclosuresByCode or {}).items():
+        out.setdefault(str(code), []).extend(list(items or []))
+    for code, items in (surprises or {}).items():
+        out.setdefault(str(code), []).extend(list(items or []))
+    return out
+
+
+def buildScan(barsByCode, disclosuresByCode, today, positions=None, asOf=None, calendar=None, surprises=None, log=None):
+    """공시마다 장대양봉을 찾고, 창이 열린 가장 최근 이벤트를 후보로 고른다.
+
+    asOf(직전 거래일)까지 봉이 없으면 후보에서 빼고 '봉 부족 제외 N건'을 남긴다.
+    """
+    from datetime import datetime, timedelta
+
+    from strategies.impl.pullbackTwoStep import (
+        barsCoverAsOf,
+        candidateRows,
+        findCandleEvents,
+        holidayCalendar,
+    )
+
+    session = str(today or "")[:8]
+    if surprises is None:
+        try:
+            from utils.pbkFinStore import surprisesByCode
+
+            surprises = surprisesByCode()
+        except Exception:
+            surprises = {}
+    discs = _mergeDisclosures(disclosuresByCode, surprises)
+    if calendar is None and session:
+        marks = [session]
+        if asOf:
+            marks.append(str(asOf)[:8])
+        for items in discs.values():
+            for item in items or []:
+                day = str((item or {}).get("date") or (item or {}).get("rceptDt") or "")[:8]
+                if len(day) == 8:
+                    marks.append(day)
+        start = min(marks)
+        end = (datetime.strptime(max(marks), "%Y%m%d") + timedelta(days=120)).strftime("%Y%m%d")
+        calendar = holidayCalendar(start, end, _loadMarketDates())
     events = []
     normalized = {}
-    for code, bars in (barsByCode or {}).items():
-        rows = _barsForSignal(bars)
+    excluded = 0
+    codes = sorted(set(list((barsByCode or {}).keys()) + list(discs.keys())))
+    for code in codes:
+        rows = _barsForSignal((barsByCode or {}).get(code))
         normalized[code] = rows
-        event = findCandleEvent(
+        if code not in discs:
+            continue
+        if asOf and not barsCoverAsOf(rows, asOf):
+            excluded += 1
+            continue
+        events.extend(findCandleEvents(
             rows,
-            (disclosuresByCode or {}).get(code) or [],
+            discs.get(code) or [],
             code,
-            asOf=today,
-        )
-        if event:
-            events.append(event)
-    rows = candidateRows(events, positions or [], normalized, today)
-    return events, rows
+            asOf=asOf or session,
+            calendar=calendar,
+        ))
+    if excluded:
+        _safeLog(log, f"[PBK01] 봉 부족 제외 {excluded}건")
+    picked = candidateRows(events, positions or [], normalized, session, calendar=calendar)
+    return events, picked
+
+
+def refreshStaleBars(barsByCode, codes, asOf, fetcher=None):
+    """직전 거래일 봉이 없는 종목만 먼저 받는다. 읽기 전용 스캔 전에 호출한다."""
+    from strategies.impl.pullbackTwoStep import barsCoverAsOf
+
+    stale = [code for code in codes or [] if not barsCoverAsOf((barsByCode or {}).get(code), asOf)]
+    if not stale:
+        return barsByCode or {}
+    if fetcher is None:
+        def fetcher(want, end):
+            from utils.pbkUniverseLoad import _loadWithKiwoom
+
+            return _loadWithKiwoom(want, end)
+    try:
+        fetcher(stale, asOf)
+    except Exception as err:
+        _safeLog(None, f"[PBK01] 봉 우선 조회 실패: {err}")
+    try:
+        from utils.chartBarLoad import loadStoredDayBars
+
+        for code in stale:
+            got = loadStoredDayBars(code, endYmd=asOf) or []
+            if got:
+                barsByCode[code] = got
+    except Exception as err:
+        _safeLog(None, f"[PBK01] 봉 재읽기 실패: {err}")
+    return barsByCode
 
 
 def touchesForQuotes(candidates, quotes, owned=None):
@@ -283,11 +404,29 @@ def runPbkCycle(now=None, loader=None, sender=None, log=None, path=None, quotes=
             _safeLog(log, "[PBK01] 후보 계산 실패")
             pack = {}
         positions = pack.get("positions") or []
+        asOf = barAsOf(now)
+        session = sessionDay(now)
+        bars = dict(pack.get("bars") or {})
+        discs = pack.get("disclosures") or {}
+        surprises = pack.get("surprises")
+        if surprises is None:
+            try:
+                from utils.pbkFinStore import surprisesByCode
+
+                surprises = surprisesByCode()
+            except Exception:
+                surprises = {}
+        codes = sorted(set(list(bars.keys()) + list(discs.keys()) + list(surprises.keys())))
+        if pack.get("refreshBars", True):
+            bars = refreshStaleBars(bars, codes, asOf, fetcher=pack.get("barFetcher"))
         _events, rows = buildScan(
-            pack.get("bars") or {},
-            pack.get("disclosures") or {},
-            ymd,
+            bars,
+            discs,
+            session,
             positions,
+            asOf=asOf,
+            surprises=surprises,
+            log=log,
         )
         announceCandidates(
             rows,

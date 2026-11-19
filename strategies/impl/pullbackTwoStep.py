@@ -190,69 +190,165 @@ def _sortBars(bars):
     return out
 
 
-def findCandleEvent(bars, disclosures, stkCd, asOf=None):
-    """종목당 첫 실적 장대양봉. asOf 이후 봉과 공시는 보지 않는다."""
+def barsCoverAsOf(bars, asOf):
+    """마지막 봉이 직전 거래일 asOf 와 같아야 한다. 그 이후 봉은 보지 않는다."""
+    want = _ymd(asOf)
+    if not want:
+        return False
+    rows = [bar for bar in _sortBars(bars) if _barDt(bar) <= want]
+    return bool(rows) and _barDt(rows[-1]) == want
+
+
+def holidayCalendar(start, end, marketDates=None):
+    """거래일 달력. 069500·코스피 날짜가 촘촘하면 그 구간은 그 날짜를 쓰고, 빈 곳과 앞날은 휴장 달력으로 채운다."""
+    from datetime import datetime, timedelta
+
+    from config.krHoliday import isTradingDay
+
+    a = datetime.strptime(_ymd(start), "%Y%m%d")
+    b = datetime.strptime(_ymd(end), "%Y%m%d")
+    if b < a:
+        a, b = b, a
+    hol = []
+    cur = a
+    while cur <= b:
+        if isTradingDay(cur):
+            hol.append(cur.strftime("%Y%m%d"))
+        cur += timedelta(days=1)
+    market = sorted({_ymd(day) for day in (marketDates or []) if _ymd(day)})
+    if len(market) < 2 or not hol:
+        return hol
+    first, last = market[0], market[-1]
+    overlap = [day for day in hol if first <= day <= last]
+    if not overlap:
+        return hol
+    hit = len(set(market) & set(overlap))
+    if hit / float(len(overlap)) < 0.9:
+        return hol
+    return [day for day in hol if day < first] + market + [day for day in hol if day > last]
+
+
+def tradingDaysAfter(signalDt, calendar, n):
+    """신호일 다음 거래일부터 n개. 창의 마지막 날이 만료일이다."""
+    after = [day for day in (calendar or []) if day > _ymd(signalDt)]
+    return after[: int(n)]
+
+
+def buySpan(signalDt, sessionDt, calendar):
+    """신호 다음 거래일부터 세션까지 거래일 수. 종목 봉 개수가 아니다."""
+    sig = _ymd(signalDt)
+    cur = _ymd(sessionDt)
+    if not sig or not cur or cur <= sig:
+        return 0
+    return len([day for day in (calendar or []) if sig < day <= cur])
+
+
+def _itemAccepted(item):
+    if not isinstance(item, dict):
+        return False
+    if item.get("source") == "S1" or item.get("force") is True:
+        return True
+    title = item.get("title") or item.get("reportNm") or ""
+    return disclosureAccepted(title)
+
+
+def _windowDays(calendar, receipt, limit, n=CANDLE_WINDOW):
+    out = []
+    for day in calendar or []:
+        if day < receipt:
+            continue
+        if limit and day > limit:
+            break
+        out.append(day)
+        if len(out) >= int(n):
+            break
+    return out
+
+
+def _longOn(rows, days, day):
+    if day not in days:
+        return False
+    idx = days.index(day)
+    if idx < 1:
+        return False
+    avgVol = priorMean(rows, idx, 20, "volume")
+    if avgVol is None:
+        avgVol = priorMean(rows, idx, 20, "TRDE_QTY")
+    amt = amountMeanEnding(rows, idx, 20)
+    prev = _f(rows[idx - 1], "close", "CLOSE_PRC")
+    if avgVol is None or amt is None or amt < MIN_AMT20:
+        return False
+    return isLongBull(rows[idx], prev, avgVol)
+
+
+def findCandleEvents(bars, disclosures, stkCd, asOf=None, calendar=None):
+    """공시(종목, 접수일)마다 접수일부터 10거래일 안의 첫 장대양봉.
+
+    같은 (봉일, 종목)은 한 번만 남긴다. 공시가 여러 개면 이벤트도 여러 개일 수 있다.
+    """
     rows = _sortBars(bars)
     limit = _ymd(asOf)
     if limit:
         rows = [bar for bar in rows if _barDt(bar) <= limit]
     days = [_barDt(bar) for bar in rows]
-    if not days:
-        return None
     accepted = []
+    seenReceipt = set()
     for item in disclosures or []:
-        if not isinstance(item, dict):
-            continue
-        title = item.get("title") or item.get("reportNm") or ""
-        if not disclosureAccepted(title):
+        if not _itemAccepted(item):
             continue
         day = _ymd(item.get("date") or item.get("rceptDt") or item.get("publishedAt"))
         if not day or (limit and day > limit):
             continue
-        accepted.append((day, str(title), str(item.get("rceptNo") or "")))
-    accepted.sort(key=lambda row: (row[0], row[2], row[1]))
-    for receipt, title, rcept in accepted:
-        later = [day for day in days if day >= receipt]
-        if not later:
+        rcept = str(item.get("rceptNo") or "")
+        key = rcept or (day + "|" + str(item.get("title") or item.get("reportNm") or ""))
+        if key in seenReceipt:
             continue
-        t0 = later[0]
-        i0 = days.index(t0)
-        window = days[i0:i0 + CANDLE_WINDOW]
+        seenReceipt.add(key)
+        accepted.append((
+            day,
+            str(item.get("title") or item.get("reportNm") or ""),
+            rcept,
+            str(item.get("source") or "earn"),
+        ))
+    accepted.sort(key=lambda row: (row[0], row[2], row[1]))
+    if calendar is None and (days or accepted):
+        marks = list(days) + [row[0] for row in accepted]
+        if limit:
+            marks.append(limit)
+        calendar = holidayCalendar(min(marks), max(marks))
+    used = set()
+    events = []
+    code = str(stkCd or "")
+    for receipt, title, rcept, source in accepted:
+        window = _windowDays(calendar, receipt, limit)
+        if not window:
+            continue
         for day in window:
+            if (code, day) in used or day not in days:
+                continue
+            if not _longOn(rows, days, day):
+                continue
             idx = days.index(day)
-            if idx < 1:
-                continue
-            avgVol = priorMean(rows, idx, 20, "volume")
-            if avgVol is None:
-                volKey = priorMean(rows, idx, 20, "TRDE_QTY")
-                avgVol = volKey
-            if avgVol is None:
-                vals = []
-                ok = True
-                for bar in rows[idx - 20:idx] if idx >= 20 else []:
-                    num = _f(bar, "volume", "TRDE_QTY")
-                    if num is None:
-                        ok = False
-                        break
-                    vals.append(num)
-                avgVol = (sum(vals) / 20.0) if ok and len(vals) == 20 else None
-            amt = amountMeanEnding(rows, idx, 20)
-            prev = _f(rows[idx - 1], "close", "CLOSE_PRC")
-            if avgVol is None or amt is None or amt < MIN_AMT20:
-                continue
-            if not isLongBull(rows[idx], prev, avgVol):
-                continue
-            return {
-                "stkCd": str(stkCd or ""),
+            events.append({
+                "stkCd": code,
                 "signalDt": day,
                 "signalIdx": idx,
-                "t0": t0,
+                "t0": window[0],
                 "receiptDt": receipt,
                 "title": title,
                 "rceptNo": rcept,
+                "source": source,
                 "close": _f(rows[idx], "close", "CLOSE_PRC"),
-            }
-    return None
+            })
+            used.add((code, day))
+            break
+    return events
+
+
+def findCandleEvent(bars, disclosures, stkCd, asOf=None, calendar=None):
+    """가장 먼저 잡힌 실적 장대양봉. asOf 이후 봉과 공시는 보지 않는다."""
+    found = findCandleEvents(bars, disclosures, stkCd, asOf=asOf, calendar=calendar)
+    return found[0] if found else None
 
 
 def inBuyWindow(signalIdx, todayIdx, window=BUY_WINDOW):
@@ -396,8 +492,11 @@ def stopLine(avg):
         return None
 
 
-def candidateRows(events, positions, barsByCode, today):
-    """1차 매수 전이고 신호 다음 날부터 t+40 안에 있는 종목."""
+def candidateRows(events, positions, barsByCode, today, calendar=None):
+    """창이 열린 이벤트 중 가장 최근 것. 이미 보유한 종목은 새로 사지 않는다.
+
+    40거래일은 종목 봉 개수가 아니라 calendar(휴장 달력 또는 지수 봉)로 센다.
+    """
     day = _ymd(today)
     held = set()
     for pos in positions or []:
@@ -405,50 +504,61 @@ def candidateRows(events, positions, barsByCode, today):
             continue
         if pos.get("leg1") or int(pos.get("qty") or 0) > 0:
             held.add(str(pos.get("stkCd") or ""))
-    out = []
+    if calendar is None and day:
+        marks = [day]
+        for event in events or []:
+            sig = _ymd((event or {}).get("signalDt"))
+            if sig:
+                marks.append(sig)
+        if marks:
+            from datetime import datetime, timedelta
+
+            start = min(marks)
+            endDt = datetime.strptime(max(marks), "%Y%m%d") + timedelta(days=90)
+            calendar = holidayCalendar(start, endDt.strftime("%Y%m%d"))
+    grouped = {}
     for event in events or []:
         if not isinstance(event, dict):
             continue
         code = str(event.get("stkCd") or "")
-        if not code or code in held:
+        sig = _ymd(event.get("signalDt"))
+        if not code or not sig or code in held:
             continue
+        grouped.setdefault(code, []).append(event)
+    out = []
+    for code, rows in grouped.items():
+        rows.sort(key=lambda event: (_ymd(event.get("signalDt")), str(event.get("receiptDt") or "")), reverse=True)
+        chosen = None
+        for event in rows:
+            sig = _ymd(event.get("signalDt"))
+            span = buySpan(sig, day, calendar)
+            if 1 <= span <= BUY_WINDOW:
+                chosen = event
+                break
+        if chosen is None:
+            continue
+        sig = _ymd(chosen.get("signalDt"))
         bars = _sortBars((barsByCode or {}).get(code) or [])
         days = [_barDt(bar) for bar in bars]
-        sig = _ymd(event.get("signalDt"))
-        if sig not in days or not day:
-            continue
-        sigI = days.index(sig)
-        if day not in days:
-            if day <= sig:
-                continue
-            future = [item for item in days if item < day]
-            if not future:
-                continue
-            # 오늘 봉이 아직 없어도, 확정 봉 기준으로 창 안이면 후보
-            lastI = days.index(future[-1])
-            if lastI + 1 > sigI + BUY_WINDOW:
-                continue
-            todayI = lastI + 1
-        else:
-            todayI = days.index(day)
-            if not inBuyWindow(sigI, todayI):
-                continue
-        if todayI > sigI + BUY_WINDOW:
-            continue
-        ma5 = priorMean(bars, len(bars), 5, "close") if day not in days else priorMa(bars, todayI, 5)
-        ma20 = priorMean(bars, len(bars), 20, "close") if day not in days else priorMa(bars, todayI, 20)
         if day in days:
+            todayI = days.index(day)
             ma5 = priorMa(bars, todayI, 5)
             ma20 = priorMa(bars, todayI, 20)
-        expireI = sigI + BUY_WINDOW
-        expire = days[expireI] if expireI < len(days) else ""
+        else:
+            ma5 = priorMean(bars, len(bars), 5, "close")
+            ma20 = priorMean(bars, len(bars), 20, "close")
+        expire = ""
+        ahead = tradingDaysAfter(sig, calendar, BUY_WINDOW)
+        if len(ahead) >= BUY_WINDOW:
+            expire = ahead[-1]
         out.append({
             "stkCd": code,
             "signalDt": sig,
+            "receiptDt": _ymd(chosen.get("receiptDt")),
+            "source": chosen.get("source") or "",
             "ma5": ma5,
             "ma20": ma20,
             "expireDt": expire,
-            "expireIdx": expireI,
         })
     out.sort(key=lambda row: (row["signalDt"], row["stkCd"]))
     return out
