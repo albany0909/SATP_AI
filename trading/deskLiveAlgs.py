@@ -13,6 +13,7 @@ _ALG_BG = {
     "LDR01": "#FFAB91",  # 수동정찰 피라미딩 — 주황
     "RAM01": "#CE93D8",  # 실계좌관리 — 보라
     "SRG01": "#80DEEA",  # 급등주매매 — 청록
+    "PBK01": "#C5E1A5",  # 실적 눌림 — 연두
 }
 # 거래로그 글자색 — 탭 파스텔과 같은 계열, 흰 배경에서 읽히게 진하게
 _ALG_FG = {
@@ -22,6 +23,7 @@ _ALG_FG = {
     "LDR01": "#BF360C",
     "RAM01": "#6A1B9A",
     "SRG01": "#006064",
+    "PBK01": "#33691E",
 }
 _ALG_BG_FALLBACK = ("#FFCC80", "#CE93D8", "#80DEEA", "#EF9A9A", "#B0BEC5")
 _UNK_BG = "#E0E0E0"
@@ -353,13 +355,13 @@ def effectiveAlgEnabled(algCd, spec=None, settings=None):
         if "enabled" in spec:
             return bool(spec.get("enabled"))
         return False
-    if code == "SRG01":
+    if code in ("SRG01", "PBK01"):
         if spec.get("enabled") is not True:
             return False
         if (spec.get("params") or {}).get("paperOnly") is not True:
             return False
         row = (settings.get("stratLive") or {}).get(code)
-        return isinstance(row, dict) and row.get("enabled") is True
+        return isinstance(row, dict) and row.get("enabled") is True and row.get("paperOnly") is not False
     live = settings.get("stratLive")
     row = live.get(code) if isinstance(live, dict) else None
     if isinstance(row, dict) and "enabled" in row:

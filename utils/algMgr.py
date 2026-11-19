@@ -145,7 +145,7 @@ def algMgrRows(specs, settings, versions=None, counts=None, pnl=None, runs=None,
 
         on = effectiveAlgEnabled(code, spec, settings)
         configured = _configuredOn(code, settings, spec)
-        blocked = code == "SRG01" and spec.get("enabled") is not True
+        blocked = code in ("SRG01", "PBK01") and spec.get("enabled") is not True
         started = bool((runs or {}).get(code))
         runState = classifyAlgRun(
             configured, started, tradingDay, nowHm,
@@ -169,7 +169,7 @@ def algMgrRows(specs, settings, versions=None, counts=None, pnl=None, runs=None,
             "stkCnt": int(counts.get(code) or 0),
             "todayPnl": money.get("today", "-"),
             "cumPnl": money.get("cum", "-"),
-            "specGate": code == "SRG01" and spec.get("enabled") is not True,
+            "specGate": code in ("SRG01", "PBK01") and spec.get("enabled") is not True,
         })
     return out
 
@@ -203,6 +203,12 @@ def readOpenCounts():
         _take("SRG01", surgeHeld)
     except Exception:
         out["SRG01"] = 0
+    try:
+        from trading.pbk01Live import heldPositionCount as pbkHeld
+
+        _take("PBK01", pbkHeld)
+    except Exception:
+        out["PBK01"] = 0
     try:
         from trading.maTouchLive import heldPositionCount as mtsHeld
 
@@ -240,6 +246,12 @@ def readRunnerStarted():
         _flag(surge, "_started", "SRG01")
     except Exception:
         flags["SRG01"] = False
+    try:
+        import trading.pbk01Live as pbk
+
+        _flag(pbk, "_started", "PBK01")
+    except Exception:
+        flags["PBK01"] = False
     try:
         import trading.maTouchLive as touch
 

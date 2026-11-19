@@ -4,7 +4,7 @@
   "name": "마하세븐 눌림목(정배열+프랙탈)",
   "status": "draft",
   "version": 1,
-  "enabled": true,
+  "enabled": false,
   "timeframe": "1",
   "docPath": "strategies/docs/mahaPullback_v1.md",
   "universe": {

@@ -55,6 +55,12 @@
     "ATR01": {
       "enabled": false,
       "paperOnly": true
+    },
+    "PBK01": {
+      "enabled": false,
+      "paperOnly": true,
+      "capitalKrw": 30000000,
+      "slotCount": 5
     }
   },
   "batchSched": {

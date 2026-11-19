@@ -2852,7 +2852,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertEqual(touch["params"]["hardStopPct"], 1.5)
         mhp = loadStratSpec("mahaPullback_v1")
         self.assertEqual(mhp["status"], "draft")
-        self.assertTrue(mhp["enabled"])
+        self.assertFalse(mhp["enabled"])
 
     def test_offscreen_yellow_cell(self):
         try:

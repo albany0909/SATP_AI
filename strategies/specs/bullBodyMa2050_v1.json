@@ -4,7 +4,7 @@
   "name": "장대양봉 2050이평매매",
   "status": "test",
   "version": 1,
-  "enabled": true,
+  "enabled": false,
   "timeframe": "1",
   "docPath": "strategies/docs/bullBodyMa2050_v1.md",
   "universe": {

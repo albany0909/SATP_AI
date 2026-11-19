@@ -4,7 +4,7 @@
   "name": "이평선터치 매매",
   "status": "test",
   "version": 64,
-  "enabled": true,
+  "enabled": false,
   "timeframe": "1",
   "docPath": "strategies/docs/maTouchScale_v1.md",
   "universe": {

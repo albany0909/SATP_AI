@@ -6,7 +6,7 @@
   "tprPct": 5,
   "slrPct": -10,
   "maTouchLive": {
-    "enabled": true,
+    "enabled": false,
     "paperOnly": true,
     "buyAmt5": 1000000,
     "buyAmt10": 1000000,
@@ -23,6 +23,7 @@
   ],
   "stratLive": {
     "MTS01": {
+      "enabled": false,
       "buyAmt5": 1000000,
       "buyAmt10": 1000000,
       "buyAmt15": 1000000
@@ -41,6 +42,12 @@
     "ATR01": {
       "enabled": false,
       "paperOnly": true
+    },
+    "PBK01": {
+      "enabled": false,
+      "paperOnly": true,
+      "capitalKrw": 30000000,
+      "slotCount": 5
     }
   },
   "batchSched": {

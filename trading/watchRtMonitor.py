@@ -1154,6 +1154,12 @@ def startWatchRtMonitor():
                     startSurgeTradeLive()
                 except Exception as err:
                     termLog(f"[watchRt] SRG01 기동 실패: {err}")
+                try:
+                    from trading.pbk01Live import startPbk01Live
+
+                    startPbk01Live()
+                except Exception as err:
+                    termLog(f"[watchRt] PBK01 기동 실패: {err}")
         except Exception as err:
             termLog(f"[watchRt] deskRole 확인 실패 — 전략 기동 스킵: {err}")
         termLog(

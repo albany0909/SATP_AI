@@ -220,7 +220,7 @@ class AlgMgrPane(QWidget):
         else:
             text = f"{code} 신규 진입을 중단합니다. {KEEP_POSITION_NOTE}"
         if picked.get("specGate"):
-            text += " SRG01 은 명세서 enabled 가 꺼져 있으면 이 스위치만으로 신규 매수가 나가지 않습니다."
+            text += " 명세서 enabled 가 꺼져 있으면 이 스위치만으로 신규 매수가 나가지 않습니다."
         answer = QMessageBox.question(self, "알고리즘 관리", text)
         if answer != QMessageBox.StandardButton.Yes:
             return

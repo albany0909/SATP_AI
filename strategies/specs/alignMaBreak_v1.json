@@ -4,7 +4,7 @@
   "name": "정배열 이평선 돌파매매1",
   "status": "test",
   "version": 1,
-  "enabled": true,
+  "enabled": false,
   "timeframe": "1",
   "docPath": "strategies/docs/alignMaBreak_v1.md",
   "universe": {

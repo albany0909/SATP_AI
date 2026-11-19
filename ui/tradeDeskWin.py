@@ -1089,6 +1089,10 @@ class TradeDeskWin(QMainWindow):
         regimeLay.addWidget(self.regimeBadge)
         regimeLay.addWidget(self.regimeDetail, 1)
         outer.addWidget(regimeRow)
+        self.pbkBoard = QLabel("PBK01 중지 · 매수 후보 0건")
+        self.pbkBoard.setWordWrap(True)
+        self.pbkBoard.setStyleSheet("font-size: 12px; color: #37474F;")
+        outer.addWidget(self.pbkBoard)
         self._applyRegimeBadge({"regime": "판정불가", "ok": False})
         self._paintIndsBar()
         self._opsAlgTimer = QTimer(self)
@@ -3195,6 +3199,22 @@ class TradeDeskWin(QMainWindow):
             self._paintMarketRegime()
         except Exception:
             pass
+        try:
+            self._paintPbkBoard()
+        except Exception:
+            pass
+
+    def _paintPbkBoard(self):
+        """매수 후보와 슬롯. 주문은 하지 않는다."""
+        board = getattr(self, "pbkBoard", None)
+        if board is None:
+            return
+        try:
+            from trading.pbk01Live import deskBoardText
+
+            board.setText(deskBoardText())
+        except Exception:
+            board.setText("PBK01 중지 · 매수 후보 0건")
 
     def _startRegimeBackfillOnce(self):
         """autoBackfill 이 켜져 있고 봉이 부족할 때만, 시작 시 한 번 채운다."""

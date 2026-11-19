@@ -4,7 +4,7 @@
   "name": "신고가 눌림목매매1",
   "status": "test",
   "version": 1,
-  "enabled": true,
+  "enabled": false,
   "timeframe": "1",
   "docPath": "strategies/docs/highPullback_v1.md",
   "universe": {

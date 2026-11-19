@@ -4,7 +4,7 @@
   "name": "이평선지지 매매",
   "status": "test",
   "version": 9,
-  "enabled": true,
+  "enabled": false,
   "timeframe": "D",
   "docPath": "strategies/docs/maSupportEod_v1.md",
   "universe": {
