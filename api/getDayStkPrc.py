@@ -199,6 +199,7 @@ def fetchDayStkPrcRange(
     indcTp=INDC_TP_QTY,
     tokenType="bearer",
     isPaper=True,
+    maxBars=None,
 ):
     """
     ka10086 연속조회로 startDt~endDt(포함) 일별주가 수집.
@@ -286,7 +287,7 @@ def fetchDayStkPrcRange(
                     continue
                 byDt[dt] = rec
 
-        if reachedPastStart:
+        if reachedPastStart or (maxBars and len(byDt) >= int(maxBars)):
             break
 
         contYnHdr = _hdr(res, "cont-yn", "N").upper()

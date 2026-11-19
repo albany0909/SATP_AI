@@ -31,6 +31,7 @@
     "stopHm": "151500",
     "scanHm": "08:40",
     "universeLoad": true,
+    "dartLookbackDays": 120,
     "feeRate": 0.0015
   },
   "rules": {

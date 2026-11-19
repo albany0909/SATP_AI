@@ -57,35 +57,111 @@ def planDayFetch(stat, endDt, backfillBars=BACKFILL_BARS):
     return {"start": nxt, "end": end, "kind": "increment"}
 
 
-def listKospiKosdaq(reader=None):
-    """AI_STK_INFO 의 거래소·코스닥. reader 가 없으면 DB."""
-    if reader is not None:
-        return list(reader() or [])
-    from utils.dbConn import openDbConn
+def isCommonStock(code, name="", marketName="", mrktTp=""):
+    """코스피·코스닥 보통주. ETF·ETN·스팩·리츠·우선주·코넥스는 뺀다."""
+    text = str(code or "")
+    if len(text) != 6 or not text.endswith("0"):
+        return False
+    blob = f"{name} {marketName}".lower()
+    for word in ("etf", "etn", "etp", "스팩", "리츠", "코넥스", "konex"):
+        if word in blob:
+            return False
+    lowName = str(name or "").lower().strip()
+    for brand in ("kodex", "tiger", "kbstar", "hanaro", "kosef", "arirang", "timefolio"):
+        if lowName.startswith(brand):
+            return False
+    nm = str(name or "")
+    if nm.endswith("우") or nm.endswith("우B") or nm.endswith("우C") or "우B" in nm:
+        return False
+    tp = str(mrktTp or "").strip()
+    if tp in ("8", "30", "50", "60"):
+        return False
+    return True
 
-    conn = openDbConn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT STK_CD FROM AI_STK_INFO
-                WHERE MARKET_NAME IN ('거래소', '코스닥', 'KOSPI', 'KOSDAQ')
-                   OR MRKT_TP IN ('0', '10', '001', '101')
-                """
-            )
-            rows = cur.fetchall() or []
-    finally:
-        conn.close()
+
+def listKospiKosdaq(reader=None):
+    """AI_STK_INFO 의 코스피·코스닥 보통주. reader 가 없으면 DB."""
+    if reader is not None:
+        rows = list(reader() or [])
+    else:
+        from utils.dbConn import openDbConn
+
+        conn = openDbConn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT STK_CD, STK_NM, MARKET_NAME, MRKT_TP
+                    FROM AI_STK_INFO
+                    WHERE MARKET_NAME IN ('거래소', '코스닥', 'KOSPI', 'KOSDAQ')
+                       OR MRKT_TP IN ('0', '10', '001', '101')
+                    """
+                )
+                rows = cur.fetchall() or []
+        finally:
+            conn.close()
     from utils.stkCdUtil import normStkCd
 
     out = []
     seen = set()
     for row in rows:
-        code = normStkCd((row or {}).get("STK_CD"))
-        if code and code not in seen:
+        if isinstance(row, str):
+            code = normStkCd(row)
+            name = market = tp = ""
+        else:
+            code = normStkCd((row or {}).get("STK_CD") or (row or {}).get("stkCd"))
+            name = (row or {}).get("STK_NM") or (row or {}).get("name") or ""
+            market = (row or {}).get("MARKET_NAME") or (row or {}).get("marketName") or ""
+            tp = (row or {}).get("MRKT_TP") or (row or {}).get("mrktTp") or ""
+        if code and code not in seen and isCommonStock(code, name, market, tp):
             seen.add(code)
             out.append(code)
     return out
+
+
+def dartLookbackDays(settings=None):
+    if settings is None:
+        try:
+            from config.settingsStore import loadSettings
+
+            settings = loadSettings() or {}
+        except Exception:
+            settings = {}
+    row = ((settings or {}).get("stratLive") or {}).get("PBK01")
+    try:
+        days = int((row or {}).get("dartLookbackDays") or 120)
+    except (TypeError, ValueError):
+        days = 120
+    return days if days > 0 else 120
+
+
+def planDartRange(oldest, newest, today, lookbackDays=120):
+    """가장 오래된 공시가 창보다 최근이면 빈 구간을 채우고, 아니면 마지막 다음날만."""
+    end = str(today or "")[:8]
+    floor = (datetime.strptime(end, "%Y%m%d") - timedelta(days=int(lookbackDays))).strftime("%Y%m%d")
+    old = str(oldest or "")[:8]
+    new = str(newest or "")[:8]
+    if len(old) != 8 or old > floor:
+        return {"start": floor, "end": end, "kind": "backfill"}
+    if len(new) != 8 or new >= end:
+        return None
+    nxt = (datetime.strptime(new, "%Y%m%d") + timedelta(days=1)).strftime("%Y%m%d")
+    if nxt > end:
+        return None
+    return {"start": nxt, "end": end, "kind": "increment"}
+
+
+def _savedDartSpan(path):
+    from utils.pbkDartStore import _read
+
+    days = []
+    for row in _read(path):
+        day = str(row.get("rceptDt") or "")[:8]
+        if len(day) == 8 and day.isdigit():
+            days.append(day)
+    if not days:
+        return "", ""
+    return min(days), max(days)
 
 
 def loadMissingDayBars(codes, endDt, statFn, fetcher, writer, slot=None, log=None, backfillBars=BACKFILL_BARS):
@@ -134,14 +210,25 @@ def runUniverseClose(endDt=None, settings=None, dartFetch=None, codes=None, stat
     if not universeLoadEnabled(settings):
         return {"ok": True, "skipped": "off", "summary": "[PBK01] 전 종목 적재 꺼짐"}
     end = str(endDt or datetime.now().strftime("%Y%m%d"))[:8]
-    start = (datetime.strptime(end, "%Y%m%d") - timedelta(days=3)).strftime("%Y%m%d")
+    lookback = dartLookbackDays(settings)
+    from utils.pbkDartStore import dartPath as defaultDartPath
+
+    storePath = dartPath or defaultDartPath()
+    oldest, newest = _savedDartSpan(storePath)
+    window = planDartRange(oldest, newest, end, lookbackDays=lookback)
     items = []
     if dartFetch is None:
         from research.dartDiscFetch import fetchMarketDisclosures
 
         dartFetch = fetchMarketDisclosures
+    if window is None:
+        termLog(f"[PBK01] 실적 공시 최신 — {newest} 이후 없음")
+    else:
+        termLog(f"[PBK01] 실적 공시 {window['kind']} {window['start']}~{window['end']}")
     for cls in ("Y", "K"):
-        got = dartFetch(start, end, corpCls=cls) or {}
+        if window is None:
+            break
+        got = dartFetch(window["start"], window["end"], corpCls=cls) or {}
         if not got.get("ok"):
             termLog(f"[PBK01] 공시 조회 실패 {got.get('errMsg') or ''}")
         items.extend(got.get("items") or [])
@@ -167,10 +254,27 @@ def runUniverseClose(endDt=None, settings=None, dartFetch=None, codes=None, stat
         f"(전량 1회면 약 {est['calls']}회 · {est['seconds'] // 60}분)"
     )
     termLog(summary)
+    try:
+        _refreshNextCandidates(end)
+    except Exception as err:
+        termLog(f"[PBK01] 적재 후 후보 재계산 실패: {err}")
     out = dict(bars or {})
     out["dartAdded"] = added
     out["summary"] = summary
     return out
+
+
+def _refreshNextCandidates(endDt):
+    """장마감 적재가 끝나면 다음 거래일 후보를 다시 저장한다."""
+    from datetime import datetime
+
+    from config.krHoliday import nextTradingDay
+
+    nxt = nextTradingDay(endDt) or str(endDt)[:8]
+    now = datetime.strptime(str(nxt)[:8] + "080000", "%Y%m%d%H%M%S")
+    from trading.pbk01Live import runPbkCycle
+
+    runPbkCycle(now=now, always=True)
 
 
 def _loadWithKiwoom(codes, endDt, log=None):
@@ -191,6 +295,7 @@ def _loadWithKiwoom(codes, endDt, log=None):
         return fetchDayStkPrcRange(
             host, token, code, start, end,
             indcTp=INDC_TP_QTY, tokenType=tokenType, isPaper=isPaper,
+            maxBars=BACKFILL_BARS,
         )
 
     def _slot(apiId):

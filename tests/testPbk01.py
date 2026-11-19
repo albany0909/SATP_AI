@@ -260,6 +260,8 @@ class Pbk01Test(unittest.TestCase):
             return pack
 
         live._announcedYmd = ""
+        live._startupDone = False
+        live._scanYmd = ""
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "pbk01_state.jsonl"
             now = datetime.strptime(day, "%Y%m%d").replace(hour=16)
@@ -294,6 +296,38 @@ class Pbk01Test(unittest.TestCase):
             self.assertEqual(len(sent), 1)
             self.assertEqual(again["touches"][0]["stkCd"], "005930")
         live._announcedYmd = ""
+        live._startupDone = False
+        live._scanYmd = ""
+        calls = []
+
+        def _empty(_ymd):
+            calls.append(_ymd)
+            return {"bars": {}, "disclosures": {}, "positions": []}
+
+        with tempfile.TemporaryDirectory() as folder2:
+            early = Path(folder2) / "pbk01_state.jsonl"
+            with patch.object(live, "scanHm", lambda: "084000"):
+                live.runPbkCycle(
+                    now=datetime(2026, 11, 19, 7, 0),
+                    loader=_empty,
+                    sender=lambda _t: None,
+                    log=lambda _t: None,
+                    path=early,
+                    force=True,
+                    enabled=False,
+                )
+                live.runPbkCycle(
+                    now=datetime(2026, 11, 19, 8, 40),
+                    loader=_empty,
+                    sender=lambda _t: None,
+                    log=lambda _t: None,
+                    path=early,
+                    force=False,
+                    enabled=False,
+                )
+        self.assertEqual(len(calls), 2)
+        live._startupDone = False
+        live._scanYmd = ""
         self.assertIn("pbkBoard", Path("ui/tradeDeskWin.py").read_text(encoding="utf-8"))
         self.assertIn("v1", Path("strategies/docs/pullbackTwoStep_v1.md").read_text(encoding="utf-8"))
 
@@ -338,6 +372,31 @@ class Pbk01Test(unittest.TestCase):
         est = estimateDayTr(2500)
         self.assertEqual(est["calls"], 2500)
         self.assertGreater(est["seconds"], 2400)
+        from utils.pbkUniverseLoad import isCommonStock, loadMissingDayBars, planDartRange
+
+        window = planDartRange("", "", "20261119", 120)
+        self.assertLessEqual(window["start"], "20261028")
+        self.assertGreaterEqual(window["end"], "20261103")
+        self.assertTrue(disclosureAccepted("영업(잠정)실적"))
+        filled = planDartRange("20260722", "20261118", "20261119", 120)
+        self.assertEqual(filled["kind"], "increment")
+        self.assertEqual(filled["start"], "20261119")
+        self.assertTrue(isCommonStock("005930", "삼성전자", "거래소", "0"))
+        self.assertFalse(isCommonStock("069500", "KODEX 200", "거래소", "0"))
+        self.assertFalse(isCommonStock("000995", "동부건설우", "거래소", "0"))
+        self.assertFalse(isCommonStock("012340", "스팩합병", "코스닥", "10"))
+        self.assertFalse(isCommonStock("357120", "코람코에너지리츠", "거래소", "0"))
+        calls = []
+        skipped = loadMissingDayBars(
+            ["005930"],
+            "20261119",
+            lambda _cd: {"cnt": 80, "maxDt": "20261119"},
+            lambda *_a: calls.append(_a),
+            lambda _rows: {"ok": True},
+        )
+        self.assertEqual(calls, [])
+        self.assertEqual(skipped["skipCnt"], 1)
+        self.assertTrue(shouldSkipRel("config/data/_bak/settings.json.20261119"))
         self.assertTrue(shouldSkipRel("config/data/settings.json"))
         self.assertTrue(shouldSkipRel("config/data/pbk01_state.jsonl"))
         self.assertFalse(shouldSkipRel("config/data/settings-default.json"))

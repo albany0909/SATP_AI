@@ -49,7 +49,8 @@
       "capitalKrw": 30000000,
       "slotCount": 5,
       "scanHm": "08:40",
-      "universeLoad": true
+      "universeLoad": true,
+      "dartLookbackDays": 120
     }
   },
   "batchSched": {

@@ -14,6 +14,8 @@ from datetime import datetime
 _started = False
 _lock = threading.Lock()
 _announcedYmd = ""
+_startupDone = False
+_scanYmd = ""
 SCAN_HM = "08:40"
 
 
@@ -88,15 +90,27 @@ def deskBoardText(path=None):
     return cand + "\n" + slots
 
 
+def candidateSignature(rows):
+    """종목·신호일·만료가 같으면 같은 목록이다."""
+    parts = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        parts.append("|".join([
+            str(row.get("stkCd") or ""),
+            str(row.get("signalDt") or ""),
+            str(row.get("expireDt") or ""),
+        ]))
+    return "\n".join(sorted(parts))
+
+
 def announceCandidates(rows, positions, ymd, sender=None, log=None, path=None):
-    """하루에 한 번 로그. sender 가 있으면 텔레그램도 한 번."""
+    """로그는 매번. 텔레그램은 후보 목록이 바뀔 때만."""
     from strategies.impl.pullbackTwoStep import formatCandidateLog, formatSlotLog
     from utils.pbk01Store import appendRow, latestByKind, pbkPath
 
     filePath = path or pbkPath("pbk01_state.jsonl")
     prev = latestByKind(filePath, "state") or {}
-    if str(prev.get("announcedYmd") or "") == str(ymd):
-        return {"sent": False, "reason": "already"}
     text = formatCandidateLog(rows)
     slotLine = formatSlotLog(positions)
     if log is not None:
@@ -107,15 +121,17 @@ def announceCandidates(rows, positions, ymd, sender=None, log=None, path=None):
 
         termLog(text)
         termLog(slotLine)
-    if sender is not None:
+    changed = candidateSignature(rows) != str(prev.get("candidateKey") or "")
+    if changed and sender is not None:
         sender(text)
     appendRow(filePath, {
         "kind": "state",
         "announcedYmd": str(ymd),
+        "candidateKey": candidateSignature(rows),
         "candidates": list(rows or []),
         "positions": list(positions or []),
     })
-    return {"sent": True, "text": text}
+    return {"sent": bool(changed and sender is not None), "changed": changed, "text": text}
 
 
 def _barsForSignal(bars):
@@ -236,12 +252,12 @@ def defaultScanInputs(today):
     return {"bars": bars, "disclosures": discs, "positions": positions, "quotes": {}}
 
 
-def runPbkCycle(now=None, loader=None, sender=None, log=None, path=None, quotes=None, force=False, enabled=None):
-    """기동 1회(force) 또는 거래일 scanHm 이후에 후보를 한 번 알린다.
+def runPbkCycle(now=None, loader=None, sender=None, log=None, path=None, quotes=None, force=False, always=False, enabled=None):
+    """기동 1회, 매 거래일 scanHm, 또는 적재 직후(always)에 후보를 다시 계산한다.
 
-    장중 터치는 방금 계산했거나 이미 저장된 후보만 사용한다.
+    텔레그램은 목록이 바뀔 때만. 장중 터치는 저장된 후보만 사용한다.
     """
-    global _announcedYmd
+    global _announcedYmd, _startupDone, _scanYmd
     now = now or datetime.now()
     ymd = now.strftime("%Y%m%d")
     hm = now.strftime("%H%M%S")
@@ -252,12 +268,14 @@ def runPbkCycle(now=None, loader=None, sender=None, log=None, path=None, quotes=
         trading = bool(isTradingDay(now))
     except Exception:
         trading = True
-    due = bool(force) or (trading and hm >= scanHm() and _announcedYmd != ymd)
+    dueStartup = bool(force) and not _startupDone
+    dueDaily = bool(trading) and hm >= scanHm() and _scanYmd != ymd
+    due = bool(always) or dueStartup or dueDaily
     if enabled is None:
         enabled = isPbkEnabled()
     positions = []
     rows = []
-    if due and _announcedYmd != ymd:
+    if due:
         pack = {}
         try:
             pack = (loader or defaultScanInputs)(ymd) or {}
@@ -280,6 +298,10 @@ def runPbkCycle(now=None, loader=None, sender=None, log=None, path=None, quotes=
             path=path,
         )
         _announcedYmd = ymd
+        if dueStartup:
+            _startupDone = True
+        if dueDaily:
+            _scanYmd = ymd
         if quotes is None:
             quotes = pack.get("quotes") or {}
     else:
