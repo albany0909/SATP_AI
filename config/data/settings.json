@@ -61,7 +61,8 @@
       "paperOnly": true,
       "capitalKrw": 30000000,
       "slotCount": 5,
-      "scanHm": "08:40"
+      "scanHm": "08:40",
+      "universeLoad": true
     }
   },
   "batchSched": {

@@ -10,6 +10,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.deployPackUtil import shouldSkipRel
 from strategies.impl.pullbackTwoStep import (
     PaperOnlyError,
     allocateSlotFills,
@@ -295,6 +296,53 @@ class Pbk01Test(unittest.TestCase):
         live._announcedYmd = ""
         self.assertIn("pbkBoard", Path("ui/tradeDeskWin.py").read_text(encoding="utf-8"))
         self.assertIn("v1", Path("strategies/docs/pullbackTwoStep_v1.md").read_text(encoding="utf-8"))
+
+    def test_real_boot_blocked_and_universe_rules(self):
+        from utils.dartSecret import maskDartSecret
+        from utils.pbkUniverseLoad import estimateDayTr, liquidCodes, planDayFetch
+        from utils.realBootGuard import decideBootMode
+
+        blocked = decideBootMode("real", pbkEnabled=True, settingsRecovered=False)
+        self.assertTrue(blocked["blocked"])
+        self.assertEqual(blocked["mode"], "paper")
+        recovered = decideBootMode("real", pbkEnabled=False, settingsRecovered=True)
+        self.assertTrue(recovered["blocked"])
+        self.assertEqual(decideBootMode("paper", pbkEnabled=True)["blocked"], False)
+        self.assertEqual(decideBootMode("real", pbkEnabled=False, settingsRecovered=False)["mode"], "real")
+        secret = "SECRETKEY99"
+        leaked = f"https://opendart.fss.or.kr/api/list.json?crtfc_key={secret}&page_no=1"
+        masked = maskDartSecret(leaked, secret)
+        self.assertNotIn(secret, masked)
+        self.assertIn("crtfc_key=***", masked)
+        from research.dartDiscFetch import fetchMarketDisclosures
+
+        def _boom(_url, params, _timeout=25):
+            raise RuntimeError("boom crtfc_key=" + params["crtfc_key"])
+
+        with patch("research.dartDiscFetch.dart_api_key", secret):
+            hidden = fetchMarketDisclosures("20261118", "20261119", getter=_boom)
+        self.assertNotIn(secret, hidden.get("errMsg") or "")
+        self.assertNotIn("crtfc_key=" + secret, json.dumps(hidden))
+        fresh = planDayFetch({"cnt": 0, "maxDt": ""}, "20261119")
+        self.assertEqual(fresh["kind"], "backfill")
+        done = planDayFetch({"cnt": 80, "maxDt": "20261119"}, "20261119")
+        self.assertIsNone(done)
+        gap = planDayFetch({"cnt": 80, "maxDt": "20261118"}, "20261119")
+        self.assertEqual(gap["kind"], "increment")
+        self.assertEqual(gap["start"], "20261119")
+        names = liquidCodes(
+            [{"stkCd": "005930", "tradeDt": f"202611{i:02d}", "amtMn": 300} for i in range(1, 21)]
+            + [{"stkCd": "000660", "tradeDt": f"202611{i:02d}", "amtMn": 10} for i in range(1, 21)]
+        )
+        self.assertEqual(names, ["005930"])
+        est = estimateDayTr(2500)
+        self.assertEqual(est["calls"], 2500)
+        self.assertGreater(est["seconds"], 2400)
+        self.assertTrue(shouldSkipRel("config/data/settings.json"))
+        self.assertTrue(shouldSkipRel("config/data/pbk01_state.jsonl"))
+        self.assertFalse(shouldSkipRel("config/data/settings-default.json"))
+        default = Path("config/data/settings-default.json").read_text(encoding="utf-8")
+        self.assertIn('"deskTradeMode": "paper"', default)
 
 
 if __name__ == "__main__":

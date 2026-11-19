@@ -13,7 +13,7 @@
     "buyAmt15": 1000000
   },
   "deskTradeExch": "KRX",
-  "deskTradeMode": "real",
+  "deskTradeMode": "paper",
   "deskRole": "main",
   "deskDataViaServer": false,
   "stpServerUrl": "http://satp1.iptime.org:8080/STP/tran",
@@ -48,7 +48,8 @@
       "paperOnly": true,
       "capitalKrw": 30000000,
       "slotCount": 5,
-      "scanHm": "08:40"
+      "scanHm": "08:40",
+      "universeLoad": true
     }
   },
   "batchSched": {

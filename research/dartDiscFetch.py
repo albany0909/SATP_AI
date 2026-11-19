@@ -12,9 +12,19 @@ from config.config import dart_api_key
 from config.loadEnv import ensureEnvLoaded
 from config.researchSources import openDartUrls
 from research.dartCorpCode import resolveCorpCode
+from utils.dartSecret import maskDartSecret
 from utils.stkCdUtil import normStkCd
 
 ensureEnvLoaded()
+
+
+def _maskedGet(url, params, timeout=25):
+    """요청 실패 문구에 crtfc_key 가 남지 않게 한다."""
+    key = str((params or {}).get("crtfc_key") or "")
+    try:
+        return requests.get(url, params=params, timeout=timeout)
+    except Exception as err:
+        raise RuntimeError(maskDartSecret(str(err), key)) from None
 
 
 def _ymdPlus(daysBack):
@@ -57,12 +67,12 @@ def fetchDartDiscList(stkCd, daysBack=3, pageCount=50):
         "page_count": str(min(100, max(1, int(pageCount)))),
     }
     try:
-        res = requests.get(url, params=params, timeout=25)
+        res = _maskedGet(url, params, timeout=25)
         body = res.json()
     except Exception as err:
         return {
             "ok": False,
-            "errMsg": str(err),
+            "errMsg": maskDartSecret(str(err), key),
             "items": [],
             "stkCd": code,
             "corpCode": corp["corpCode"],
@@ -120,3 +130,64 @@ def fetchDartDiscList(stkCd, daysBack=3, pageCount=50):
         "bgnDe": bgn,
         "endDe": end,
     }
+
+
+def fetchMarketDisclosures(bgnDe, endDe, corpCls="", pageCount=100, getter=None):
+    """코스피·코스닥 공시 목록. corp_code 없이 날짜만 조회한다. 키는 결과에 넣지 않는다."""
+    key = (dart_api_key or "").strip()
+    if not key:
+        return {"ok": False, "errMsg": "DART_API_KEY 없음", "items": []}
+    url = "https://opendart.fss.or.kr/api/list.json"
+    call = getter or _maskedGet
+    items = []
+    page = 1
+    while page <= 40:
+        params = {
+            "crtfc_key": key,
+            "bgn_de": str(bgnDe),
+            "end_de": str(endDe),
+            "page_no": str(page),
+            "page_count": str(min(100, max(1, int(pageCount)))),
+        }
+        if corpCls:
+            params["corp_cls"] = corpCls
+        try:
+            res = call(url, params, 25)
+            body = res.json()
+        except Exception as err:
+            return {
+                "ok": False,
+                "errMsg": maskDartSecret(str(err), key),
+                "items": items,
+            }
+        status = str(body.get("status") or "")
+        if status == "013":
+            break
+        if status != "000":
+            return {
+                "ok": False,
+                "errMsg": maskDartSecret(str(body.get("message") or status), key),
+                "items": items,
+            }
+        rows = body.get("list") or []
+        if not isinstance(rows, list) or not rows:
+            break
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            rcept = str(row.get("rcept_no") or "").strip()
+            stock = "".join(ch for ch in str(row.get("stock_code") or "") if ch.isdigit())
+            if len(stock) >= 6:
+                stock = stock[-6:]
+            if not rcept or len(stock) != 6:
+                continue
+            items.append({
+                "rceptNo": rcept,
+                "stkCd": stock,
+                "reportNm": str(row.get("report_nm") or "").strip(),
+                "rceptDt": str(row.get("rcept_dt") or "").replace("-", "")[:8],
+            })
+        if len(rows) < int(params["page_count"]):
+            break
+        page += 1
+    return {"ok": True, "items": items, "pages": page}

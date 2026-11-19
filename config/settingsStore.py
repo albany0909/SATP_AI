@@ -45,7 +45,7 @@ _FALLBACK = {
     },
     "deskTradeExch": "KRX",
     # 매매창·자동매매 세션. paper | real
-    "deskTradeMode": "real",
+    "deskTradeMode": "paper",
     # 프로세스 역할. main=배치·전략본체 | client=매매창(조회·주문 UI)
     "deskRole": "main",
     # 관심·설정·로그 조회를 톰캣 경유할지 (3단계에서 사용)
@@ -149,6 +149,19 @@ def _readJson(path):
 
 
 _recoverOnce = set()
+_settingsRecovered = False
+_settingsRecoveredReason = ""
+
+
+def settingsWereRecovered():
+    """이번 프로세스에서 설정 파일을 못 읽거나 기본값으로 만들었으면 True."""
+    return bool(_settingsRecovered), str(_settingsRecoveredReason or "")
+
+
+def _markSettingsRecovered(reason):
+    global _settingsRecovered, _settingsRecoveredReason
+    _settingsRecovered = True
+    _settingsRecoveredReason = str(reason or "")
 
 
 def _settingsLog(text):
@@ -220,6 +233,7 @@ def loadSettings():
         defaults = loadDefaultSettings()
         if not _SETTINGS_PATH.is_file():
             _writeJson(_SETTINGS_PATH, defaults)
+            _markSettingsRecovered("파일 없음")
             _settingsLog("[settings] settings.json 없음 — 디폴트로 생성")
             return dict(defaults)
         key = str(_SETTINGS_PATH.resolve())
@@ -234,8 +248,10 @@ def loadSettings():
             if mode:
                 defaults["deskTradeMode"] = mode
                 _writeJson(_SETTINGS_PATH, defaults)
+                _markSettingsRecovered("파싱 실패 복구")
                 _settingsLog(f"[settings] 파싱 실패 — 복구. deskTradeMode={mode} 유지")
             else:
+                _markSettingsRecovered("파싱 실패")
                 _settingsLog("[settings] 파싱 실패 — deskTradeMode 를 못 읽어 파일은 그대로 둠")
         elif mode:
             defaults["deskTradeMode"] = mode

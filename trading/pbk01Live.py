@@ -118,21 +118,42 @@ def announceCandidates(rows, positions, ymd, sender=None, log=None, path=None):
     return {"sent": True, "text": text}
 
 
+def _barsForSignal(bars):
+    """저장 일봉의 qty 를 거래량으로 맞춘다."""
+    out = []
+    for bar in bars or []:
+        if not isinstance(bar, dict):
+            continue
+        row = dict(bar)
+        if row.get("volume") is None and row.get("qty") is not None:
+            row["volume"] = row.get("qty")
+        if row.get("amount") is None:
+            try:
+                row["amount"] = float(row.get("close") or 0) * float(row.get("volume") or 0)
+            except (TypeError, ValueError):
+                row["amount"] = None
+        out.append(row)
+    return out
+
+
 def buildScan(barsByCode, disclosuresByCode, today, positions=None):
     """findCandleEvent 로 종목당 신호를 만들고 candidateRows 로 후보를 고른다."""
     from strategies.impl.pullbackTwoStep import candidateRows, findCandleEvent
 
     events = []
+    normalized = {}
     for code, bars in (barsByCode or {}).items():
+        rows = _barsForSignal(bars)
+        normalized[code] = rows
         event = findCandleEvent(
-            bars,
+            rows,
             (disclosuresByCode or {}).get(code) or [],
             code,
             asOf=today,
         )
         if event:
             events.append(event)
-    rows = candidateRows(events, positions or [], barsByCode, today)
+    rows = candidateRows(events, positions or [], normalized, today)
     return events, rows
 
 
@@ -155,40 +176,56 @@ def _safeLog(log, text):
         pass
 
 
-def defaultScanInputs(today):
-    """관심·보유 일봉과 공시. 키는 로그에 남기지 않는다. 실패하면 빈 목록."""
-    codes = []
+def quotesFromCache(codes):
+    """후보 종목의 캐시 현재가만 읽는다. 목록 밖은 보지 않는다."""
+    out = {}
     try:
-        from utils.watchDayPrcLoad import collectWatchHoldCds
-
-        codes = collectWatchHoldCds() or []
+        from trading.watchRtMonitor import peekWatchLastPx
     except Exception:
-        _safeLog(None, "[PBK01] 종목 목록을 읽지 못함")
-    bars = {}
+        return out
+    for code in codes or []:
+        info = peekWatchLastPx(code) or {}
+        raw = info.get("curPrc") or info.get("krxPrc") or info.get("nxtPrc")
+        try:
+            px = float(str(raw).replace(",", ""))
+        except (TypeError, ValueError):
+            continue
+        if px > 0:
+            out[str(code)] = {"price": px}
+    return out
+
+
+def defaultScanInputs(today):
+    """전 종목 중 거래대금 조건을 통과한 종목의 저장 일봉과 저장된 실적 공시."""
     discs = {}
-    for code in codes:
-        try:
-            from utils.chartBarLoad import loadStoredDayBars
+    try:
+        from utils.pbkDartStore import disclosuresByCode
 
-            bars[code] = loadStoredDayBars(code) or []
-        except Exception:
-            bars[code] = []
-        try:
-            from research.dartDiscFetch import fetchDartDiscList
+        discs = disclosuresByCode()
+    except Exception:
+        _safeLog(None, "[PBK01] 공시 파일을 읽지 못함")
+        discs = {}
+    codes = sorted(discs.keys())
+    try:
+        from utils.pbkUniverseLoad import listKospiKosdaq
 
-            got = fetchDartDiscList(code, daysBack=60) or {}
-            discs[code] = [
-                {
-                    "title": item.get("reportNm"),
-                    "date": item.get("rceptDt"),
-                    "rceptNo": item.get("rceptNo"),
-                }
-                for item in (got.get("items") or [])
-                if isinstance(item, dict)
-            ]
-        except Exception:
-            _safeLog(None, f"[PBK01] 공시 조회 실패 {code}")
-            discs[code] = []
+        listed = listKospiKosdaq()
+        if listed:
+            want = set(listed)
+            codes = [code for code in codes if code in want] or codes
+    except Exception:
+        _safeLog(None, "[PBK01] 종목 마스터를 읽지 못함")
+    bars = {}
+    try:
+        from utils.chartBarLoad import loadStoredDayBars
+
+        for code in codes:
+            try:
+                bars[code] = loadStoredDayBars(code) or []
+            except Exception:
+                bars[code] = []
+    except Exception:
+        _safeLog(None, "[PBK01] 일봉을 읽지 못함")
     positions = []
     try:
         from utils.pbk01Store import latestByKind, pbkPath
@@ -261,6 +298,8 @@ def runPbkCycle(now=None, loader=None, sender=None, log=None, path=None, quotes=
             owned.append(pos.get("stkCd"))
     touches = []
     if enabled:
+        if not quotes:
+            quotes = quotesFromCache([row.get("stkCd") for row in rows])
         touches = touchesForQuotes(rows, quotes or {}, owned=owned)
     return {
         "announced": _announcedYmd,

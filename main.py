@@ -195,6 +195,25 @@ def _bootLogin():
         except Exception:
             bootMode = "paper"
     try:
+        from config.settingsStore import settingsWereRecovered
+        from trading.pbk01Live import isPbkEnabled
+        from utils.realBootGuard import decideBootMode, warnRealBlocked
+
+        recovered, _why = settingsWereRecovered()
+        decision = decideBootMode(bootMode, isPbkEnabled(), recovered)
+        if decision.get("blocked"):
+            def _send(text):
+                from telegram.telSend import sendTelegramMsg
+
+                sendTelegramMsg(text)
+
+            warnRealBlocked(decision.get("reason"), sender=_send)
+            bootMode = decision.get("mode") or "paper"
+    except Exception as err:
+        termLog(f"[기동] 실전 가드 실패 — 모의로 전환: {err}")
+        if str(bootMode).lower() in ("real", "live", "실전"):
+            bootMode = "paper"
+    try:
         from config.settingsStore import setDeskTradeMode
 
         setDeskTradeMode(bootMode)
