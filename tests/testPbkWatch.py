@@ -18,6 +18,7 @@ from utils.pbkWatchScreen import (
     ensureWatchBackup,
     formatPx,
     loadScreenRows,
+    lookupStkNames,
     readWatchBackup,
     restoreLegacyWatch,
     screenPrice,
@@ -128,6 +129,47 @@ class PbkWatchScreenTest(unittest.TestCase):
         )
         self.assertEqual(rows[0]["ma5"], 32000)
         self.assertEqual(rows[0]["ma20"], 30000)
+
+    def test_name_falls_through_master_watch_then_kiwoom(self):
+        calls = []
+
+        def master(codes):
+            calls.append(("master", list(codes)))
+            return {"005930": "삼성전자"}
+
+        def watch(codes):
+            calls.append(("watch", list(codes)))
+            return {"000660": "SK하이닉스"}
+
+        def kiwoom(codes):
+            calls.append(("kiwoom", list(codes)))
+            return {"263860": "지니언스"}
+
+        got = lookupStkNames(
+            ["005930", "000660", "263860", "999999"],
+            masterFn=master,
+            watchFn=watch,
+            kiwoomFn=kiwoom,
+            cache={},
+        )
+        self.assertEqual(got["005930"], "삼성전자")
+        self.assertEqual(got["000660"], "SK하이닉스")
+        self.assertEqual(got["263860"], "지니언스")
+        self.assertEqual(got["999999"], "999999")
+        self.assertEqual(calls[0][0], "master")
+        self.assertNotIn("005930", calls[1][1])
+        self.assertEqual(calls[2][1], ["263860", "999999"])
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "pbk01_state.jsonl"
+            path.write_text(json.dumps({
+                "kind": "state",
+                "candidates": [{"stkCd": "263860", "ma5": 32000}],
+                "positions": [],
+            }) + "\n", encoding="utf-8")
+            rows = loadScreenRows(path, names={"263860": "지니언스"})
+            self.assertEqual(rows[0]["stkNm"], "지니언스")
+            kept = loadScreenRows(path, names={})
+            self.assertEqual(kept[0]["stkNm"], "263860")
 
 
 if __name__ == "__main__":

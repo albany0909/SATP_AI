@@ -117,7 +117,122 @@ def unionRows(candidates, positions, accountHolds):
     return out
 
 
-def loadScreenRows(statePath=None, accountHolds=None):
+_nameCache = {}
+
+
+def _realName(name, code):
+    text = str(name or "").strip()
+    if not text or text == str(code or ""):
+        return ""
+    return text
+
+
+def _needsName(row):
+    return _realName(row.get("stkNm"), row.get("stkCd")) == ""
+
+
+def _masterNames(codes):
+    """AI_STK_INFO 종목마스터."""
+    from utils.dbConn import openDbConn
+
+    if not codes:
+        return {}
+    conn = openDbConn()
+    try:
+        marks = ",".join(["%s"] * len(codes))
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT STK_CD, STK_NM FROM AI_STK_INFO WHERE STK_CD IN ({marks})",
+                tuple(codes),
+            )
+            rows = cur.fetchall() or []
+    finally:
+        conn.close()
+    out = {}
+    for row in rows:
+        code = _code((row or {}).get("STK_CD"))
+        if code:
+            out[code] = (row or {}).get("STK_NM") or ""
+    return out
+
+
+def _watchNames(codes):
+    """AI_WATCH_STK 에 있는 이름."""
+    from utils.watchStkStore import listActiveWatch
+
+    want = set(codes or [])
+    out = {}
+    for row in listActiveWatch(mktTp="KR") or []:
+        code = _code((row or {}).get("STK_CD"))
+        if code in want:
+            out[code] = (row or {}).get("STK_NM") or ""
+    return out
+
+
+def _kiwoomNames(codes):
+    """키움 ka10001 종목명. 앞 단계에서 못 찾은 코드만."""
+    from api.getStkInfo import fetchStkInfo
+    from utils.dayPrcLoadService import acquireKiwoomSession
+
+    session = acquireKiwoomSession()
+    if not session:
+        return {}
+    _mode, host, token, tokenType = session
+    out = {}
+    for code in codes or []:
+        got = fetchStkInfo(host, token, code, tokenType=tokenType) or {}
+        body = got.get("body") or {}
+        out[code] = body.get("stk_nm") or ""
+    return out
+
+
+def lookupStkNames(codes, masterFn=None, watchFn=None, kiwoomFn=None, cache=None):
+    """종목마스터, 관심종목, 키움 순. 셋 다 없으면 코드."""
+    store = _nameCache if cache is None else cache
+    pending = []
+    out = {}
+    for raw in codes or []:
+        code = _code(raw)
+        if not code or code in out:
+            continue
+        if code in store and store[code]:
+            out[code] = store[code]
+            continue
+        out[code] = ""
+        pending.append(code)
+    for source in (masterFn or _masterNames, watchFn or _watchNames, kiwoomFn or _kiwoomNames):
+        if not pending:
+            break
+        try:
+            found = source(pending) or {}
+        except Exception:
+            found = {}
+        still = []
+        for code in pending:
+            name = _realName(found.get(code), code)
+            if name:
+                out[code] = name
+                store[code] = name
+            else:
+                still.append(code)
+        pending = still
+    for code in pending:
+        out[code] = code
+        store.setdefault(code, "")
+    return out
+
+
+def applyStkNames(rows, names):
+    """이름이 코드와 같으면 조회 결과로 바꾼다. 조회가 없으면 코드를 유지한다."""
+    for row in rows or []:
+        if not isinstance(row, dict) or not _needsName(row):
+            continue
+        code = str(row.get("stkCd") or "")
+        row["stkNm"] = _realName((names or {}).get(code), code) or code
+    return rows
+
+
+def loadScreenRows(statePath=None, accountHolds=None, names=None):
     """저장된 PBK 후보·슬롯과 넘긴 모의 잔고로 화면 행을 만든다."""
     candidates = []
     positions = []
@@ -130,7 +245,10 @@ def loadScreenRows(statePath=None, accountHolds=None):
     except Exception:
         candidates = []
         positions = []
-    return unionRows(candidates, positions, accountHolds)
+    rows = unionRows(candidates, positions, accountHolds)
+    if names is None:
+        names = lookupStkNames([item["stkCd"] for item in rows if _needsName(item)])
+    return applyStkNames(rows, names)
 
 
 def _px(raw):
