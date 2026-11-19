@@ -1061,18 +1061,7 @@ class TradeDeskWin(QMainWindow):
         outer = QVBoxLayout(root)
         outer.setContentsMargins(8, 8, 8, 8)
 
-        self.deskHead = QWidget()
-        self.deskHead.setObjectName("deskHead")
-        self.deskHead.setFixedHeight(28)
-        headLay = QHBoxLayout(self.deskHead)
-        headLay.setContentsMargins(10, 2, 10, 2)
-        self.deskHeadLbl = QLabel("천둥이")
-        self.deskHeadLbl.setStyleSheet(
-            "font-weight: 700; font-size: 14px; color: #FFFFFF; background: transparent;"
-        )
-        headLay.addWidget(self.deskHeadLbl)
-        outer.addWidget(self.deskHead)
-        self._headChromeKey = None
+        self._titleBarColorKey = None
         self._regimeView = {"regime": "판정불가", "ok": False}
 
         sessRow = QWidget()
@@ -1105,7 +1094,6 @@ class TradeDeskWin(QMainWindow):
         self.pbkBoard.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.pbkBoard.setStyleSheet("font-size: 12px; color: #37474F;")
         outer.addWidget(self.pbkBoard)
-        self._applyRegimeBadge({"regime": "판정불가", "ok": False})
         self._paintIndsBar()
         self._opsAlgTimer = QTimer(self)
         self._opsAlgTimer.timeout.connect(self.refreshOpsAlgBar)
@@ -2888,9 +2876,8 @@ class TradeDeskWin(QMainWindow):
         except Exception:
             ver = ""
         verTxt = f" · {ver}" if ver else ""
-        self.setWindowTitle(f"천둥이 {roleTxt}{verTxt}")
-        self._deskHeadCore = f"천둥이 {roleTxt}{verTxt}"
-        self._applyHeaderChrome(getattr(self, "_regimeView", None))
+        self._deskTitleCore = f"천둥이 {roleTxt}{verTxt}"
+        self._paintRegimeChrome(getattr(self, "_regimeView", None))
 
     def _refreshTokenAliveLbl(self):
         """상단 토큰유효/무효/확인중. 만료시각은 표시하지 않는다."""
@@ -3279,42 +3266,98 @@ class TradeDeskWin(QMainWindow):
 
         threading.Thread(target=_run, name="regimeBackfill", daemon=True).start()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, self, self._applyTitleBarAfterShow)
+
+    def _applyTitleBarAfterShow(self):
+        """창이 뜬 다음 GUI 스레드에서 제목 막대 색을 한 번 맞춘다."""
+        self._paintRegimeChrome(getattr(self, "_regimeView", None))
+
     def _applyRegimeBadge(self, view):
-        """헤더 색과 설정 탭 근거. 판정 계산은 하지 않는다."""
+        """제목 막대 색과 설정 탭 근거. 판정 계산은 하지 않는다."""
         self._regimeView = dict(view or {})
-        self._applyHeaderChrome(self._regimeView)
+        self._paintRegimeChrome(self._regimeView)
 
-    def _applyHeaderChrome(self, view):
-        """맨 위 헤더 줄 배경과 짧은 국면 글자. 값이 같을 때는 스타일을 다시 쓰지 않는다."""
+    def _paintRegimeChrome(self, view=None):
+        """제목 글자와 네이티브 제목 막대. 색이 같으면 DWM 을 다시 호출하지 않는다."""
         if QThread.currentThread() is not self.thread():
-            self._onGui(lambda: self._applyHeaderChrome(view))
+            snap = dict(view or {})
+            self._onGui(lambda snap=snap: self._paintRegimeChrome(snap))
             return
-        from utils.marketRegime import detailLine, headerChrome
+        from utils.marketRegime import detailLine
+        from utils.termLog import termLog
+        from utils.winTitleBar import applyNativeTitleBar, titleBarColors
 
-        shown = view or {}
+        shown = self._regimeView if view is None else (view or {})
         regime = str(shown.get("regime") or "판정불가")
-        if not shown.get("ok") and regime == "":
-            regime = "판정불가"
-        chrome = headerChrome(regime)
-        core = getattr(self, "_deskHeadCore", None) or "천둥이"
-        text = f"{core}   {chrome['label']}"
+        colors = titleBarColors(regime)
+        core = getattr(self, "_deskTitleCore", None) or "천둥이"
+        title = f"{core} · {colors['label']}"
         note = detailLine(shown)
-        key = (chrome["bg"], chrome["fg"], text, note)
-        if key == getattr(self, "_headChromeKey", None):
-            return
-        self._headChromeKey = key
-        head = getattr(self, "deskHead", None)
-        label = getattr(self, "deskHeadLbl", None)
-        if head is not None:
-            head.setStyleSheet(f"background-color: {chrome['bg']};")
-        if label is not None:
-            label.setText(text)
-            label.setStyleSheet(
-                f"font-weight: 700; font-size: 14px; color: {chrome['fg']}; background: transparent;"
-            )
+        if self.windowTitle() != title:
+            self.setWindowTitle(title)
         noteLbl = getattr(self, "regimeSettLbl", None)
         if noteLbl is not None and noteLbl.text() != note:
             noteLbl.setText(note)
+        if not self.isVisible():
+            return
+        colorKey = (colors["caption"], colors["text"])
+        if colorKey == getattr(self, "_titleBarColorKey", None):
+            return
+        try:
+            hwnd = int(self.winId() or 0)
+        except Exception:
+            hwnd = 0
+        if not hwnd:
+            return
+        ok, line = applyNativeTitleBar(hwnd, colors)
+        termLog(line)
+        self._titleBarColorKey = colorKey
+        if ok:
+            self._hideCustomTitleBar()
+        else:
+            self._showCustomTitleBar(title, colors)
+
+    def _ensureCustomTitleBar(self):
+        """DWM 이 없을 때만 쓰는 맨 위 줄. 평소에는 만들지 않는다."""
+        bar = getattr(self, "customTitleBar", None)
+        if bar is not None:
+            return bar
+        bar = QWidget()
+        bar.setObjectName("customTitleBar")
+        bar.setFixedHeight(28)
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(10, 2, 10, 2)
+        label = QLabel("")
+        lay.addWidget(label)
+        self.customTitleBar = bar
+        self.customTitleLbl = label
+        outer = self.centralWidget().layout()
+        if outer is not None:
+            outer.insertWidget(0, bar)
+        bar.hide()
+        return bar
+
+    def _showCustomTitleBar(self, title, colors):
+        bar = self._ensureCustomTitleBar()
+        label = self.customTitleLbl
+        bg = "#F3F3F3" if colors.get("default") else colors.get("hex")
+        styleKey = (title, bg)
+        if styleKey == getattr(self, "_customTitleKey", None) and bar.isVisible():
+            return
+        self._customTitleKey = styleKey
+        bar.setStyleSheet(f"background-color: {bg};")
+        label.setText(title)
+        label.setStyleSheet(
+            "font-weight: 700; font-size: 14px; color: #000000; background: transparent;"
+        )
+        bar.show()
+
+    def _hideCustomTitleBar(self):
+        bar = getattr(self, "customTitleBar", None)
+        if bar is not None and bar.isVisible():
+            bar.hide()
 
     def _paintMarketRegime(self):
         """KODEX200 일봉으로 배지를 갱신한다. 주문은 하지 않는다."""

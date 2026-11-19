@@ -14,7 +14,6 @@ from datetime import datetime
 from utils.marketRegime import (
     annVol,
     badgeColors,
-    headerChrome,
     changeLine,
     classifySnapshot,
     detailLine,
@@ -219,22 +218,119 @@ class MarketRegimeTest(unittest.TestCase):
         self.assertEqual(label.text(), "하락장")
         self.assertIn("#1565C0", label.styleSheet())
         src = Path("ui/tradeDeskWin.py").read_text(encoding="utf-8")
-        self.assertIn("headerChrome", src)
-        self.assertIn("deskHead", src)
+        self.assertIn("applyNativeTitleBar", src)
+        self.assertIn("winId", src)
         self.assertIn("regimeSettLbl", src)
+        self.assertNotIn("deskHead", src)
 
-    def test_header_chrome_colors(self):
-        bear = headerChrome("하락장")
-        bull = headerChrome("상승장")
-        side = headerChrome("횡보장")
-        none = headerChrome("판정불가")
-        self.assertEqual(bear["label"], "하락장")
-        self.assertEqual(bear["fg"], "#FFFFFF")
-        self.assertTrue(bear["bg"].startswith("#B"))
-        self.assertEqual(bull["bg"], "#1B5E20")
-        self.assertEqual(side["bg"], none["bg"])
-        self.assertNotEqual(bear["bg"], bull["bg"])
-        self.assertEqual(headerChrome("하락장"), bear)
+    def test_title_bar_colors_and_dwm_log(self):
+        from utils.winTitleBar import (
+            DWM_COLOR_DEFAULT,
+            DWMWA_CAPTION_COLOR,
+            DWMWA_TEXT_COLOR,
+            applyNativeTitleBar,
+            colorrefFromHex,
+            loadDwmSetter,
+            titleBarColors,
+            titleBarLogLine,
+        )
+
+        bear = titleBarColors("하락장")
+        bull = titleBarColors("상승장")
+        side = titleBarColors("횡보장")
+        none = titleBarColors("판정불가")
+        self.assertEqual(bear["hex"], "#BBDEFB")
+        self.assertEqual(bear["caption"], colorrefFromHex("#BBDEFB"))
+        self.assertEqual(bear["text"], 0)
+        self.assertEqual(bull["hex"], "#FFCDD2")
+        self.assertEqual(bull["caption"], colorrefFromHex("#FFCDD2"))
+        self.assertEqual(side["hex"], "#FFF59D")
+        self.assertEqual(side["text"], 0)
+        self.assertEqual(none["caption"], DWM_COLOR_DEFAULT)
+        self.assertEqual(none["text"], DWM_COLOR_DEFAULT)
+        self.assertTrue(none["default"])
+        self.assertEqual(titleBarColors("하락장"), bear)
+        self.assertNotEqual(bear["caption"], bull["caption"])
+        self.assertNotEqual(bull["caption"], side["caption"])
+
+        calls = []
+
+        def _ok(hwnd, attr, color):
+            calls.append((hwnd, attr, color))
+            return 0
+
+        ok, line = applyNativeTitleBar(7, bear, setter=_ok)
+        self.assertTrue(ok)
+        self.assertEqual(line, "[titleBar] 성공 하락장 caption=#BBDEFB text=#000000")
+        self.assertEqual(calls[0][1], DWMWA_CAPTION_COLOR)
+        self.assertEqual(calls[1][1], DWMWA_TEXT_COLOR)
+        self.assertEqual(calls[0][2], bear["caption"])
+        self.assertEqual(calls[1][2], 0)
+
+        def _hr(hwnd, attr, color):
+            return 0x80070057 if attr == DWMWA_CAPTION_COLOR else 0
+
+        ok, line = applyNativeTitleBar(7, side, setter=_hr)
+        self.assertFalse(ok)
+        self.assertEqual(line, "[titleBar] 실패 횡보장 hr=0x80070057 — 커스텀 타이틀바")
+
+        def _boom(hwnd, attr, color):
+            raise OSError("dwm")
+
+        ok, line = applyNativeTitleBar(7, bull, setter=_boom)
+        self.assertFalse(ok)
+        self.assertIn("커스텀 타이틀바", line)
+        self.assertTrue(line.startswith("[titleBar] 실패"))
+        ok, line = applyNativeTitleBar(0, none, setter=_ok)
+        self.assertFalse(ok)
+        self.assertIn("hwnd 없음", line)
+        self.assertIsNone(loadDwmSetter())
+        self.assertEqual(
+            titleBarLogLine(True, titleBarColors("상승장")),
+            "[titleBar] 성공 상승장 caption=#FFCDD2 text=#000000",
+        )
+        self.assertEqual(
+            titleBarLogLine(True, titleBarColors("횡보장")),
+            "[titleBar] 성공 횡보장 caption=#FFF59D text=#000000",
+        )
+
+    def test_desk_title_bar_native_then_fallback(self):
+        try:
+            import os
+
+            os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+            from PySide6.QtWidgets import QApplication
+        except Exception as err:
+            self.skipTest(f"PySide6 offscreen unavailable: {err}")
+        app = QApplication.instance() or QApplication([])
+        from ui.tradeDeskWin import TradeDeskWin
+
+        win = TradeDeskWin()
+        success = (True, "[titleBar] 성공 판정불가 caption=default text=default")
+        with patch("utils.winTitleBar.applyNativeTitleBar", return_value=success):
+            win.show()
+            app.processEvents()
+        self.assertIn("판정불가", win.windowTitle())
+        bar = getattr(win, "customTitleBar", None)
+        self.assertTrue(bar is None or not bar.isVisible())
+        fail = (False, "[titleBar] 실패 하락장 hr=0x80070057 — 커스텀 타이틀바")
+        with patch("utils.winTitleBar.applyNativeTitleBar", return_value=fail):
+            win._applyRegimeBadge({
+                "ok": True,
+                "regime": "하락장",
+                "reason": "종가<200일선",
+                "reg01": "OFF",
+            })
+            app.processEvents()
+        self.assertIn("하락장", win.windowTitle())
+        self.assertNotIn("상승장", win.windowTitle())
+        self.assertTrue(win.customTitleBar.isVisible())
+        self.assertIn("#BBDEFB", win.customTitleBar.styleSheet())
+        self.assertIn("#000000", win.customTitleLbl.styleSheet())
+        self.assertIn("종가<200일선", win.regimeSettLbl.text())
+        self.assertIn("REG01 OFF", win.regimeSettLbl.text())
+        self.assertTrue(win.pbkBoard.text().startswith("[PBK01]"))
+        win.close()
 
     def test_regime_symbol_insert_only_and_backfill_gate(self):
         from utils.dayStkPrcStore import _INSERT_IGNORE_SQL
