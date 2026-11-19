@@ -7,7 +7,9 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from utils.termLog import termLog
 
@@ -135,6 +137,24 @@ def dartLookbackDays(settings=None):
     return days if days > 0 else 120
 
 
+def splitDartWindows(start, end, stepDays=30):
+    """corp_code 없는 조회는 3개월을 넘기면 거절된다. 30일 차이 이하로 나눈다."""
+    cur = datetime.strptime(str(start)[:8], "%Y%m%d")
+    last = datetime.strptime(str(end)[:8], "%Y%m%d")
+    step = max(1, int(stepDays))
+    out = []
+    while cur <= last:
+        chunkEnd = min(cur + timedelta(days=step), last)
+        out.append({
+            "start": cur.strftime("%Y%m%d"),
+            "end": chunkEnd.strftime("%Y%m%d"),
+        })
+        if chunkEnd >= last:
+            break
+        cur = chunkEnd + timedelta(days=1)
+    return out
+
+
 def planDartRange(oldest, newest, today, lookbackDays=120):
     """가장 오래된 공시가 창보다 최근이면 빈 구간을 채우고, 아니면 마지막 다음날만."""
     end = str(today or "")[:8]
@@ -149,6 +169,35 @@ def planDartRange(oldest, newest, today, lookbackDays=120):
     if nxt > end:
         return None
     return {"start": nxt, "end": end, "kind": "increment"}
+
+
+def _gapPath(storePath):
+    return Path(storePath).with_name("pbk01_dart_gap.json")
+
+
+def _readGaps(storePath):
+    path = _gapPath(storePath)
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    out = []
+    for row in data:
+        if isinstance(row, dict) and len(str(row.get("start") or "")) == 8:
+            out.append({"start": str(row["start"])[:8], "end": str(row.get("end") or row["start"])[:8]})
+    return out
+
+
+def _writeGaps(storePath, gaps):
+    path = _gapPath(storePath)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    from config.settingsStore import _writeJson
+
+    _writeJson(path, list(gaps or []))
 
 
 def _savedDartSpan(path):
@@ -221,19 +270,41 @@ def runUniverseClose(endDt=None, settings=None, dartFetch=None, codes=None, stat
         from research.dartDiscFetch import fetchMarketDisclosures
 
         dartFetch = fetchMarketDisclosures
-    if window is None:
-        termLog(f"[PBK01] 실적 공시 최신 — {newest} 이후 없음")
+    windows = []
+    if window is not None:
+        windows.extend(splitDartWindows(window["start"], window["end"]))
+        termLog(f"[PBK01] 실적 공시 {window['kind']} {window['start']}~{window['end']} 구간 {len(windows)}개")
     else:
-        termLog(f"[PBK01] 실적 공시 {window['kind']} {window['start']}~{window['end']}")
-    for cls in ("Y", "K"):
-        if window is None:
-            break
-        got = dartFetch(window["start"], window["end"], corpCls=cls) or {}
-        if not got.get("ok"):
-            termLog(f"[PBK01] 공시 조회 실패 {got.get('errMsg') or ''}")
-        items.extend(got.get("items") or [])
-    added = saveMarketEarnings(items, path=dartPath)
+        termLog(f"[PBK01] 실적 공시 최신 — {newest} 이후 없음")
+    for gap in _readGaps(storePath):
+        if gap not in windows:
+            windows.append(gap)
+    failed = []
+    calls = 0
+    for piece in windows:
+        for cls in ("Y", "K"):
+            got = dartFetch(piece["start"], piece["end"], corpCls=cls) or {}
+            calls += int(got.get("calls") or 1)
+            items.extend(got.get("items") or [])
+            if not got.get("ok"):
+                if piece not in failed:
+                    failed.append(piece)
+                termLog(
+                    f"[PBK01] 공시 구간 실패 {piece['start']}~{piece['end']} "
+                    f"{got.get('errMsg') or ''} — 다음에 다시"
+                )
+    _writeGaps(storePath, failed)
+    termLog(f"[PBK01] 실적 공시 호출 {calls}회 · 실패 구간 {len(failed)}개")
+    added = saveMarketEarnings(items, path=storePath)
     termLog(f"[PBK01] 실적 공시 추가 {added}건")
+    try:
+        _ensureDisclosureBars(items, end, statFn, fetcher, writer, slot, log)
+    except Exception as err:
+        termLog(f"[PBK01] 후보 일봉 우선 적재 실패: {err}")
+    try:
+        _refreshNextCandidates(end)
+    except Exception as err:
+        termLog(f"[PBK01] 공시 후 후보 재계산 실패: {err}")
     if codes is None:
         try:
             codes = listKospiKosdaq()
@@ -262,6 +333,22 @@ def runUniverseClose(endDt=None, settings=None, dartFetch=None, codes=None, stat
     out["dartAdded"] = added
     out["summary"] = summary
     return out
+
+
+def _ensureDisclosureBars(items, end, statFn, fetcher, writer, slot, log):
+    """공시가 있는 종목은 전 종목 적재보다 먼저 일봉을 채운다."""
+    codes = []
+    seen = set()
+    for item in items or []:
+        code = str((item or {}).get("stkCd") or "")
+        if len(code) == 6 and code not in seen:
+            seen.add(code)
+            codes.append(code)
+    if not codes:
+        return {"stkCnt": 0}
+    if statFn is None or fetcher is None or writer is None:
+        return _loadWithKiwoom(codes, end, log=log)
+    return loadMissingDayBars(codes, end, statFn, fetcher, writer, slot=slot, log=log)
 
 
 def _refreshNextCandidates(endDt):

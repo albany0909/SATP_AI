@@ -409,10 +409,9 @@ class LoginWin(QDialog):
             if not isinstance(data, dict):
                 data = {}
             data["deskTradeMode"] = mode
-            sp.write_text(
-                json.dumps(data, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
+            from config.settingsStore import _writeJson
+
+            _writeJson(sp, data)
         except Exception as err:
             termLog(f"[deskLogin] tradeApp deskTradeMode 동기화 실패: {err}")
         return mode

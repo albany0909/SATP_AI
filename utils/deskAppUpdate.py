@@ -561,10 +561,9 @@ def _syncTradeAppDeskSettings(root: Path, loginInfo=None):
             data["deskTradeMode"] = getDeskTradeMode()
         except Exception:
             pass
-        sp.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        from config.settingsStore import _writeJson
+
+        _writeJson(sp, data)
     except Exception as err:
         termLog(f"[deskUpdate] tradeApp settings 동기화 경고: {err}")
 

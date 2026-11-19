@@ -374,9 +374,20 @@ class Pbk01Test(unittest.TestCase):
         self.assertGreater(est["seconds"], 2400)
         from utils.pbkUniverseLoad import isCommonStock, loadMissingDayBars, planDartRange
 
+        from utils.pbkUniverseLoad import splitDartWindows
+
         window = planDartRange("", "", "20261119", 120)
         self.assertLessEqual(window["start"], "20261028")
         self.assertGreaterEqual(window["end"], "20261103")
+        chunks = splitDartWindows(window["start"], window["end"])
+        self.assertLessEqual(len(chunks), 4)
+        self.assertGreaterEqual(len(chunks), 1)
+        for piece in chunks:
+            span = (
+                __import__("datetime").datetime.strptime(piece["end"], "%Y%m%d")
+                - __import__("datetime").datetime.strptime(piece["start"], "%Y%m%d")
+            ).days
+            self.assertLessEqual(span, 30)
         self.assertTrue(disclosureAccepted("영업(잠정)실적"))
         filled = planDartRange("20260722", "20261118", "20261119", 120)
         self.assertEqual(filled["kind"], "increment")

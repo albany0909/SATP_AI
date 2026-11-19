@@ -4,8 +4,10 @@
 """
 
 import json
+import os
 import re
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -138,14 +140,27 @@ def _toStoredPct(val):
     return float(val)
 
 
-def _readJson(path):
-    """JSON 파일 로드. 실패 시 None."""
-    try:
-        with open(path, "r", encoding="utf-8") as fp:
-            data = json.load(fp)
-        return data if isinstance(data, dict) else None
-    except Exception:
-        return None
+def _readJson(path, retries=5, pause=0.05):
+    """JSON 로드. 0바이트·파싱 실패는 잠깐 다시 읽는다. 끝내 실패하면 None."""
+    filePath = Path(path)
+    for attempt in range(max(1, int(retries))):
+        try:
+            if not filePath.is_file():
+                return None
+            raw = filePath.read_text(encoding="utf-8")
+            if not raw.strip():
+                if attempt + 1 < int(retries):
+                    time.sleep(pause)
+                    continue
+                return None
+            data = json.loads(raw)
+            return data if isinstance(data, dict) else None
+        except Exception:
+            if attempt + 1 < int(retries):
+                time.sleep(pause)
+                continue
+            return None
+    return None
 
 
 _recoverOnce = set()
@@ -203,11 +218,24 @@ def salvageDeskTradeMode(text):
 
 
 def _writeJson(path, data):
-    """JSON 파일 저장. 디렉터리가 없으면 생성."""
+    """같은 폴더의 임시 파일에 쓰고 fsync 한 뒤 원자적으로 바꾼다."""
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fp:
-        json.dump(data, fp, ensure_ascii=False, indent=2)
-        fp.write("\n")
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    payload = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fp:
+            fp.write(payload)
+            fp.flush()
+            os.fsync(fp.fileno())
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 def loadDefaultSettings():

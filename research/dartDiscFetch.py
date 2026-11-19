@@ -132,8 +132,11 @@ def fetchDartDiscList(stkCd, daysBack=3, pageCount=50):
     }
 
 
-def fetchMarketDisclosures(bgnDe, endDe, corpCls="", pageCount=100, getter=None):
-    """코스피·코스닥 공시 목록. corp_code 없이 날짜만 조회한다. 키는 결과에 넣지 않는다."""
+def fetchMarketDisclosures(bgnDe, endDe, corpCls="", pageCount=100, getter=None, pblntfTy="I"):
+    """코스피·코스닥 공시 목록. corp_code 없이 날짜만 조회한다. 키는 결과에 넣지 않는다.
+
+    corp_code 가 없으면 검색기간은 3개월을 넘기면 안 된다. 호출자는 30일 이하로 나눈다.
+    """
     key = (dart_api_key or "").strip()
     if not key:
         return {"ok": False, "errMsg": "DART_API_KEY 없음", "items": []}
@@ -151,6 +154,9 @@ def fetchMarketDisclosures(bgnDe, endDe, corpCls="", pageCount=100, getter=None)
         }
         if corpCls:
             params["corp_cls"] = corpCls
+        # 잠정실적·공정공시는 거래소공시(I). 없으면 전체로 다시 받지 않는다.
+        if pblntfTy:
+            params["pblntf_ty"] = pblntfTy
         try:
             res = call(url, params, 25)
             body = res.json()
@@ -159,6 +165,7 @@ def fetchMarketDisclosures(bgnDe, endDe, corpCls="", pageCount=100, getter=None)
                 "ok": False,
                 "errMsg": maskDartSecret(str(err), key),
                 "items": items,
+                "calls": page,
             }
         status = str(body.get("status") or "")
         if status == "013":
@@ -168,6 +175,7 @@ def fetchMarketDisclosures(bgnDe, endDe, corpCls="", pageCount=100, getter=None)
                 "ok": False,
                 "errMsg": maskDartSecret(str(body.get("message") or status), key),
                 "items": items,
+                "calls": page,
             }
         rows = body.get("list") or []
         if not isinstance(rows, list) or not rows:
@@ -190,4 +198,4 @@ def fetchMarketDisclosures(bgnDe, endDe, corpCls="", pageCount=100, getter=None)
         if len(rows) < int(params["page_count"]):
             break
         page += 1
-    return {"ok": True, "items": items, "pages": page}
+    return {"ok": True, "items": items, "pages": page, "calls": page}

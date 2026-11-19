@@ -74,6 +74,25 @@ class SettingsGuardTest(unittest.TestCase):
             self.assertEqual(saved["deskTradeMode"], "paper")
             self.assertEqual(saved["keep"], 7)
 
+    def test_atomic_write_and_empty_file_retries(self):
+        import threading
+        import time
+
+        with tempfile.TemporaryDirectory() as folder:
+            store, _default, live = self._paths(folder)
+            store._writeJson(live, {"deskTradeMode": "paper", "keep": 1})
+            self.assertFalse(any(p.name.endswith(".tmp") for p in Path(folder).iterdir()))
+            self.assertEqual(json.loads(live.read_text(encoding="utf-8"))["keep"], 1)
+            live.write_text("", encoding="utf-8")
+
+            def _fill():
+                time.sleep(0.08)
+                live.write_text('{"deskTradeMode": "paper"}\n', encoding="utf-8")
+
+            threading.Thread(target=_fill).start()
+            got = store._readJson(live, retries=8, pause=0.03)
+            self.assertEqual(got["deskTradeMode"], "paper")
+
     def test_zip_update_does_not_replace_settings(self):
         from utils.deskAppUpdate import applyZipUpdate
 
