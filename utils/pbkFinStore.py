@@ -33,8 +33,23 @@ def _read(path):
     return rows
 
 
+def readFinRows(path=None):
+    return _read(path or finPath())
+
+
 def seenReceipts(path=None):
-    return {str(row.get("rceptNo") or "") for row in _read(path or finPath()) if row.get("rceptNo")}
+    """증감률까지 판정된 접수번호. 매출·영업 YoY 가 비면 다음에 다시 본다."""
+    last = {}
+    for row in _read(path or finPath()):
+        rcept = str(row.get("rceptNo") or "")
+        if rcept:
+            last[rcept] = row
+    done = set()
+    for rcept, row in last.items():
+        if row.get("salesYoy") is None or row.get("opYoy") is None:
+            continue
+        done.add(rcept)
+    return done
 
 
 def appendFinRows(items, path=None):

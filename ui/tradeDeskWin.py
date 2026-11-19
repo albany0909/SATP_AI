@@ -961,6 +961,7 @@ class TradeDeskWin(QMainWindow):
         self._stratAlgTabCds = []
         self._stratAlgTabsBusy = False
         self._watchAlgCd = "surge"
+        self._watchBootPick = True
         self._watchAlgTabCds = []
         self._watchAlgTabsBusy = False
         self._watchNetCache = {}
@@ -3398,13 +3399,28 @@ class TradeDeskWin(QMainWindow):
         self.refreshStratInfo()
 
     def _rebuildWatchAlgTabs(self):
-        """조회 탭. 기본은 급등주만. 실계좌·주도주 코드는 남기고 설정으로 되돌린다."""
+        """조회 탭. 모의 PBK 화면이면 부팅 때 PBK 를 먼저 연다."""
+        settings = {}
         try:
+            from config.settingsStore import loadSettings
             from trading.deskLiveAlgs import resolveMonitorSelection, visibleMonitorTabs
-
-            tabs = tuple(
-                (row["key"], row["name"], row["bg"]) for row in visibleMonitorTabs()
+            from utils.pbkWatchScreen import (
+                bootWatchSelection,
+                ensurePbkTab,
+                ensureWatchBackup,
+                watchScreenOn,
             )
+
+            settings = loadSettings() or {}
+            if watchScreenOn(settings):
+                try:
+                    from utils.appPaths import configDataDir
+
+                    ensureWatchBackup(configDataDir())
+                except Exception:
+                    pass
+            tabRows = ensurePbkTab(visibleMonitorTabs(settings), settings)
+            tabs = tuple((row["key"], row["name"], row.get("bg") or "") for row in tabRows)
         except Exception:
             tabs = (("surge", "급등주", "#80DEEA"),)
 
@@ -3412,6 +3428,9 @@ class TradeDeskWin(QMainWindow):
                 keys = [str(k) for k in (visibleKeys or []) if str(k)]
                 cur = str(current or "")
                 return cur if cur in keys else (keys[0] if keys else "")
+
+            def bootWatchSelection(current, visibleKeys, settings=None):
+                return resolveMonitorSelection(current, visibleKeys)
         cds = [k for k, _n, _c in tabs]
         bar = self.watchAlgTabBar
         if cds == getattr(self, "_watchAlgTabCds", None) and bar.count() == len(cds):
@@ -3431,7 +3450,11 @@ class TradeDeskWin(QMainWindow):
                 except Exception:
                     pass
                 self._watchAlgTabCds.append(key)
-            cur = resolveMonitorSelection(self._watchAlgCd, self._watchAlgTabCds)
+            if getattr(self, "_watchBootPick", False):
+                cur = bootWatchSelection(self._watchAlgCd, self._watchAlgTabCds, settings)
+                self._watchBootPick = False
+            else:
+                cur = resolveMonitorSelection(self._watchAlgCd, self._watchAlgTabCds)
             self._watchAlgCd = cur
             if cur in self._watchAlgTabCds:
                 bar.setCurrentIndex(self._watchAlgTabCds.index(cur))

@@ -11,7 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from utils.pbkWatchScreen import (
     backupWatchOnce,
+    bootWatchSelection,
     collectionCodes,
+    ensurePbkTab,
     ensureWatchBackup,
     loadScreenRows,
     readWatchBackup,
@@ -41,6 +43,13 @@ class PbkWatchScreenTest(unittest.TestCase):
             "deskTradeMode": "paper",
             "stratLive": {"PBK01": {"watchScreen": False}},
         }))
+        paper = {"deskTradeMode": "paper", "stratLive": {"PBK01": {"watchScreen": True}}}
+        self.assertEqual(bootWatchSelection("surge", ["pbk", "surge"], paper), "pbk")
+        saved = {"deskTradeMode": "paper", "stratLive": {"PBK01": {"watchScreen": False}}}
+        self.assertEqual(bootWatchSelection("surge", ["pbk", "surge"], saved), "surge")
+        opened = ensurePbkTab([{"key": "surge", "name": "급등주", "bg": "#80DEEA"}], paper)
+        self.assertEqual(opened[0]["key"], "pbk")
+        self.assertEqual(bootWatchSelection("surge", opened, paper), "pbk")
 
     def test_backup_once_and_collection_stays_wide(self):
         legacy = [

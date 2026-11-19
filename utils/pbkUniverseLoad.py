@@ -282,12 +282,13 @@ def backfillPeriodic(end, windows, dartFetch=None, finPath=None, callsLeft=None,
     """정기보고서(pblntf_ty=A)를 30일 구간으로 받고 S1 을 jsonl 에 붙인다."""
     from research.pbkSurprise import (
         DART_DAILY_LIMIT,
+        countMissingYoy,
         evaluateReports,
         estimateSurpriseCalls,
         loadStatement,
         parsePeriodic,
     )
-    from utils.pbkFinStore import appendFinRows, finPath as defaultFin, seenReceipts
+    from utils.pbkFinStore import appendFinRows, finPath as defaultFin, readFinRows, seenReceipts
 
     log = log or termLog
     store = finPath or defaultFin()
@@ -336,9 +337,14 @@ def backfillPeriodic(end, windows, dartFetch=None, finPath=None, callsLeft=None,
         failed.append({"start": day, "end": str(end)[:8]})
     _writeGaps(store, failed)
     finCalls = int(judged.get("calls") or 0)
+    yoyStat = countMissingYoy(readFinRows(store))
     log(
         f"[PBK01] 정기보고서 목록 {listCalls}회 · 재무 {finCalls}회 · "
         f"일일 한도 {DART_DAILY_LIMIT} · 저장 {added}건 · 보류 {len(pending)}건"
+    )
+    log(
+        f"[PBK01] 정기보고서 {yoyStat['total']}건 중 "
+        f"salesYoy 또는 opYoy 없음 {yoyStat['missing']}건"
     )
     return {
         "listCalls": listCalls,

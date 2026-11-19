@@ -222,6 +222,39 @@ def touchDelta(previous, screen, keep):
     return {"added": added, "removed": removed, "screen": want}
 
 
+PBK_TAB = {"key": "pbk", "name": "PBK", "bg": "#C5E1A5", "kind": "monitor", "algCd": "PBK01"}
+
+
+def ensurePbkTab(tabs, settings=None):
+    """모의 PBK 화면이면 저장된 탭 목록에 PBK 가 없어도 앞에 넣는다."""
+    rows = []
+    for item in tabs or []:
+        if isinstance(item, dict):
+            rows.append(dict(item))
+        else:
+            rows.append({"key": str(item or ""), "name": str(item or ""), "bg": ""})
+    if not watchScreenOn(settings):
+        return rows
+    if any(str(row.get("key") or "") == "pbk" for row in rows):
+        return rows
+    return [dict(PBK_TAB)] + rows
+
+
+def bootWatchSelection(current, visibleKeys, settings=None):
+    """부팅 때는 저장된 탭보다 PBK 를 먼저 연다."""
+    keys = []
+    for item in visibleKeys or []:
+        key = item.get("key") if isinstance(item, dict) else item
+        key = str(key or "").strip()
+        if key and key not in keys:
+            keys.append(key)
+    if watchScreenOn(settings) and "pbk" in keys:
+        return "pbk"
+    from trading.deskLiveAlgs import resolveMonitorSelection
+
+    return resolveMonitorSelection(current, keys)
+
+
 def setWatchScreen(on):
     """화면 스위치. DB 관심종목은 건드리지 않는다."""
     from config.settingsStore import loadSettings, patchSettings

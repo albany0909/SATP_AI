@@ -617,6 +617,73 @@ class Pbk01Test(unittest.TestCase):
             self.assertNotIn("crtfc", text)
             self.assertEqual(list(surprisesByCode(path).keys()), ["263860"])
 
+    def test_genians_revenue_alias_and_quarter_amount(self):
+        from research.pbkSurprise import _pickFs, countMissingYoy, loadStatement, passesS1
+
+        items = [
+            {
+                "fsDiv": "CFS", "sjDiv": "IS", "accountNm": "영업이익",
+                "thstrmAmount": "3800000000", "frmtrmAmount": "1100000000",
+            },
+            {
+                "fsDiv": "CFS", "sjDiv": "IS", "accountNm": "영업수익",
+                "accountId": "ifrs-full_Revenue",
+                "thstrmAmount": "13800000000", "frmtrmAmount": "10400000000",
+            },
+        ]
+        picked = _pickFs(items)
+        self.assertEqual(picked["sales"], 13_800_000_000)
+        self.assertEqual(picked["salesLy"], 10_400_000_000)
+        self.assertEqual(picked["op"], 3_800_000_000)
+        self.assertEqual(picked["opLy"], 1_100_000_000)
+        separate = _pickFs([
+            {
+                "fsDiv": "CFS", "sjDiv": "IS", "accountNm": "영업이익",
+                "thstrmAmount": "3800000000", "frmtrmAmount": "1100000000",
+            },
+            {
+                "fsDiv": "OFS", "sjDiv": "IS", "accountNm": "매출",
+                "accountId": "ifrs-full_Revenue",
+                "thstrmAmount": "13800000000", "frmtrmAmount": "10400000000",
+            },
+        ])
+        self.assertEqual(separate["sales"], 13_800_000_000)
+        self.assertEqual(separate["fsDiv"], "OFS")
+        self.assertEqual(separate["op"], 3_800_000_000)
+
+        def _raw(_corp, _year, reprt):
+            if reprt != "11014":
+                return {"ok": False, "errMsg": "반기 없음", "calls": 1}
+            return {"ok": True, "calls": 1, "items": items}
+
+        got = loadStatement("00126386", 2026, "11014", getter=_raw)
+        self.assertEqual(got["sales"], 13_800_000_000)
+        judged = passesS1({
+            3: {
+                "sales": None, "salesLy": None, "op": None, "opLy": None,
+                "quarterSales": 138, "quarterSalesLy": 104,
+                "quarterOp": 38, "quarterOpLy": 11,
+            },
+            2: {
+                "sales": 132, "salesLy": 114, "op": 26, "opLy": 11,
+                "quarterSales": 132, "quarterSalesLy": 114,
+                "quarterOp": 26, "quarterOpLy": 11,
+            },
+        }, 3)
+        self.assertTrue(judged["pass"])
+        self.assertEqual(judged["sales"], 138)
+        self.assertEqual(judged["salesLy"], 104)
+        self.assertEqual(judged["op"], 38)
+        self.assertEqual(judged["opLy"], 11)
+        self.assertAlmostEqual(judged["salesYoy"], round(138 / 104 - 1, 6))
+        self.assertAlmostEqual(judged["opYoy"], round(38 / 11 - 1, 6))
+        stat = countMissingYoy([
+            {"salesYoy": None, "opYoy": 1.2},
+            {"salesYoy": 0.3, "opYoy": 0.6},
+            {"reason": "SKIP", "salesYoy": None},
+        ])
+        self.assertEqual(stat, {"total": 2, "missing": 1})
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
