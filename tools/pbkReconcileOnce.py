@@ -6,11 +6,14 @@
 
 --set 은 종목:단계=체결수량. 1은 1차, 2는 2차. 합이 그 종목 잔고가 된다.
 --apply 가 없으면 변경 전후만 출력한다.
+상태 파일은 한 줄을 덧붙인다. 체결 기록(pbk01_fills_YYYYMMDD.jsonl)은
+복기할 때 그 줄을 그대로 읽으므로, 같은 종목·단계 줄을 고쳐 쓴다.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -88,6 +91,63 @@ def _brief(pos):
     return f"{pos.get('stkCd')} {pos.get('stkNm') or ''} 잔고 {pos.get('brokerQty')} " + " ".join(legs)
 
 
+def _leg_no(row):
+    if row.get("leg") in (1, 2, "1", "2"):
+        return int(row.get("leg"))
+    name = str(row.get("legName") or "")
+    if name.startswith("1"):
+        return 1
+    if name.startswith("2"):
+        return 2
+    return None
+
+
+def _fill_files(folder, positions, spec):
+    days = set()
+    for pos in positions or []:
+        if str(pos.get("stkCd") or "") not in spec:
+            continue
+        for key in ("leg1", "leg2"):
+            leg = pos.get(key) or {}
+            ymd = str(leg.get("ymd") or "")
+            if len(ymd) == 8:
+                days.add(ymd)
+    found = []
+    for day in sorted(days):
+        path = Path(folder) / f"pbk01_fills_{day}.jsonl"
+        if path.is_file():
+            found.append(path)
+    return found
+
+
+def correct_fill_rows(rows, spec):
+    """같은 종목·단계의 복기 줄을 지정 체결 수량으로 고친 새 목록."""
+    out = []
+    changed = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            out.append(row)
+            continue
+        code = str(row.get("stkCd") or "")
+        leg = _leg_no(row)
+        if code not in spec or leg not in spec[code]:
+            out.append(row)
+            continue
+        filled = int(spec[code][leg])
+        try:
+            ordered = int(row.get("ordQty") or filled)
+        except (TypeError, ValueError):
+            ordered = filled
+        new = dict(row)
+        new["brokerQty"] = filled
+        new["expiredQty"] = max(0, ordered - filled)
+        if "remainQty" in new:
+            new["remainQty"] = max(0, ordered - filled)
+        changed.append((row, new))
+        out.append(new)
+    return out, changed
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="PBK 상태 일회 보정 (드라이런 기본)")
     parser.add_argument("--state", default="")
@@ -109,6 +169,22 @@ def main(argv=None):
     for pos in after:
         if str(pos.get("stkCd") or "") in spec:
             print("  " + _brief(pos))
+    fill_paths = _fill_files(path.parent, before, spec)
+    from utils.pbk01Store import readRows
+
+    planned = []
+    for fill_path in fill_paths:
+        rows = readRows(fill_path)
+        updated, diffs = correct_fill_rows(rows, spec)
+        for old, new in diffs:
+            print(
+                f"fills {fill_path.name} {old.get('stkCd')} {old.get('legName') or old.get('leg')} "
+                f"brokerQty {old.get('brokerQty')}→{new.get('brokerQty')} "
+                f"expiredQty {old.get('expiredQty')}→{new.get('expiredQty')}"
+            )
+        planned.append((fill_path, updated, bool(diffs)))
+    if not planned:
+        print("fills 파일 없음")
     if not args.apply:
         print("드라이런. 파일을 쓰지 않았다. 반영하려면 --apply")
         return 0
@@ -118,6 +194,12 @@ def main(argv=None):
     row["reconcileOnce"] = args.spec
     appendRow(path, row)
     print(f"반영 {path}")
+    for fill_path, updated, touched in planned:
+        if not touched:
+            continue
+        text = "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in updated)
+        fill_path.write_text(text, encoding="utf-8")
+        print(f"반영 {fill_path}")
     return 0
 
 

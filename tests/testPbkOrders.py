@@ -655,6 +655,50 @@ class PbkOrderPlanTest(unittest.TestCase):
         )
         self.assertEqual([row["reason"] for row in sold["actions"] if row["side"] == "SELL"], ["f+10"])
 
+    def test_reconcile_script_fixes_fills_and_blocks_reentry(self):
+        from tools.pbkReconcileOnce import main
+
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder) / "pbk01_state.jsonl"
+            fills = Path(folder) / "pbk01_fills_20261120.jsonl"
+            state.write_text(json.dumps({
+                "kind": "state",
+                "positions": [{
+                    "stkCd": "300080",
+                    "stkNm": "플리토",
+                    "qty": 171,
+                    "brokerQty": 171,
+                    "leg1": {
+                        "qty": 526, "filledQty": 171, "remainQty": 355, "expiredQty": 355,
+                        "ordNo": "0000001", "ymd": "20261120", "settled": True,
+                    },
+                }],
+            }, ensure_ascii=False) + "\n", encoding="utf-8")
+            fills.write_text(json.dumps({
+                "stkCd": "300080", "stkNm": "플리토", "leg": 1, "legName": "1차",
+                "ordNo": "0000001", "ordQty": 526, "brokerQty": 171, "expiredQty": 355,
+                "ymd": "20261120",
+            }, ensure_ascii=False) + "\n", encoding="utf-8")
+            self.assertEqual(main(["--state", str(state), "--set", "300080:1=526"]), 0)
+            self.assertIn("171", fills.read_text(encoding="utf-8"))
+            self.assertEqual(main(["--state", str(state), "--set", "300080:1=526", "--apply"]), 0)
+            fixed = json.loads(fills.read_text(encoding="utf-8").splitlines()[0])
+            self.assertEqual(fixed["brokerQty"], 526)
+            self.assertEqual(fixed["expiredQty"], 0)
+            from utils.pbk01Store import latestByKind
+
+            pos = latestByKind(state, "state")["positions"][0]
+            self.assertEqual(pos["leg1"]["remainQty"], 0)
+            self.assertEqual(pos["leg1"]["filledQty"], 526)
+            again = buildLiveActions(
+                [{"stkCd": "300080", "stkNm": "플리토", "ma5": 4000, "ma20": 3000}],
+                {"300080": _fresh(3500, low=3000, ask=3500)},
+                [pos],
+                "100000",
+                "20261121",
+            )
+            self.assertEqual([row for row in again["actions"] if row["side"] == "BUY" and row["leg"] == 1], [])
+
     def test_live_log_guard(self):
         from tests.liveGuard import LiveGuardError
         from utils.deskFileLog import appendDeskFileLog

@@ -68,12 +68,30 @@ def _barDt(bar):
     return _ymd(bar.get("tradeDt") or bar.get("TRADE_DT"))
 
 
+def normalizeDayBars(bars):
+    """저장 일봉의 qty 를 거래량으로 맞추고, 대금이 없으면 종가×거래량으로 채운다."""
+    out = []
+    for bar in bars or []:
+        if not isinstance(bar, dict):
+            continue
+        row = dict(bar)
+        if row.get("volume") is None and row.get("qty") is not None:
+            row["volume"] = row.get("qty")
+        if row.get("amount") is None:
+            close = _f(row, "close", "CLOSE_PRC")
+            vol = _f(row, "volume", "TRDE_QTY", "qty")
+            if close is not None and vol is not None:
+                row["amount"] = close * vol
+        out.append(row)
+    return out
+
+
 def _amount(bar):
     amt = _f(bar, "amount", "AMT", "trdePrca")
     if amt is not None:
         return amt
     close = _f(bar, "close", "CLOSE_PRC")
-    vol = _f(bar, "volume", "TRDE_QTY")
+    vol = _f(bar, "volume", "TRDE_QTY", "qty")
     if close is None or vol is None:
         return None
     return close * vol
@@ -145,7 +163,7 @@ def signalAmt20(bars, signalDt):
 
     ending 은 예전 필터(신호일 포함)라 비교용이다.
     """
-    rows = _sortBars(bars)
+    rows = _sortBars(normalizeDayBars(bars))
     days = [_barDt(bar) for bar in rows]
     day = _ymd(signalDt)
     if not day or day not in days:
@@ -156,7 +174,7 @@ def signalAmt20(bars, signalDt):
     return {
         "prior": prior,
         "ending": ending,
-        "ok": prior is not None and prior >= MIN_AMT20,
+        "ok": None if prior is None else prior >= MIN_AMT20,
     }
 
 

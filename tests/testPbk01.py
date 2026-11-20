@@ -114,6 +114,16 @@ class Pbk01Test(unittest.TestCase):
         self.assertFalse(gotAmt["ok"])
         spikedRows = _sortBars(spiked)
         self.assertFalse(_longOn(spikedRows, [_barDt(bar) for bar in spikedRows], spiked[25]["tradeDt"]))
+        from strategies.impl.pullbackTwoStep import normalizeDayBars
+
+        qty_bars = [{"tradeDt": _day(i), "close": 1000, "qty": 400000} for i in range(30)]
+        mapped = signalAmt20(qty_bars, qty_bars[25]["tradeDt"])
+        self.assertEqual(mapped["prior"], 1000 * 400000)
+        self.assertTrue(mapped["ok"])
+        short = signalAmt20(qty_bars[:10], qty_bars[9]["tradeDt"])
+        self.assertIsNone(short["ok"])
+        short_rows = _sortBars(normalizeDayBars(qty_bars[:10]))
+        self.assertFalse(_longOn(short_rows, [_barDt(bar) for bar in short_rows], qty_bars[9]["tradeDt"]))
         poor = _flat(amount=100_000_000)
         poor[25]["open"] = 1000
         poor[25]["close"] = 1200

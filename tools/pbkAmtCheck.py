@@ -45,8 +45,8 @@ def main(argv=None):
         day = str(row.get("signalDt") or "")
         bars = loadStoredDayBars(code) or []
         got = signalAmt20(bars, day) if day else None
-        if not got:
-            print(f"{code:<8} {name:<12} {day:<10} {'-':>10} {'-':>10} 계산불가")
+        if not got or got.get("ok") is None:
+            print(f"{code:<8} {name:<12} {day:<10} {_won((got or {}).get('prior')):>10} {_won((got or {}).get('ending')):>10} 계산불가")
             continue
         mark = "통과" if got["ok"] else "탈락"
         print(f"{code:<8} {name:<12} {day:<10} {_won(got['prior']):>10} {_won(got['ending']):>10} {mark}")

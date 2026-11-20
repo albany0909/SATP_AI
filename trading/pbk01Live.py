@@ -144,21 +144,10 @@ def announceCandidates(rows, positions, ymd, sender=None, log=None, path=None):
 
 
 def _barsForSignal(bars):
-    """저장 일봉의 qty 를 거래량으로 맞춘다."""
-    out = []
-    for bar in bars or []:
-        if not isinstance(bar, dict):
-            continue
-        row = dict(bar)
-        if row.get("volume") is None and row.get("qty") is not None:
-            row["volume"] = row.get("qty")
-        if row.get("amount") is None:
-            try:
-                row["amount"] = float(row.get("close") or 0) * float(row.get("volume") or 0)
-            except (TypeError, ValueError):
-                row["amount"] = None
-        out.append(row)
-    return out
+    """저장 일봉의 qty 를 거래량으로 맞춘다. 후보 필터와 같은 함수다."""
+    from strategies.impl.pullbackTwoStep import normalizeDayBars
+
+    return normalizeDayBars(bars)
 
 
 def barAsOf(now):
