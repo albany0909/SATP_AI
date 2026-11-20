@@ -202,9 +202,9 @@ def formatSummary(summary):
     for row in (summary or {}).get("top") or []:
         bits = [str(row.get("stkCd") or "")]
         if row.get("ma5Pct") is not None:
-            bits.append(f"MA5 {float(row['ma5Pct']):+.1f}%")
+            bits.append(f"5이평 {float(row['ma5Pct']):+.1f}%")
         if row.get("ma20Pct") is not None:
-            bits.append(f"MA20 {float(row['ma20Pct']):+.1f}%")
+            bits.append(f"20이평 {float(row['ma20Pct']):+.1f}%")
         if row.get("tm"):
             bits.append(str(row["tm"]))
         top.append(" ".join(bits))

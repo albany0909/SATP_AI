@@ -5650,7 +5650,7 @@ class TradeDeskWin(QMainWindow):
             pass
         frz = self.tradeWatchFrozen
         tbl = self.tradeWatchTbl
-        headers = ["구분", "코드", "종목명", "MA5가", "MA20가", "현재가", "만료일"]
+        headers = ["구분", "코드", "종목명", "5이평", "20이평", "현재가", "만료일"]
         frz.setSortingEnabled(False)
         if frz.columnCount() != len(headers):
             frz.setColumnCount(len(headers))

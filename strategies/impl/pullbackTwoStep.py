@@ -643,7 +643,7 @@ def formatCandidateLog(rows):
     for row in rows or []:
         ma5 = "-" if row.get("ma5") is None else f"{float(row['ma5']):.0f}"
         ma20 = "-" if row.get("ma20") is None else f"{float(row['ma20']):.0f}"
-        bits.append(f"{row.get('stkCd')} MA5 {ma5} MA20 {ma20} 만료 {row.get('expireDt') or '-'}")
+        bits.append(f"{row.get('stkCd')} 5이평 {ma5} 20이평 {ma20} 만료 {row.get('expireDt') or '-'}")
     body = " · ".join(bits)
     n = len(rows or [])
     if body:

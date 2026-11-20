@@ -215,7 +215,8 @@ class Pbk01Test(unittest.TestCase):
             "stkCd": "005930", "ma5": 1000, "ma20": 900, "expireDt": "20260301",
         }])
         self.assertTrue(text.startswith("[PBK01] 후보 1건"))
-        self.assertIn("MA5 1000", text)
+        self.assertIn("5이평 1000", text)
+        self.assertIn("20이평 900", text)
         self.assertIn("만료 20260301", text)
         rows = algMgrRows(
             [spec],
