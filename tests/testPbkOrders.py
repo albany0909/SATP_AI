@@ -61,11 +61,13 @@ class PbkOrderPlanTest(unittest.TestCase):
         self.assertEqual(buy[0]["qty"], floorQty(legMoney(6_000_000, 60), 10100))
         self.assertEqual(near["missed"], [])
         far = buildLiveActions(
-            cand, {"900290": _fresh(10300, low=9900)}, [], "100000", "20261120", chaseMaxPct=2,
+            cand, {"900290": _fresh(10300, low=9900)}, [], "100000", "20261120",
         )
-        self.assertEqual([row for row in far["actions"] if row["side"] == "BUY"], [])
-        self.assertEqual(far["missed"][0]["reason"], "당일 터치 놓침")
-        self.assertGreater(far["missed"][0]["gapPct"], 2)
+        capped = [row for row in far["actions"] if row["side"] == "BUY"]
+        self.assertEqual(len(capped), 1)
+        self.assertEqual(capped[0]["limitPx"], 10000)
+        self.assertLessEqual(capped[0]["limitPx"], 10000)
+        self.assertEqual(far["missed"], [])
 
     def test_low_rebound_is_miss_not_backfill(self):
         cand = [{"stkCd": "489790", "stkNm": "한화비전", "ma5": 10000, "ma20": 8000}]
@@ -75,12 +77,12 @@ class PbkOrderPlanTest(unittest.TestCase):
             [],
             "100500",
             "20261120",
-            chaseMaxPct=2,
         )
-        self.assertEqual(got["actions"], [])
-        self.assertEqual(got["missed"][0]["basis"], "저가")
-        self.assertEqual(got["missed"][0]["nowPx"], 11000)
-        self.assertNotIn("fillPx", got["missed"][0])
+        buy = [row for row in got["actions"] if row["side"] == "BUY"]
+        self.assertEqual(len(buy), 1)
+        self.assertEqual(buy[0]["limitPx"], 10000)
+        self.assertNotEqual(buy[0]["limitPx"], 11000)
+        self.assertEqual(buy[0]["fillPx"], 11000)
 
     def test_stale_quote_does_not_buy(self):
         cand = [{"stkCd": "322000", "ma5": 10000, "ma20": 9000}]
@@ -154,7 +156,7 @@ class PbkOrderPlanTest(unittest.TestCase):
         self.assertEqual(called, [])
 
     def test_chase_setting_is_not_written_and_miss_file(self):
-        self.assertEqual(pbkChaseMaxPct({}), 2.0)
+        self.assertEqual(pbkChaseMaxPct({}), 0.0)
         with tempfile.TemporaryDirectory() as folder:
             live = Path(folder) / "settings.json"
             live.write_text(json.dumps({"deskTradeMode": "paper", "keep": 1}), encoding="utf-8")
@@ -163,7 +165,7 @@ class PbkOrderPlanTest(unittest.TestCase):
             with patch.object(store, "_SETTINGS_PATH", live), patch.object(
                 store, "_DEFAULT_PATH", Path(folder) / "nope.json",
             ):
-                self.assertEqual(pbkChaseMaxPct(store.loadSettings()), 2.0)
+                self.assertEqual(pbkChaseMaxPct(store.loadSettings()), 0.0)
             self.assertEqual(json.loads(live.read_text(encoding="utf-8"))["keep"], 1)
             from trading.pbk01Live import placePaperCycle
 
@@ -174,7 +176,7 @@ class PbkOrderPlanTest(unittest.TestCase):
                 "hm": "100000",
                 "candidates": [{"stkCd": "900290", "stkNm": "GRT", "ma5": 10000, "ma20": 9000}],
                 "positions": [],
-                "quotes": {"900290": _fresh(11000, low=9900)},
+                "quotes": {"900290": {**_fresh(11000, low=9900), "ask": None}},
             }
             with patch("utils.pbk01Store.pbkPath", lambda name: Path(folder) / name), patch(
                 "trading.pbk01Live._missedFile",
@@ -194,7 +196,7 @@ class PbkOrderPlanTest(unittest.TestCase):
             self.assertEqual(row["stkCd"], "900290")
             self.assertEqual(row["lineName"], "5이평")
             self.assertEqual(row["basis"], "저가")
-            self.assertEqual(row["reason"], "당일 터치 놓침")
+            self.assertEqual(row["reason"], "호가없음")
 
     def test_broker_fill_is_separate_and_sell_uses_it(self):
         pos = [{
@@ -525,7 +527,7 @@ class PbkOrderPlanTest(unittest.TestCase):
         )
         self.assertEqual(noTouch["actions"], [])
         touched = buildLiveActions(
-            [{"stkCd": "300120", "stkNm": "라온피플", "ma5": 3000, "ma20": 2500, "expireDt": "20270115"}],
+            [{"stkCd": "300120", "stkNm": "라온피플", "ma5": 3000, "ma20": 2200, "expireDt": "20270115"}],
             {"300120": _fresh(2900, low=2400)},
             settled,
             "100000",
@@ -598,16 +600,27 @@ class PbkOrderPlanTest(unittest.TestCase):
         )
         self.assertEqual(plan["actions"], [])
         self.assertEqual(plan["missed"][0]["reason"], "호가없음")
-        wide = buildLiveActions(
+        capped = buildLiveActions(
             [{"stkCd": "900290", "stkNm": "GRT", "ma5": 10000, "ma20": 9000}],
             {"900290": _fresh(10050, low=9900, ask=10300)},
             [],
             "100000",
             "20261120",
-            chaseMaxPct=2,
         )
-        self.assertEqual(wide["actions"], [])
-        self.assertEqual(wide["missed"][0]["reason"], "당일 터치 놓침")
+        capBuy = [row for row in capped["actions"] if row["side"] == "BUY"][0]
+        self.assertEqual(capBuy["limitPx"], 10000)
+        self.assertEqual(capBuy["orderGapPct"], 0)
+        self.assertEqual(capBuy["qty"], floorQty(legMoney(6_000_000, 60), 10000))
+        gapDown = buildLiveActions(
+            [{"stkCd": "900290", "stkNm": "GRT", "ma5": 10000, "ma20": 9000}],
+            {"900290": _fresh(9600, low=9500, ask=9700)},
+            [],
+            "100000",
+            "20261120",
+        )
+        downBuy = [row for row in gapDown["actions"] if row["side"] == "BUY"][0]
+        self.assertEqual(downBuy["limitPx"], 9700)
+        self.assertLess(downBuy["orderGapPct"], 0)
         near = buildLiveActions(
             [{"stkCd": "900290", "stkNm": "GRT", "ma5": 10000, "ma20": 9000}],
             {"900290": _fresh(10050, low=9900, ask=10100)},
@@ -620,6 +633,27 @@ class PbkOrderPlanTest(unittest.TestCase):
         self.assertEqual(buy["limitPx"], 10100)
         self.assertEqual(buy["trdeTp"], "0")
         self.assertEqual(buy["ask1"], 10100)
+
+    def test_held_name_failing_amount_filter_blocks_adds(self):
+        pos = [{
+            "stkCd": "300120",
+            "stkNm": "라온피플",
+            "qty": 672,
+            "brokerQty": 672,
+            "avg": 2445,
+            "leg1": {"qty": 672, "fillPx": 2445, "ordNo": "1", "ymd": "20261120"},
+            "exitDt": "20261204",
+        }]
+        cand = [{"stkCd": "300120", "stkNm": "라온피플", "ma5": 2500, "ma20": 2000, "amtOk": False}]
+        blocked = buildLiveActions(
+            cand, {"300120": _fresh(1900, low=1800, ask=1900)}, pos, "100000", "20261120",
+        )
+        self.assertEqual([row for row in blocked["actions"] if row["side"] == "BUY"], [])
+        self.assertIn("대금미달", [row["reason"] for row in blocked["skips"]])
+        sold = buildLiveActions(
+            cand, {"300120": _fresh(1900, low=1800, ask=1900)}, pos, "100000", "20261204",
+        )
+        self.assertEqual([row["reason"] for row in sold["actions"] if row["side"] == "SELL"], ["f+10"])
 
     def test_live_log_guard(self):
         from tests.liveGuard import LiveGuardError

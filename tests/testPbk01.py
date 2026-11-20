@@ -101,6 +101,19 @@ class Pbk01Test(unittest.TestCase):
         thin[25]["close"] = 1200
         thin[25]["volume"] = 299
         self.assertIsNone(findCandleEvent(thin, [{"title": "영업실적", "date": thin[25]["tradeDt"]}], "005930"))
+        spiked = _flat(amount=140_000_000)
+        spiked[25]["open"] = 1000
+        spiked[25]["close"] = 1200
+        spiked[25]["volume"] = 1000
+        spiked[25]["amount"] = 5_000_000_000
+        from strategies.impl.pullbackTwoStep import MIN_AMT20, _barDt, _longOn, _sortBars, signalAmt20
+
+        gotAmt = signalAmt20(spiked, spiked[25]["tradeDt"])
+        self.assertLess(gotAmt["prior"], MIN_AMT20)
+        self.assertGreaterEqual(gotAmt["ending"], MIN_AMT20)
+        self.assertFalse(gotAmt["ok"])
+        spikedRows = _sortBars(spiked)
+        self.assertFalse(_longOn(spikedRows, [_barDt(bar) for bar in spikedRows], spiked[25]["tradeDt"]))
         poor = _flat(amount=100_000_000)
         poor[25]["open"] = 1000
         poor[25]["close"] = 1200
@@ -210,7 +223,7 @@ class Pbk01Test(unittest.TestCase):
 
         spec = loadStratSpec("pullbackTwoStep_v1")
         self.assertEqual(spec["algCd"], "PBK01")
-        self.assertEqual(spec["version"], 2)
+        self.assertEqual(spec["version"], 3)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         text = formatCandidateLog([{

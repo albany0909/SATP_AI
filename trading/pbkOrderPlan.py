@@ -2,18 +2,18 @@
 
 백테스트는 터치 시 이평, 시가가 이평 아래면 시가에 체결한다고 본다.
 모의 주문은 그 가격으로 소급하지 않고, 주문 시점의 현재가로만 기록한다.
-현재가가 이평보다 pbkChaseMaxPct(기본 2%) 를 넘으면 당일 터치를 놓친 것으로 둔다.
+지정가는 min(매도 1호가, 이평을 호가 단위로 올린 값)이다. 기본 추격 한도는 0이다.
 """
 
 from __future__ import annotations
 
-PBK_CHASE_MAX_PCT = 2.0
+PBK_CHASE_MAX_PCT = 0.0
 BUY_FROM = "090000"
 BUY_UNTIL = "151500"
 
 
 def pbkChaseMaxPct(settings=None):
-    """추격 한도(%). 키가 없으면 2. 파일을 쓰지 않는다."""
+    """추격 한도(%). 키가 없으면 0. 파일을 쓰지 않는다."""
     if settings is None:
         try:
             from config.settingsStore import loadSettings
@@ -55,6 +55,27 @@ def inBuySession(hm):
     """매수 창. 09:00 포함, 15:15 미만."""
     text = _hm(hm)
     return bool(text) and BUY_FROM <= text < BUY_UNTIL
+
+
+def buyLimitPx(ask, line, chasePct=0):
+    """min(매도 1호가, 이평 상한). 추격 0이면 이평을 호가 단위로 올린 값까지."""
+    from utils.krxTick import ceilToKrxTick, floorToKrxTick
+
+    askPx = absPx(ask)
+    linePx = absPx(line)
+    if askPx is None or linePx is None:
+        return None
+    try:
+        chase = float(chasePct or 0)
+    except (TypeError, ValueError):
+        chase = 0.0
+    if chase > 0:
+        cap = floorToKrxTick(linePx * (1.0 + chase / 100.0))
+    else:
+        cap = ceilToKrxTick(linePx)
+    if not cap or cap <= 0:
+        return None
+    return min(askPx, float(cap))
 
 
 def gapPct(price, line):
@@ -281,6 +302,11 @@ def buildLiveActions(
         if pos.get("buyHold"):
             _skip(code, "잔고불일치")
             continue
+        if row.get("amtOk") is False and (
+            _slotUsed(pos) or int(pos.get("brokerQty") or pos.get("qty") or 0) > 0
+        ):
+            _skip(code, "대금미달")
+            continue
         expire = str(row.get("expireDt") or pos.get("expireDt") or "")
         if expire and str(ymd or "") > expire:
             _skip(code, "창종료")
@@ -308,13 +334,11 @@ def buildLiveActions(
             if ask is None:
                 _miss(code, name, leg, lineName, absPx(line), basis, low if basis == "저가" else price, price, "호가없음")
                 continue
-            gap = gapPct(ask, line)
-            if gap is not None and gap > chase:
-                touchPx = low if basis == "저가" else price
-                _miss(code, name, leg, lineName, absPx(line), basis, touchPx, ask)
+            limit = buyLimitPx(ask, line, chase)
+            if limit is None or limit <= 0:
+                _miss(code, name, leg, lineName, absPx(line), basis, ask, ask, "호가없음")
                 continue
-            limit = floorPx(ask)
-            qty = floorQty(legMoney(int(slotKrw), pct), ask)
+            qty = floorQty(legMoney(int(slotKrw), pct), limit)
             legRow = pos.get(f"leg{leg}") if isinstance(pos.get(f"leg{leg}"), dict) else {}
             if legRow.get("settled"):
                 try:
@@ -335,6 +359,8 @@ def buildLiveActions(
                 "limitPx": limit,
                 "fillPx": price,
                 "ask1": ask,
+                "linePx": absPx(line),
+                "orderGapPct": None if gapPct(limit, line) is None else round(gapPct(limit, line), 4),
                 "trdeTp": "0",
                 "reason": lineName,
                 "signalDt": row.get("signalDt") or pos.get("signalDt") or "",
@@ -401,6 +427,8 @@ def applyPaperResult(positions, action, status, ordNo="", ymd="", calendar=None)
         "ymd": str(ymd or ""),
         "hm": str(action.get("hm") or ""),
         "ask1": action.get("ask1"),
+        "linePx": action.get("linePx"),
+        "orderGapPct": action.get("orderGapPct"),
         "settled": False,
     }
     found[f"leg{legKey}"] = leg
@@ -826,6 +854,18 @@ def settlePositions(positions, asOfYmd, includeToday=False, accountKnown=False, 
                 "firstFillHm": str(item.get("firstFillHm") or ""),
                 "lastFillHm": str(item.get("lastFillHm") or ""),
                 "ask1": leg.get("ask1"),
+                "linePx": leg.get("linePx"),
+                "orderGapPct": leg.get("orderGapPct") if leg.get("orderGapPct") is not None else (
+                    None if gapPct(leg.get("limitPx"), leg.get("linePx")) is None
+                    else round(gapPct(leg.get("limitPx"), leg.get("linePx")), 4)
+                ),
+                "fillGapPct": None if gapPct(
+                    item.get("brokerAvg") if item.get("brokerAvg") not in (None, "") else leg.get("fillPx"),
+                    leg.get("linePx"),
+                ) is None else round(gapPct(
+                    item.get("brokerAvg") if item.get("brokerAvg") not in (None, "") else leg.get("fillPx"),
+                    leg.get("linePx"),
+                ), 4),
             })
         if not settledNow:
             out.append(item)

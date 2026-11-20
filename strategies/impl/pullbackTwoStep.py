@@ -11,7 +11,7 @@ import re
 
 ALG_CD = "PBK01"
 STRAT_ID = "pullbackTwoStep_v1"
-ALG_VER = 2
+ALG_VER = 3
 NAME_KR = "실적 장대양봉 눌림목"
 ENGLISH_NAME = "Earnings Pullback Two Step"
 
@@ -140,8 +140,28 @@ def priorMean(bars, idx, period, field):
     return sum(vals) / float(period)
 
 
+def signalAmt20(bars, signalDt):
+    """장대양봉 직전 20거래일 평균 거래대금. 그 날은 빼며 단위는 원이다.
+
+    ending 은 예전 필터(신호일 포함)라 비교용이다.
+    """
+    rows = _sortBars(bars)
+    days = [_barDt(bar) for bar in rows]
+    day = _ymd(signalDt)
+    if not day or day not in days:
+        return None
+    idx = days.index(day)
+    prior = priorMean(rows, idx, 20, "amount")
+    ending = amountMeanEnding(rows, idx, 20)
+    return {
+        "prior": prior,
+        "ending": ending,
+        "ok": prior is not None and prior >= MIN_AMT20,
+    }
+
+
 def amountMeanEnding(bars, idx, period=20):
-    """idx 봉을 포함한 최근 period 일 평균 거래대금."""
+    """idx 봉을 포함한 최근 period 일 평균 거래대금. 후보 필터는 쓰지 않는다."""
     start = idx - int(period) + 1
     if start < 0:
         return None
@@ -274,7 +294,7 @@ def _longOn(rows, days, day):
     avgVol = priorMean(rows, idx, 20, "volume")
     if avgVol is None:
         avgVol = priorMean(rows, idx, 20, "TRDE_QTY")
-    amt = amountMeanEnding(rows, idx, 20)
+    amt = priorMean(rows, idx, 20, "amount")
     prev = _f(rows[idx - 1], "close", "CLOSE_PRC")
     if avgVol is None or amt is None or amt < MIN_AMT20:
         return False
@@ -735,7 +755,7 @@ def algVerHistPayload(gitHash="", ymd="2026-11-20"):
         "stratId": STRAT_ID,
         "algVer": ALG_VER,
         "ymd": ymd,
-        "note": "v2 모의 매수는 매도 1호가 지정가. 호가가 이평+추격한도를 넘거나 호가가 없으면 미주문. 백테스트 체결은 min(시가, 이평).",
+        "note": "v3 지정가는 min(매도1호가, 이평 호가올림). 이평보다 비싸게 사지 않음. v2는 배포되지 않음. 백테스트 체결은 min(시가, 이평).",
         "gitHash": str(gitHash or "")[:16],
         "src": "manual",
     }
