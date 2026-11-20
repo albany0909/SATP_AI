@@ -7,7 +7,7 @@ INSERT INTO AI_ALG_VER_HIST
 VALUES
   ('PBK01', 'pullbackTwoStep_v1', 3, '2026-11-20',
    'v3 지정가 min(매도1호가, 이평 호가올림). 이평보다 비싸게 사지 않음. 거래대금은 장대양봉 당일 제외 직전 20일. v2는 배포되지 않음. 백테스트 체결은 min(시가, 이평).',
-   'PENDING_COMMIT', 'manual')
+   'a848eda6d320', 'manual')
 ON DUPLICATE KEY UPDATE
   NOTE=VALUES(NOTE),
   GIT_HASH=VALUES(GIT_HASH),
