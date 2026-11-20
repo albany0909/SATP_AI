@@ -1,0 +1,180 @@
+"""PBK01 시세 구독 계획. 실주문·실 WS 는 열지 않는다."""
+
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from trading.pbk01Live import announceCandidates, touchesForQuotes
+from trading.pbkQuotePlan import (
+    applyPollPrice,
+    formatSummary,
+    maDistancePct,
+    planPbkQuotes,
+    rankForSubscription,
+    regChunks,
+    shouldBeat,
+    summarizeQuotes,
+    takePollBatch,
+)
+
+
+class PbkQuotePlanTest(unittest.TestCase):
+    def test_rank_holdings_then_near_ma5(self):
+        rows = rankForSubscription([
+            {"stkCd": "000002", "holding": False, "ma5": 100, "price": 90},
+            {"stkCd": "000001", "holding": True, "ma5": 10, "price": 50},
+            {"stkCd": "000003", "holding": False, "ma5": 100, "price": 99},
+            {"stkCd": "000004", "holding": False, "ma5": 100},
+        ])
+        self.assertEqual([row["stkCd"] for row in rows], ["000001", "000003", "000002", "000004"])
+        self.assertAlmostEqual(maDistancePct(99, 100), -1.0)
+
+    def test_limit_split_and_chunks(self):
+        rows = [
+            {"stkCd": "H1", "holding": True},
+            {"stkCd": "C1", "holding": False, "ma5": 100, "price": 101},
+            {"stkCd": "C2", "holding": False, "ma5": 100, "price": 150},
+        ]
+        plan = planPbkQuotes(
+            rows,
+            keptCodes=["WATCH"],
+            itemSize=lambda code: 2 if code == "C2" else 1,
+            usedItems=1,
+            usedStocks=1,
+            maxItem=4,
+            maxStk=10,
+        )
+        self.assertEqual(plan["subscribe"], ["WATCH", "H1", "C1"])
+        self.assertEqual(plan["poll"], ["C2"])
+        items = [f"{i:06d}" for i in range(45)]
+        added = regChunks(items, 40, replace=False)
+        self.assertEqual([part["refresh"] for part in added], ["0", "0"])
+        self.assertEqual(len(added[0]["items"]), 40)
+        self.assertEqual(len(added[1]["items"]), 5)
+        replaced = regChunks(items, 40, replace=True)
+        self.assertEqual([part["refresh"] for part in replaced], ["1", "0"])
+        batch, cursor = takePollBatch(["A", "B", "C"], 0, 2)
+        self.assertEqual(batch, ["A", "B"])
+        nxt, _cursor = takePollBatch(["A", "B", "C"], cursor, 2)
+        self.assertEqual(nxt, ["C", "A"])
+
+    def test_summary_and_heartbeat(self):
+        self.assertTrue(shouldBeat(None, 100, 60))
+        self.assertFalse(shouldBeat(100, 150, 60))
+        self.assertTrue(shouldBeat(100, 160, 60))
+        summary = summarizeQuotes(
+            [
+                {"stkCd": "005930", "ma5": 100, "ma20": 80},
+                {"stkCd": "000660", "ma5": 200, "ma20": 180},
+            ],
+            {
+                "005930": {"src": "0B", "tm": "093100", "price": 99},
+                "000660": {"src": "dayClose", "tm": "195900", "price": 150},
+            },
+        )
+        self.assertEqual(summary["fresh"], 1)
+        self.assertEqual(summary["total"], 2)
+        self.assertEqual(summary["top"][0]["stkCd"], "005930")
+        text = formatSummary(summary)
+        self.assertIn("[PBK01] 시세 1/2", text)
+        self.assertIn("MA5", text)
+        self.assertNotIn("token", text.lower())
+        kept, changed = applyPollPrice({"src": "0B", "curPrc": 10}, 11, "100000")
+        self.assertFalse(changed)
+        self.assertEqual(kept["curPrc"], 10)
+        polled, changed = applyPollPrice({}, "12345", "093000")
+        self.assertTrue(changed)
+        self.assertEqual(polled["src"], "poll")
+
+    def test_touch_uses_polled_price(self):
+        got = touchesForQuotes(
+            [{"stkCd": "005930", "ma5": 100, "ma20": 90, "signalDt": "20261101"}],
+            {"005930": {"price": 99}},
+        )
+        self.assertEqual([row["stkCd"] for row in got], ["005930"])
+        self.assertTrue(got[0]["leg1"])
+
+    def test_telegram_log_hides_token(self):
+        logs = []
+
+        def _boom(_text):
+            raise RuntimeError("https://api.telegram.org/botSECRETTOKEN/sendMessage")
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "pbk01_state.jsonl"
+            first = announceCandidates(
+                [{"stkCd": "005930", "signalDt": "20261101", "expireDt": "20261201"}],
+                [],
+                "20261120",
+                sender=_boom,
+                log=logs.append,
+                path=path,
+            )
+            self.assertFalse(first["sent"])
+            self.assertTrue(any("텔레그램 전송 실패" in line for line in logs))
+            self.assertFalse(any("SECRET" in line or "bot" in line for line in logs))
+            logs.clear()
+
+            def _ok(_text):
+                return None
+
+            second = announceCandidates(
+                [{"stkCd": "000660", "signalDt": "20261102", "expireDt": "20261202"}],
+                [],
+                "20261120",
+                sender=_ok,
+                log=logs.append,
+                path=path,
+            )
+            self.assertTrue(second["sent"])
+            self.assertTrue(any("텔레그램 전송 성공" in line for line in logs))
+
+    def test_add_appends_and_reregister_splits_refresh(self):
+        import trading.watchRtMonitor as mon
+
+        savedCodes = list(mon._regCodes)
+        savedItems = dict(mon._regItems)
+        savedPbk = set(mon._pbkTouch)
+        calls = []
+
+        class _Ws:
+            isLoggedIn = True
+
+            def sendReg(self, types, items, grpNo="1", refresh="1"):
+                calls.append((list(items), str(refresh), str(grpNo)))
+
+            def sendRemove(self, types, items, grpNo="1"):
+                calls.append(("REMOVE", list(items)))
+
+        try:
+            mon._regCodes[:] = []
+            mon._regItems.clear()
+            mon._pbkTouch.clear()
+            with patch.object(mon, "getWsClient", return_value=_Ws()), patch.object(
+                mon, "_isNxtStk", return_value=False,
+            ), patch.object(mon, "_writeState", lambda *_a, **_k: None), patch(
+                "trading.maTouchLive.prepareMaTouchSession", lambda *_a, **_k: None,
+            ):
+                added = mon.addWatchRtCodes(["005930"], "테스트")
+                self.assertEqual(added, 1)
+                self.assertEqual(calls[0][1], "0")
+                calls.clear()
+                mon._regWatch(_Ws(), [f"{i:06d}" for i in range(45)], "재등록")
+                flags = [row[1] for row in calls if row[0] != "REMOVE"]
+                self.assertEqual(flags, ["1", "0"])
+                self.assertEqual(len(calls[0][0]), 40)
+                self.assertEqual(len(calls[1][0]), 5)
+        finally:
+            mon._regCodes[:] = savedCodes
+            mon._regItems.clear()
+            mon._regItems.update(savedItems)
+            mon._pbkTouch.clear()
+            mon._pbkTouch.update(savedPbk)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

@@ -122,8 +122,16 @@ def announceCandidates(rows, positions, ymd, sender=None, log=None, path=None):
         termLog(text)
         termLog(slotLine)
     changed = candidateSignature(rows) != str(prev.get("candidateKey") or "")
+    sentOk = False
     if changed and sender is not None:
-        sender(text)
+        try:
+            sender(text)
+            sentOk = True
+            _safeLog(log, "[PBK01] 텔레그램 전송 성공")
+        except Exception as err:
+            _safeLog(log, f"[PBK01] 텔레그램 전송 실패 {type(err).__name__}")
+    elif sender is not None:
+        _safeLog(log, "[PBK01] 텔레그램 생략 목록 동일")
     appendRow(filePath, {
         "kind": "state",
         "announcedYmd": str(ymd),
@@ -132,7 +140,7 @@ def announceCandidates(rows, positions, ymd, sender=None, log=None, path=None):
         "candidates": list(rows or []),
         "positions": list(positions or []),
     })
-    return {"sent": bool(changed and sender is not None), "changed": changed, "text": text}
+    return {"sent": sentOk, "changed": changed, "text": text}
 
 
 def _barsForSignal(bars):
@@ -466,8 +474,12 @@ def runPbkCycle(now=None, loader=None, sender=None, log=None, path=None, quotes=
             owned.append(pos.get("stkCd"))
     touches = []
     if enabled:
-        if not quotes:
-            quotes = quotesFromCache([row.get("stkCd") for row in rows])
+        if quotes is None:
+            try:
+                refreshPbkQuotes(rows, positions, reason="PBK시세")
+            except Exception as err:
+                _safeLog(log, f"[PBK01] 시세 구독 실패 {type(err).__name__}")
+            quotes = quotesFromCache([row.get("stkCd") for row in rows] + list(owned))
         touches = touchesForQuotes(rows, quotes or {}, owned=owned)
     return {
         "announced": _announcedYmd,
@@ -477,18 +489,161 @@ def runPbkCycle(now=None, loader=None, sender=None, log=None, path=None, quotes=
     }
 
 
-def _loop():
-    first = True
+_lastSummaryAt = None
+_lastQuoteSummary = {}
+_pollCursor = 0
+
+
+def _universeRows(rows, positions):
+    """공식 후보와 모의 보유. 표시용 체결 수량도 보유로 본다."""
+    held = set()
+    for pos in positions or []:
+        if not isinstance(pos, dict):
+            continue
+        code = str(pos.get("stkCd") or "").strip()
+        try:
+            qty = int(pos.get("qty") or 0)
+        except (TypeError, ValueError):
+            qty = 0
+        if code and (qty > 0 or pos.get("leg1") or pos.get("leg2")):
+            held.add(code)
+    try:
+        from utils.pbkWatchScreen import screenFillSnapshot
+
+        for code, qty in (screenFillSnapshot() or {}).items():
+            if int(qty or 0) > 0 and code:
+                held.add(str(code))
+    except Exception:
+        pass
+    out = []
+    seen = set()
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("stkCd") or "").strip()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        item = dict(row)
+        item["holding"] = code in held
+        out.append(item)
+    for code in sorted(held):
+        if code in seen:
+            continue
+        out.append({"stkCd": code, "holding": True, "ma5": None, "ma20": None})
+    return out
+
+
+def _attachPrices(rows):
+    try:
+        from trading.watchRtMonitor import peekWatchLastPx
+    except Exception:
+        peekWatchLastPx = lambda _cd: {}
+    out = []
+    for row in rows or []:
+        item = dict(row)
+        info = peekWatchLastPx(item.get("stkCd")) or {}
+        item["price"] = info.get("curPrc") or info.get("krxPrc") or info.get("nxtPrc")
+        item["tm"] = info.get("tm") or ""
+        item["src"] = info.get("src") or ""
+        out.append(item)
+    return out
+
+
+def _fetchKa10001(code):
+    """한도 밖 종목 현재가. 토큰은 로그에 남기지 않는다."""
+    from utils.trRateLimit import acquireTrSlot
+
+    acquireTrSlot("ka10001", mode="paper")
+    try:
+        from api.getStkInfo import fetchStkInfo
+        from utils.dayPrcLoadService import acquireKiwoomSession
+    except Exception:
+        return None
+    session = acquireKiwoomSession()
+    if not session:
+        return None
+    _mode, host, token, tokenType = session
+    got = fetchStkInfo(host, token, code, tokenType=tokenType) or {}
+    if not got.get("ok"):
+        return None
+    body = got.get("body") or {}
+    return {"price": body.get("cur_prc"), "tm": datetime.now().strftime("%H%M%S")}
+
+
+def refreshPbkQuotes(rows, positions, reason="PBK시세", fetch=None, pollLimit=None):
+    """후보·보유를 0B 에 추가하고, 한도 밖은 ka10001 로 받는다."""
+    global _pollCursor, _lastQuoteSummary
+    from trading.pbkQuotePlan import POLL_PER_CYCLE, planPbkQuotes, summarizeQuotes, takePollBatch
+    from trading.watchRtMonitor import _rtItemsOf, notePolledPx, pbkQuoteBudget, syncPbkTouch
+
+    built = _attachPrices(_universeRows(rows, positions))
+    budget = pbkQuoteBudget()
+
+    def _size(code):
+        return len(_rtItemsOf(code) or [code])
+
+    plan = planPbkQuotes(
+        built,
+        budget.get("kept"),
+        _size,
+        usedItems=budget.get("usedItems") or 0,
+        usedStocks=budget.get("usedStocks") or 0,
+    )
+    syncPbkTouch(plan["subscribe"], reason)
+    limit = POLL_PER_CYCLE if pollLimit is None else int(pollLimit)
+    batch, _pollCursor = takePollBatch(plan["poll"], _pollCursor, limit)
+    getter = fetch or _fetchKa10001
+    polled = 0
+    for code in batch:
+        try:
+            got = getter(code) or {}
+        except Exception:
+            got = {}
+        if notePolledPx(code, got.get("price"), got.get("tm") or ""):
+            polled += 1
+    summary = summarizeQuotes(built, {row["stkCd"]: row for row in _attachPrices(built)})
+    _lastQuoteSummary = summary
+    _safeLog(
+        None,
+        f"[PBK01] 0B 대상 {len(plan['subscribe'])}종 · 폴링 {len(plan['poll'])}종 "
+        f"이번 {polled}종 ({reason})",
+    )
+    return {"plan": plan, "rows": built, "summary": summary}
+
+
+def _beatLoop():
+    """스캔이 오래 걸려도 1분마다 생존 로그를 남긴다."""
     while True:
+        time.sleep(60)
+        _safeLog(None, "[PBK01] 살아있음")
+
+
+def _loop():
+    global _lastSummaryAt
+    from trading.pbkQuotePlan import formatSummary, shouldBeat
+
+    first = True
+    _safeLog(None, "[PBK01] 루프 시작")
+    while True:
+        started = time.time()
+        _safeLog(None, "[PBK01] 사이클 시작")
+        result = {}
         try:
             def _send(text):
                 from telegram.telSend import sendTelegramMsg
 
                 sendTelegramMsg(text)
 
-            runPbkCycle(force=first, sender=_send)
-        except Exception:
-            _safeLog(None, "[PBK01] 루프 오류")
+            result = runPbkCycle(force=first, sender=_send) or {}
+        except Exception as err:
+            _safeLog(None, f"[PBK01] 루프 오류 {type(err).__name__}")
+        elapsed = time.time() - started
+        touches = result.get("touches") or []
+        _safeLog(None, f"[PBK01] 사이클 끝 {elapsed:.0f}s 터치 {len(touches)}")
+        if shouldBeat(_lastSummaryAt, time.time(), 300):
+            _safeLog(None, formatSummary(_lastQuoteSummary))
+            _lastSummaryAt = time.time()
         first = False
         time.sleep(30)
 
@@ -539,5 +694,6 @@ def startPbk01Live():
             return {"started": True, "reason": "ALREADY"}
         _started = True
         threading.Thread(target=_loop, name="pbk01Live", daemon=True).start()
+        threading.Thread(target=_beatLoop, name="pbk01Beat", daemon=True).start()
     _safeLog(None, "[PBK01] 후보 루프 기동. 주문은 모의·설정 스위치가 켜질 때만")
     return {"started": True, "reason": "CANDIDATE_LOOP"}

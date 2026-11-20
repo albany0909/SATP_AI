@@ -123,6 +123,12 @@ _screenCodes = []
 _screenLock = threading.Lock()
 
 
+def screenFillSnapshot():
+    """표시용 체결 수량. 0 은 전량 청산으로 기억한 종목."""
+    with _screenLock:
+        return dict(_screenFill)
+
+
 def resetScreenFills():
     """테스트용. 표시 체결 기억을 비운다."""
     global _screenCodes

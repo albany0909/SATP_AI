@@ -844,9 +844,10 @@ def _regWatch(ws, codes, reason):
     itemMap = _buildRegMap(codes)
     cds = list(itemMap.keys())
     allItems = _flatItems(itemMap, cds)
-    for i in range(0, len(allItems), _CHUNK):
-        chunk = allItems[i : i + _CHUNK]
-        ws.sendReg(["0B"], chunk, grpNo=_GRP_NO, refresh="1")
+    from trading.pbkQuotePlan import regChunks
+
+    for part in regChunks(allItems, _CHUNK, replace=True):
+        ws.sendReg(["0B"], part["items"], grpNo=_GRP_NO, refresh=part["refresh"])
     nxtSet = {cd for cd, its in itemMap.items() if any(str(x).upper().endswith("_NX") for x in its)}
     with _lock:
         _monActive = True
@@ -906,10 +907,11 @@ def addWatchRtCodes(codes, reason="장중편입"):
     if ws is None or not getattr(ws, "isLoggedIn", False):
         termLog(f"[watchRt] WS 미로그인 — 편입 REG 보류 {len(cds)}종")
         return 0
-    for i in range(0, len(cds), _CHUNK):
-        chunk = cds[i : i + _CHUNK]
-        items = _flatItems({cd: _rtItemsOf(cd) for cd in chunk}, chunk)
-        ws.sendReg(["0B"], items, grpNo=_GRP_NO, refresh="1")
+    from trading.pbkQuotePlan import regChunks
+
+    addItems = _flatItems({cd: _rtItemsOf(cd) for cd in cds}, cds)
+    for part in regChunks(addItems, _CHUNK, replace=False):
+        ws.sendReg(["0B"], part["items"], grpNo=_GRP_NO, refresh=part["refresh"])
     with _lock:
         _regCodes.extend(cds)
         for cd in cds:
@@ -933,22 +935,43 @@ def addWatchRtCodes(codes, reason="장중편입"):
 _pbkTouch = set()
 
 
+def pbkQuoteBudget():
+    """관심·차트 등 PBK 가 아닌 구독이 이미 쓰고 있는 칸."""
+    with _lock:
+        registered = list(_regCodes)
+        prev = set(_pbkTouch)
+        items = {cd: list(_regItems.get(cd) or [cd]) for cd in registered}
+    try:
+        base = set(_monCodes())
+    except Exception:
+        base = set()
+    kept = [cd for cd in registered if cd in base or cd not in prev]
+    usedItems = 0
+    for cd in kept:
+        usedItems += len(items.get(cd) or [cd])
+    return {"kept": kept, "usedItems": usedItems, "usedStocks": len(kept), "registered": registered}
+
+
 def syncPbkTouch(codes, reason="PBK화면"):
-    """PBK 화면 종목만 0B 에 넣고 뺀다. 급등·원장 등 다른 구독은 남긴다."""
+    """PBK 로 고른 종목만 0B 에 넣고 뺀다. 관심·차트 구독은 REMOVE 하지 않는다."""
     global _pbkTouch
     from utils.pbkWatchScreen import touchDelta
 
     with _lock:
         registered = list(_regCodes)
-    prev = set(_pbkTouch)
-    keep = [code for code in registered if code not in prev]
-    delta = touchDelta(prev, codes, keep)
+        prev = set(_pbkTouch)
+    try:
+        base = set(_monCodes())
+    except Exception:
+        base = set()
+    keep = [code for code in registered if code in base or code not in prev]
+    delta = touchDelta(list(prev), codes, keep)
     _pbkTouch = set(delta["screen"])
+    for code in delta["removed"]:
+        unregWatchStk(code, reason)
     addedN = 0
     if delta["added"]:
         addedN = addWatchRtCodes(delta["added"], reason)
-    for code in delta["removed"]:
-        unregWatchStk(code, reason)
     return {
         "ok": True,
         "added": list(delta["added"]),
@@ -1011,11 +1034,31 @@ def _unregWatch(ws, reason):
     termLog(f"[watchRt] 0B 해지 ({reason}) {len(codes)}종")
 
 
+def notePolledPx(stkCd, price, tm=""):
+    """REST 현재가. 이미 0B 가 있으면 덮지 않는다."""
+    from trading.pbkQuotePlan import applyPollPrice
+
+    cd = normStkCd(stkCd)
+    if not cd:
+        return False
+    with _lock:
+        info, changed = applyPollPrice(_lastPx.get(cd), price, tm)
+        if not changed:
+            return False
+        info["tickYmd"] = datetime.now().strftime("%Y%m%d")
+        _lastPx[cd] = info
+    return True
+
+
 def _onLogin(ws):
     """WS LOGIN 후, 시세 구간이면 0B 재등록 (장전 NXT 포함)."""
     if not _isQuoteSessionNow():
         return
     codes = _monCodes()
+    with _lock:
+        for cd in _pbkTouch:
+            if cd not in codes:
+                codes.append(cd)
     _regWatch(ws, codes, "LOGIN(시세구간)")
 
 
