@@ -121,7 +121,15 @@ class Pbk01Test(unittest.TestCase):
         self.assertEqual(mapped["prior"], 1000 * 400000)
         self.assertTrue(mapped["ok"])
         short = signalAmt20(qty_bars[:10], qty_bars[9]["tradeDt"])
-        self.assertIsNone(short["ok"])
+        self.assertFalse(short["ok"])
+        broken = [dict(bar) for bar in qty_bars]
+        broken[24]["close"] = 0
+        self.assertFalse(signalAmt20(broken, broken[25]["tradeDt"])["ok"])
+        self.assertFalse(_longOn(
+            _sortBars(normalizeDayBars(broken)),
+            [_barDt(bar) for bar in _sortBars(normalizeDayBars(broken))],
+            broken[25]["tradeDt"],
+        ))
         short_rows = _sortBars(normalizeDayBars(qty_bars[:10]))
         self.assertFalse(_longOn(short_rows, [_barDt(bar) for bar in short_rows], qty_bars[9]["tradeDt"]))
         poor = _flat(amount=100_000_000)

@@ -458,6 +458,7 @@ def runPbkCycle(now=None, loader=None, sender=None, log=None, path=None, quotes=
             _startupDone = True
         if dueDaily:
             _scanYmd = ymd
+        rows = _markHeldAmount(rows, positions, bars)
         if quotes is None:
             quotes = pack.get("quotes") or {}
     else:
@@ -470,6 +471,7 @@ def runPbkCycle(now=None, loader=None, sender=None, log=None, path=None, quotes=
         except Exception:
             rows = []
             positions = []
+        rows = _markHeldAmount(rows, positions, _barsForHeld(rows, positions))
     owned = []
     for pos in positions or []:
         if int((pos or {}).get("qty") or 0) > 0 or (pos or {}).get("leg1"):
@@ -503,6 +505,71 @@ def runPbkCycle(now=None, loader=None, sender=None, log=None, path=None, quotes=
 _lastSummaryAt = None
 _lastQuoteSummary = {}
 _pollCursor = 0
+
+
+def _barsForHeld(candidates, positions):
+    """보유 종목의 저장 일봉. 조회가 막히면 빈 목록이라 기존 후보를 지우지 않는다."""
+    codes = []
+    for pos in positions or []:
+        code = str((pos or {}).get("stkCd") or "")
+        try:
+            qty = int((pos or {}).get("qty") or (pos or {}).get("brokerQty") or 0)
+        except (TypeError, ValueError):
+            qty = 0
+        if code and (qty > 0 or (pos or {}).get("leg1") or (pos or {}).get("leg2")):
+            codes.append(code)
+    out = {}
+    if not codes:
+        return out
+    try:
+        from utils.chartBarLoad import loadStoredDayBars
+    except Exception:
+        return out
+    for code in codes:
+        try:
+            out[code] = loadStoredDayBars(code) or []
+        except Exception:
+            out[code] = []
+    return out
+
+
+def _markHeldAmount(candidates, positions, barsByCode):
+    """대금 필터를 못 넘는 보유는 추가 매수 대상에 남기되 amtOk 를 끈다."""
+    from strategies.impl.pullbackTwoStep import signalAmt20
+
+    rows = [dict(row) for row in (candidates or []) if isinstance(row, dict)]
+    by = {str(row.get("stkCd") or ""): row for row in rows if row.get("stkCd")}
+    for pos in positions or []:
+        if not isinstance(pos, dict):
+            continue
+        code = str(pos.get("stkCd") or "")
+        try:
+            qty = int(pos.get("qty") or pos.get("brokerQty") or 0)
+        except (TypeError, ValueError):
+            qty = 0
+        if not code or not (qty > 0 or pos.get("leg1") or pos.get("leg2")):
+            continue
+        sig = str(pos.get("signalDt") or (by.get(code) or {}).get("signalDt") or "")
+        bars = (barsByCode or {}).get(code)
+        if not sig or not bars:
+            continue
+        got = signalAmt20(bars, sig)
+        if not got or got.get("ok"):
+            continue
+        row = by.get(code)
+        if row is None:
+            row = {
+                "stkCd": code,
+                "stkNm": pos.get("stkNm") or code,
+                "signalDt": sig,
+                "ma5": pos.get("ma5"),
+                "ma20": pos.get("ma20"),
+            }
+            rows.append(row)
+            by[code] = row
+        row["amtOk"] = False
+        _safeLog(None, f"[PBK01] 대금미달 {code} 추가매수 보류")
+    return rows
 
 
 def _universeRows(rows, positions):
@@ -755,7 +822,7 @@ def placePaperCycle(result, broker=None, session=None, log=None, sender=None, pa
             _safeLog(log, f"[PBK01] 놓침 기록 실패 {type(err).__name__}")
     waited = []
     for row in plan["skips"]:
-        if row.get("reason") in ("시세 대기", "슬롯한도", "시간외", "매도대기", "잔고불일치"):
+        if row.get("reason") in ("시세 대기", "슬롯한도", "시간외", "매도대기", "잔고불일치", "대금미달"):
             _safeLog(log, f"[PBK01] 스킵 {row.get('stkCd')} {row.get('reason')}")
         if row.get("reason") == "시세 대기" and row.get("stkCd"):
             waited.append(row.get("stkCd"))

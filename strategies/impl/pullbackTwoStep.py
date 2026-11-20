@@ -139,6 +139,46 @@ def legMoney(budget, pct):
     return int(int(budget) * int(pct) // 100)
 
 
+def _closeOf(bar):
+    return _f(bar, "close", "CLOSE_PRC")
+
+
+def _volumeOf(bar):
+    return _f(bar, "volume", "TRDE_QTY", "qty")
+
+
+def rollPrevMean(bars, idx, period, kind):
+    """t-1까지 period개. 종가>0인 날이 period개 전부여야 평균이 나온다.
+
+    하나라도 없거나 종가가 0 이하면 None. 대금은 저장값을 먼저 쓰고,
+    없을 때만 종가×거래량이다.
+    """
+    start = idx - int(period)
+    if start < 0:
+        return None
+    window = list(bars[start:idx])
+    if len(window) != int(period):
+        return None
+    vals = []
+    for bar in window:
+        close = _closeOf(bar)
+        if close is None or close <= 0:
+            return None
+        if kind == "amount":
+            num = _f(bar, "amount", "AMT", "trdePrca")
+            if num is None:
+                vol = _volumeOf(bar)
+                if vol is None:
+                    return None
+                num = close * vol
+        else:
+            num = _volumeOf(bar)
+            if num is None:
+                return None
+        vals.append(num)
+    return sum(vals) / float(len(vals))
+
+
 def priorMean(bars, idx, period, field):
     """idx 봉은 빼고 직전 period 개. 부족하면 None."""
     start = idx - int(period)
@@ -169,12 +209,12 @@ def signalAmt20(bars, signalDt):
     if not day or day not in days:
         return None
     idx = days.index(day)
-    prior = priorMean(rows, idx, 20, "amount")
+    prior = rollPrevMean(rows, idx, 20, "amount")
     ending = amountMeanEnding(rows, idx, 20)
     return {
         "prior": prior,
         "ending": ending,
-        "ok": None if prior is None else prior >= MIN_AMT20,
+        "ok": False if prior is None else prior >= MIN_AMT20,
     }
 
 
@@ -309,10 +349,8 @@ def _longOn(rows, days, day):
     idx = days.index(day)
     if idx < 1:
         return False
-    avgVol = priorMean(rows, idx, 20, "volume")
-    if avgVol is None:
-        avgVol = priorMean(rows, idx, 20, "TRDE_QTY")
-    amt = priorMean(rows, idx, 20, "amount")
+    avgVol = rollPrevMean(rows, idx, 20, "volume")
+    amt = rollPrevMean(rows, idx, 20, "amount")
     prev = _f(rows[idx - 1], "close", "CLOSE_PRC")
     if avgVol is None or amt is None or amt < MIN_AMT20:
         return False
@@ -773,7 +811,7 @@ def algVerHistPayload(gitHash="", ymd="2026-11-20"):
         "stratId": STRAT_ID,
         "algVer": ALG_VER,
         "ymd": ymd,
-        "note": "v3 지정가는 min(매도1호가, 이평 호가올림). 이평보다 비싸게 사지 않음. v2는 배포되지 않음. 백테스트 체결은 min(시가, 이평).",
+        "note": "v3 지정가 min(매도1호가, 이평 호가올림). 거래대금·거래량은 당일 제외 직전 20일이 모두 종가>0일 때만 평균하고 부족하면 탈락. 탈락 보유는 추가매수만 차단. v2는 미배포. 백테스트 체결은 min(시가, 이평).",
         "gitHash": str(gitHash or "")[:16],
         "src": "manual",
     }
