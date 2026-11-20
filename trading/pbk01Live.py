@@ -458,7 +458,8 @@ def runPbkCycle(now=None, loader=None, sender=None, log=None, path=None, quotes=
             _startupDone = True
         if dueDaily:
             _scanYmd = ymd
-        rows = _markHeldAmount(rows, positions, bars)
+        positions = _completeHeld(positions, rows, discs, bars, asOf=asOf)
+        rows, _blocked = _markHeldAmount(rows, positions, bars)
         if quotes is None:
             quotes = pack.get("quotes") or {}
     else:
@@ -471,7 +472,9 @@ def runPbkCycle(now=None, loader=None, sender=None, log=None, path=None, quotes=
         except Exception:
             rows = []
             positions = []
-        rows = _markHeldAmount(rows, positions, _barsForHeld(rows, positions))
+        heldBars = _barsForHeld(rows, positions)
+        positions = _completeHeld(positions, rows, None, heldBars)
+        rows, _blocked = _markHeldAmount(rows, positions, heldBars)
     owned = []
     for pos in positions or []:
         if int((pos or {}).get("qty") or 0) > 0 or (pos or {}).get("leg1"):
@@ -508,7 +511,11 @@ _pollCursor = 0
 
 
 def _barsForHeld(candidates, positions):
-    """보유 종목의 저장 일봉. 조회가 막히면 빈 목록이라 기존 후보를 지우지 않는다."""
+    """보유 종목의 저장 일봉. 테스트와 조회 실패는 빈 목록이다."""
+    import os
+
+    if os.environ.get("SATP_TEST") == "1":
+        return {}
     codes = []
     for pos in positions or []:
         code = str((pos or {}).get("stkCd") or "")
@@ -533,14 +540,31 @@ def _barsForHeld(candidates, positions):
     return out
 
 
+_bootAmtNoted = set()
+
+
+def _logAmtHold(code, log=None, boot=False):
+    """대금 미달 추가매수 보류. 부팅 로그는 종목당 한 번, 사이클 로그는 매번."""
+    global _bootAmtNoted
+    text = f"[PBK01] 대금미달 {code} 추가매수 보류"
+    if boot:
+        if code in _bootAmtNoted:
+            return
+        _bootAmtNoted.add(code)
+        _safeLog(None, text)
+        return
+    _safeLog(log, text)
+
+
 def _markHeldAmount(candidates, positions, barsByCode):
-    """대금 필터를 못 넘는 보유는 추가 매수 대상에 남기되 amtOk 를 끈다."""
+    """신호일을 모르거나 대금을 계산할 수 없으면 추가 매수를 막는다."""
     from strategies.impl.pullbackTwoStep import signalAmt20
 
     rows = [dict(row) for row in (candidates or []) if isinstance(row, dict)]
     by = {str(row.get("stkCd") or ""): row for row in rows if row.get("stkCd")}
+    blocked = []
     for pos in positions or []:
-        if not isinstance(pos, dict):
+        if not isinstance(pos, dict) or pos.get("released") or pos.get("closed"):
             continue
         code = str(pos.get("stkCd") or "")
         try:
@@ -551,16 +575,19 @@ def _markHeldAmount(candidates, positions, barsByCode):
             continue
         sig = str(pos.get("signalDt") or (by.get(code) or {}).get("signalDt") or "")
         bars = (barsByCode or {}).get(code)
-        if not sig or not bars:
-            continue
-        got = signalAmt20(bars, sig)
-        if not got or got.get("ok"):
-            continue
+        ok = False
+        if sig and bars:
+            got = signalAmt20(bars, sig)
+            ok = bool(got and got.get("ok"))
         row = by.get(code)
+        if ok:
+            if row is not None:
+                row["amtOk"] = True
+            continue
         if row is None:
             row = {
                 "stkCd": code,
-                "stkNm": pos.get("stkNm") or code,
+                "stkNm": pos.get("stkNm") or "",
                 "signalDt": sig,
                 "ma5": pos.get("ma5"),
                 "ma20": pos.get("ma20"),
@@ -568,8 +595,92 @@ def _markHeldAmount(candidates, positions, barsByCode):
             rows.append(row)
             by[code] = row
         row["amtOk"] = False
-        _safeLog(None, f"[PBK01] 대금미달 {code} 추가매수 보류")
-    return rows
+        blocked.append(code)
+    return rows, blocked
+
+
+def _completeHeld(positions, candidates, disclosures, barsByCode, asOf="", names=None):
+    from trading.pbkOrderPlan import completeHoldRecords
+
+    return completeHoldRecords(
+        positions,
+        candidates,
+        disclosures=disclosures,
+        barsByCode=barsByCode,
+        names=names,
+        asOf=asOf,
+    )
+
+
+def _holdContext(positions, disclosures=None, barsByCode=None):
+    """복원 때 공시·일봉. 테스트에서는 주입된 값만 쓰고 운영 파일은 열지 않는다."""
+    import os
+
+    if disclosures is not None or barsByCode is not None:
+        return disclosures or {}, barsByCode or {}
+    if os.environ.get("SATP_TEST") == "1":
+        return {}, {}
+    codes = []
+    for pos in positions or []:
+        code = str((pos or {}).get("stkCd") or "")
+        if code:
+            codes.append(code)
+    discs = {}
+    bars = {}
+    try:
+        from utils.pbkDartStore import disclosuresByCode
+
+        discs = disclosuresByCode() or {}
+    except Exception:
+        discs = {}
+    try:
+        from utils.chartBarLoad import loadStoredDayBars
+
+        for code in codes:
+            try:
+                bars[code] = loadStoredDayBars(code) or []
+            except Exception:
+                bars[code] = []
+    except Exception:
+        bars = {}
+    return discs, bars
+
+
+def _namesFor(positions, candidates, accountRows=None, names=None):
+    import os
+
+    from trading.pbkOrderPlan import _knownName
+
+    out = {}
+    for row in list(accountRows or []) + list(candidates or []) + list(positions or []):
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("stkCd") or "")
+        name = _knownName(row.get("stkNm") or row.get("name"), code)
+        if code and name:
+            out[code] = name
+    if isinstance(names, dict):
+        for code, name in names.items():
+            text = _knownName(name, code)
+            if text:
+                out[str(code)] = text
+    missing = []
+    for pos in positions or []:
+        code = str((pos or {}).get("stkCd") or "")
+        if code and code not in out and code not in missing:
+            missing.append(code)
+    if missing and os.environ.get("SATP_TEST") != "1":
+        try:
+            from utils.pbkWatchScreen import lookupStkNames
+
+            found = lookupStkNames(missing) or {}
+        except Exception:
+            found = {}
+        for code, name in found.items():
+            text = _knownName(name, code)
+            if text:
+                out[str(code)] = text
+    return out
 
 
 def _universeRows(rows, positions):
@@ -822,7 +933,9 @@ def placePaperCycle(result, broker=None, session=None, log=None, sender=None, pa
             _safeLog(log, f"[PBK01] 놓침 기록 실패 {type(err).__name__}")
     waited = []
     for row in plan["skips"]:
-        if row.get("reason") in ("시세 대기", "슬롯한도", "시간외", "매도대기", "잔고불일치", "대금미달"):
+        if row.get("reason") == "대금미달":
+            _logAmtHold(row.get("stkCd"), log=log)
+        elif row.get("reason") in ("시세 대기", "슬롯한도", "시간외", "매도대기", "잔고불일치"):
             _safeLog(log, f"[PBK01] 스킵 {row.get('stkCd')} {row.get('reason')}")
         if row.get("reason") == "시세 대기" and row.get("stkCd"):
             waited.append(row.get("stkCd"))
@@ -955,14 +1068,19 @@ def settleIfClosed(path=None, hm="", ymd=""):
     return _settleBook(filePath, saved, positions, includeToday=textHm >= "153000")
 
 
-def restorePaperBook(path=None, accountRows=None, openOrders=None, accountKnown=False, now=None, orderFills=None):
-    """구 상태 파일을 읽어 보유를 유지하고, 잔고·미체결이 있으면 실제 수량만 맞춘다."""
+def restorePaperBook(path=None, accountRows=None, openOrders=None, accountKnown=False, now=None, orderFills=None, disclosures=None, barsByCode=None, names=None):
+    """구 상태 파일을 읽어 보유를 유지하고, 잔고·미체결이 있으면 실제 수량만 맞춘다.
+
+    신호일과 청산일이 비어 있으면 후보·공시와 첫 체결일로 채운다.
+    지난 장의 미체결은 상태에서만 지우고 취소 주문은 내지 않는다.
+    """
     from trading.pbkOrderPlan import reconcilePositions
     from utils.pbk01Store import latestByKind, pbkPath
 
     filePath = path or pbkPath("pbk01_state.jsonl")
     saved = latestByKind(filePath, "state") or {}
     positions = list(saved.get("positions") or [])
+    candidates = list(saved.get("candidates") or [])
     updated = reconcilePositions(
         positions,
         accountRows=accountRows,
@@ -984,18 +1102,39 @@ def restorePaperBook(path=None, accountRows=None, openOrders=None, accountKnown=
                 None,
                 f"[PBK01] 잔고 불일치 {row['stkCd']} 상태 {row['stateQty']} 계좌 {row['acctQty']} 신규매수 보류",
             )
-    if updated != positions:
-        _saveBook(filePath, saved.get("announcedYmd") or "", saved.get("candidates") or [], updated)
-    if accountKnown:
-        moment = now or datetime.now()
-        updated = _settleBook(
-            filePath,
-            saved,
-            updated,
-            includeToday=moment.strftime("%H%M%S") >= "153000",
-            today=moment.strftime("%Y%m%d"),
-            orderFills=orderFills,
-        )
+    moment = now or datetime.now()
+    today = moment.strftime("%Y%m%d")
+    includeToday = moment.strftime("%H%M%S") >= "153000"
+    discs, bars = _holdContext(updated, disclosures, barsByCode)
+    nameMap = _namesFor(updated, candidates, accountRows, names)
+    updated = _completeHeld(updated, candidates, discs, bars, asOf=today, names=nameMap)
+    for pos in updated:
+        code = str(pos.get("stkCd") or "")
+        if code and nameMap.get(code):
+            pos["stkNm"] = nameMap[code]
+    for row in candidates:
+        code = str((row or {}).get("stkCd") or "")
+        if code and nameMap.get(code) and str(row.get("stkNm") or "") in ("", code):
+            row["stkNm"] = nameMap[code]
+    saved = dict(saved)
+    saved["candidates"] = candidates
+    updated = _settleBook(
+        filePath,
+        saved,
+        updated,
+        includeToday=includeToday,
+        today=today,
+        orderFills=orderFills,
+    )
+    from trading.pbkOrderPlan import _dropExpiredOpenOrders
+
+    for pos in updated:
+        _dropExpiredOpenOrders(pos, today, includeToday)
+    updated = _completeHeld(updated, candidates, discs, bars, asOf=today, names=nameMap)
+    candidates, blocked = _markHeldAmount(candidates, updated, bars)
+    for code in blocked:
+        _logAmtHold(code, boot=True)
+    _saveBook(filePath, saved.get("announcedYmd") or today, candidates, updated)
     held = 0
     for pos in updated:
         if pos.get("released"):

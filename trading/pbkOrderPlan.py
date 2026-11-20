@@ -290,6 +290,11 @@ def buildLiveActions(
             continue
         name = str(row.get("stkNm") or row.get("name") or code)
         pos = byPos.get(code) or {}
+        if row.get("amtOk") is False and (
+            _slotUsed(pos) or int(pos.get("brokerQty") or pos.get("qty") or 0) > 0
+        ):
+            _skip(code, "대금미달")
+            continue
         quote = (quotes or {}).get(code) or {}
         if not quoteTradable(quote, now):
             _skip(code, "시세 대기")
@@ -301,11 +306,6 @@ def buildLiveActions(
             continue
         if pos.get("buyHold"):
             _skip(code, "잔고불일치")
-            continue
-        if row.get("amtOk") is False and (
-            _slotUsed(pos) or int(pos.get("brokerQty") or pos.get("qty") or 0) > 0
-        ):
-            _skip(code, "대금미달")
             continue
         expire = str(row.get("expireDt") or pos.get("expireDt") or "")
         if expire and str(ymd or "") > expire:
@@ -368,6 +368,120 @@ def buildLiveActions(
                 "hm": textHm,
             })
     return {"actions": actions, "missed": missed, "skips": skips}
+
+
+def _knownName(name, code):
+    text = str(name or "").strip()
+    if not text or text == str(code or ""):
+        return ""
+    return text
+
+
+def exitDtFromFirst(firstBuyDt, calendar=None):
+    """첫 체결일을 0번째로 센 f+10 거래일. 달력이 없으면 휴장 달력으로 센다."""
+    from datetime import datetime, timedelta
+
+    from strategies.impl.pullbackTwoStep import HOLD_DAYS, holidayCalendar, tradingDaysAfter
+
+    day = str(firstBuyDt or "")[:8]
+    if len(day) != 8:
+        return ""
+    if not calendar:
+        end = (datetime.strptime(day, "%Y%m%d") + timedelta(days=40)).strftime("%Y%m%d")
+        calendar = holidayCalendar(day, end)
+    ahead = tradingDaysAfter(day, calendar, HOLD_DAYS)
+    if len(ahead) < HOLD_DAYS:
+        return ""
+    return ahead[-1]
+
+
+def _firstFillDay(pos):
+    day = str((pos or {}).get("firstBuyDt") or "")[:8]
+    if len(day) == 8:
+        return day
+    found = []
+    for key in ("leg1", "leg2"):
+        leg = (pos or {}).get(key) or {}
+        if isinstance(leg, dict):
+            text = str(leg.get("ymd") or "")[:8]
+            if len(text) == 8:
+                found.append(text)
+    return min(found) if found else ""
+
+
+def signalDtForHold(code, candidates=None, disclosures=None, bars=None, firstBuyDt="", asOf=""):
+    """후보의 장대양봉일을 먼저 쓰고, 없으면 공시와 일봉에서 찾는다."""
+    for row in candidates or []:
+        if not isinstance(row, dict) or str(row.get("stkCd") or "") != str(code or ""):
+            continue
+        sig = str(row.get("signalDt") or "")[:8]
+        if len(sig) == 8:
+            return sig
+    items = []
+    if isinstance(disclosures, dict):
+        items = list(disclosures.get(code) or [])
+    elif isinstance(disclosures, list):
+        items = list(disclosures)
+    if not items or not bars:
+        return ""
+    from strategies.impl.pullbackTwoStep import findCandleEvents
+
+    events = findCandleEvents(bars, items, code, asOf=asOf or None)
+    first = str(firstBuyDt or "")[:8]
+    picked = ""
+    for event in events or []:
+        sig = str((event or {}).get("signalDt") or "")[:8]
+        if len(sig) != 8:
+            continue
+        if first and sig > first:
+            continue
+        if sig >= picked:
+            picked = sig
+    return picked
+
+
+def completeHoldRecords(positions, candidates=None, disclosures=None, barsByCode=None, names=None, asOf=""):
+    """비어 있는 signalDt·exitDt·stkNm 만 채운다. 있는 값은 바꾸지 않는다."""
+    out = []
+    for pos in positions or []:
+        if not isinstance(pos, dict):
+            continue
+        item = dict(pos)
+        if item.get("released") or item.get("closed"):
+            out.append(item)
+            continue
+        code = str(item.get("stkCd") or "")
+        first = _firstFillDay(item)
+        if first and not str(item.get("firstBuyDt") or ""):
+            item["firstBuyDt"] = first
+        if code and not str(item.get("signalDt") or ""):
+            sig = signalDtForHold(
+                code,
+                candidates,
+                disclosures,
+                (barsByCode or {}).get(code),
+                firstBuyDt=item.get("firstBuyDt") or "",
+                asOf=asOf,
+            )
+            if sig:
+                item["signalDt"] = sig
+        if not str(item.get("exitDt") or "") and item.get("firstBuyDt") and not item.get("released"):
+            exitDt = exitDtFromFirst(item.get("firstBuyDt"))
+            if exitDt:
+                item["exitDt"] = exitDt
+        name = _knownName(item.get("stkNm"), code)
+        if not name:
+            alt = _knownName((names or {}).get(code), code)
+            if not alt:
+                for row in candidates or []:
+                    if isinstance(row, dict) and str(row.get("stkCd") or "") == code:
+                        alt = _knownName(row.get("stkNm") or row.get("name"), code)
+                        if alt:
+                            break
+            if alt:
+                item["stkNm"] = alt
+        out.append(item)
+    return out
 
 
 def applyPaperResult(positions, action, status, ordNo="", ymd="", calendar=None):
@@ -439,8 +553,9 @@ def applyPaperResult(positions, action, status, ordNo="", ymd="", calendar=None)
     if found.get("released"):
         found["released"] = False
     if keptFilled > 0:
-        if not found.get("stkNm"):
-            found["stkNm"] = action.get("stkNm") or code
+        realName = _knownName(action.get("stkNm"), code)
+        if realName and not _knownName(found.get("stkNm"), code):
+            found["stkNm"] = realName
         return rows
     if found.get("brokerQty") is None:
         found["brokerQty"] = 0
@@ -455,10 +570,15 @@ def applyPaperResult(positions, action, status, ordNo="", ymd="", calendar=None)
     found["avg"] = avg
     if not found.get("firstBuyDt"):
         found["firstBuyDt"] = str(ymd or "")
-        ahead = tradingDaysAfter(found["firstBuyDt"], calendar, HOLD_DAYS) if calendar else []
-        found["exitDt"] = ahead[-1] if len(ahead) >= HOLD_DAYS else ""
-    if not found.get("stkNm"):
-        found["stkNm"] = action.get("stkNm") or code
+        if not found.get("exitDt"):
+            if calendar:
+                ahead = tradingDaysAfter(found["firstBuyDt"], calendar, HOLD_DAYS)
+                found["exitDt"] = ahead[-1] if len(ahead) >= HOLD_DAYS else ""
+            else:
+                found["exitDt"] = exitDtFromFirst(found["firstBuyDt"])
+    realName = _knownName(action.get("stkNm"), code)
+    if realName and not _knownName(found.get("stkNm"), code):
+        found["stkNm"] = realName
     return rows
 
 
@@ -759,6 +879,59 @@ def _knownOrderFill(pos, leg):
         return None
 
 
+def _sessionClosed(day, asOf, includeToday):
+    text = str(day or "")[:8]
+    today = str(asOf or "")[:8]
+    if len(text) != 8 or len(today) != 8:
+        return False
+    if text < today:
+        return True
+    return bool(includeToday and text == today)
+
+
+def _dropExpiredOpenOrders(item, asOf, includeToday):
+    """장마감으로 끝난 미체결만 상태에서 지운다. 취소 주문은 내지 않는다."""
+    legs = []
+    unsettled = False
+    settledKeys = set()
+    dayByKey = {}
+    for key in ("leg1", "leg2"):
+        leg = item.get(key)
+        if not isinstance(leg, dict):
+            continue
+        legs.append(leg)
+        ordKey = _ordKey(leg.get("ordNo"))
+        if ordKey:
+            dayByKey[ordKey] = str(leg.get("ymd") or "")[:8]
+        if leg.get("settled"):
+            if ordKey:
+                settledKeys.add(ordKey)
+        else:
+            unsettled = True
+    if legs and all(_sessionClosed(leg.get("ymd"), asOf, includeToday) for leg in legs):
+        item["openOrders"] = []
+        for leg in legs:
+            leg["rmnQty"] = 0
+        return item
+    kept = []
+    for order in item.get("openOrders") or []:
+        if not isinstance(order, dict):
+            continue
+        ordKey = _ordKey(order.get("ordNo"))
+        day = str(order.get("ymd") or "")[:8]
+        if not day and ordKey:
+            day = dayByKey.get(ordKey) or ""
+        if ordKey and ordKey in settledKeys:
+            continue
+        if _sessionClosed(day, asOf, includeToday):
+            continue
+        if not day and not unsettled and legs:
+            continue
+        kept.append(order)
+    item["openOrders"] = kept
+    return item
+
+
 def settlePositions(positions, asOfYmd, includeToday=False, accountKnown=False, orderFills=None):
     """장 마감 후 실체결만 남기고 미체결은 소멸시킨다. 새 주문은 만들지 않는다.
 
@@ -840,7 +1013,7 @@ def settlePositions(positions, asOfYmd, includeToday=False, accountKnown=False, 
             logs.append({
                 "ymd": orderDay or asOf,
                 "stkCd": str(item.get("stkCd") or ""),
-                "stkNm": item.get("stkNm") or "",
+                "stkNm": _knownName(item.get("stkNm"), item.get("stkCd")),
                 "leg": legNo,
                 "legName": "1차" if legNo == 1 else "2차",
                 "ordNo": str(leg.get("ordNo") or ""),
@@ -868,6 +1041,7 @@ def settlePositions(positions, asOfYmd, includeToday=False, accountKnown=False, 
                 ), 4),
             })
         if not settledNow:
+            _dropExpiredOpenOrders(item, asOf, includeToday)
             out.append(item)
             continue
         item["settledYmd"] = asOf
@@ -889,6 +1063,7 @@ def settlePositions(positions, asOfYmd, includeToday=False, accountKnown=False, 
             item["qty"] = broker
             if item.get("brokerAvg") not in (None, ""):
                 item["avg"] = item.get("brokerAvg")
+        _dropExpiredOpenOrders(item, asOf, includeToday)
         out.append(item)
     return out, logs
 

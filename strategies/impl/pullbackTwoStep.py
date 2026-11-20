@@ -740,6 +740,41 @@ def formatCandidateLog(rows):
     return f"[PBK01] 후보 {n}건"
 
 
+def _shownFillQty(pos):
+    """슬롯 로그용 실체결 수량. 주문 계획 수량은 쓰지 않는다."""
+    try:
+        pool = None if pos.get("brokerQty") is None else max(0, int(pos.get("brokerQty") or 0))
+    except (TypeError, ValueError):
+        pool = None
+    shown = []
+    for key in ("leg1", "leg2"):
+        leg = pos.get(key) if isinstance(pos.get(key), dict) else {}
+        if not leg:
+            shown.append(0)
+            continue
+        known = leg.get("settled") or leg.get("filledQty") not in (None, "")
+        if known:
+            try:
+                got = max(0, int(leg.get("filledQty") or 0))
+            except (TypeError, ValueError):
+                got = 0
+            if pool is not None:
+                pool = max(0, pool - got)
+            shown.append(got)
+            continue
+        if pool is None:
+            shown.append(0)
+            continue
+        try:
+            order = max(0, int(leg.get("qty") or 0))
+        except (TypeError, ValueError):
+            order = 0
+        got = min(order, pool)
+        pool -= got
+        shown.append(got)
+    return shown[0], shown[1]
+
+
 def formatSlotLog(positions, slotLimit=SLOT_COUNT):
     lines = []
     used = 0
@@ -749,15 +784,14 @@ def formatSlotLog(positions, slotLimit=SLOT_COUNT):
         if int(pos.get("qty") or 0) <= 0 and not pos.get("leg1") and not pos.get("leg2"):
             continue
         used += 1
-        leg1 = pos.get("leg1") or {}
-        leg2 = pos.get("leg2") or {}
-        avg = pos.get("avg")
+        leg1Qty, leg2Qty = _shownFillQty(pos)
+        avg = pos.get("brokerAvg") if pos.get("brokerAvg") not in (None, "") else pos.get("avg")
         avgTxt = "-" if avg is None else f"{float(avg):.0f}"
         stop = stopLine(avg)
         stopTxt = "-" if stop is None else f"{stop:.0f}"
         lines.append(
-            f"{pos.get('stkCd')} 1차 {int(leg1.get('qty') or 0)}주"
-            f" 2차 {int(leg2.get('qty') or 0)}주"
+            f"{pos.get('stkCd')} 1차 {leg1Qty}주"
+            f" 2차 {leg2Qty}주"
             f" 평단 {avgTxt} f {pos.get('firstBuyDt') or '-'}"
             f" 청산 {pos.get('exitDt') or '-'} 손절 {stopTxt}"
         )

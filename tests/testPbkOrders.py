@@ -699,6 +699,140 @@ class PbkOrderPlanTest(unittest.TestCase):
             )
             self.assertEqual([row for row in again["actions"] if row["side"] == "BUY" and row["leg"] == 1], [])
 
+    def test_signal_date_comes_from_disclosure_when_candidate_has_none(self):
+        from trading.pbkOrderPlan import signalDtForHold
+
+        with patch(
+            "strategies.impl.pullbackTwoStep.findCandleEvents",
+            return_value=[{"stkCd": "300120", "signalDt": "20261118"}],
+        ):
+            sig = signalDtForHold(
+                "300120",
+                [{"stkCd": "300120", "ma5": 2500}],
+                {"300120": [{"title": "영업(잠정)실적", "date": "20261117"}]},
+                [{"tradeDt": "20261118", "close": 1000}],
+                firstBuyDt="20261120",
+            )
+        self.assertEqual(sig, "20261118")
+
+    def test_restore_fills_dates_names_and_expires_open_orders(self):
+        import trading.pbk01Live as live
+        from strategies.impl.pullbackTwoStep import formatSlotLog
+        from trading.pbkOrderPlan import exitDtFromFirst
+
+        self.assertIn("1차 672주", formatSlotLog([{
+            "stkCd": "300120",
+            "brokerQty": 672,
+            "brokerAvg": 2445,
+            "leg1": {"qty": 1653},
+            "leg2": {"qty": 800},
+            "firstBuyDt": "20261110",
+        }]))
+        self.assertNotIn("1653", formatSlotLog([{
+            "stkCd": "300120",
+            "brokerQty": 672,
+            "leg1": {"qty": 1653},
+            "leg2": {"qty": 800},
+        }]))
+        exitDt = exitDtFromFirst("20261110")
+        self.assertEqual(len(exitDt), 8)
+        self.assertGreater(exitDt, "20261110")
+        cancelled = []
+        logs = []
+        live._bootAmtNoted = set()
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "pbk01_state.jsonl"
+            path.write_text(json.dumps({
+                "kind": "state",
+                "candidates": [{
+                    "stkCd": "300120",
+                    "stkNm": "300120",
+                    "signalDt": "20261104",
+                    "ma5": 2500,
+                    "ma20": 2000,
+                }],
+                "positions": [{
+                    "stkCd": "300120",
+                    "stkNm": "300120",
+                    "qty": 1653,
+                    "brokerQty": 672,
+                    "brokerAvg": 2445,
+                    "firstBuyDt": "20261110",
+                    "leg1": {"qty": 1653, "ordNo": "A", "ymd": "20261120", "rmnQty": 981, "fillPx": 2445},
+                    "leg2": {"qty": 800, "ordNo": "B", "ymd": "20261120", "rmnQty": 800, "fillPx": 2000},
+                    "openOrders": [
+                        {"stkCd": "300120", "ordNo": "A", "side": "BUY", "rmnQty": 981},
+                        {"stkCd": "300120", "ordNo": "B", "side": "BUY", "rmnQty": 800},
+                    ],
+                }],
+            }, ensure_ascii=False) + "\n", encoding="utf-8")
+            with patch("api.cnclStk.cnclStk", lambda *a, **k: cancelled.append(1)), patch(
+                "utils.termLog.termLog", logs.append,
+            ):
+                restored = live.restorePaperBook(
+                    path=path,
+                    accountKnown=False,
+                    now=datetime(2026, 11, 21, 8, 30, 0),
+                    names={"300120": "라온피플"},
+                    disclosures={"300120": [{"title": "영업(잠정)실적", "date": "20261103"}]},
+                    barsByCode={"300120": []},
+                )
+                live.restorePaperBook(
+                    path=path,
+                    accountKnown=False,
+                    now=datetime(2026, 11, 21, 8, 31, 0),
+                    names={"300120": "라온피플"},
+                    barsByCode={"300120": []},
+                )
+            self.assertEqual(cancelled, [])
+            pos = restored["positions"][0]
+            self.assertEqual(pos["signalDt"], "20261104")
+            self.assertEqual(pos["exitDt"], exitDt)
+            self.assertEqual(pos["stkNm"], "라온피플")
+            self.assertEqual(pos["openOrders"], [])
+            self.assertEqual(pos["leg1"]["expiredQty"], 981)
+            self.assertEqual(pos["leg2"]["expiredQty"], 800)
+            self.assertEqual(pos["leg1"]["rmnQty"], 0)
+            self.assertEqual(pos["leg2"]["rmnQty"], 0)
+            saved = json.loads(path.read_text(encoding="utf-8").strip().splitlines()[-1])
+            self.assertEqual(saved["positions"][0]["stkNm"], "라온피플")
+            self.assertFalse(saved["candidates"][0]["amtOk"])
+            fill = Path(folder) / "pbk01_fills_20261120.jsonl"
+            lines = [json.loads(line) for line in fill.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual({row["expiredQty"] for row in lines}, {981, 800})
+            self.assertTrue(all(row["stkNm"] == "라온피플" for row in lines))
+            notes = [line for line in logs if "대금미달 300120 추가매수 보류" in line]
+            self.assertEqual(len(notes), 1)
+            cycle = []
+            sent = []
+            live.placePaperCycle(
+                {
+                    "enabled": True,
+                    "ymd": "20261121",
+                    "hm": "100000",
+                    "candidates": [{
+                        "stkCd": "300120", "stkNm": "라온피플", "ma5": 2500, "ma20": 2000, "amtOk": False,
+                    }],
+                    "positions": [pos],
+                    "quotes": {},
+                },
+                broker=lambda *_a, **_k: sent.append(1),
+                log=cycle.append,
+                session={"mode": "paper", "host": "https://mockapi.kiwoom.com"},
+                path=path,
+                now=datetime(2026, 11, 21, 10, 0, 0),
+            )
+            self.assertEqual(sent, [])
+            self.assertTrue(any("대금미달 300120 추가매수 보류" in line for line in cycle))
+            sold = buildLiveActions(
+                [{"stkCd": "300120", "stkNm": "라온피플", "ma5": 2500, "ma20": 2000, "amtOk": False}],
+                {"300120": _fresh(1900, low=1800, ask=1900)},
+                [pos],
+                "100000",
+                exitDt,
+            )
+            self.assertEqual([row["reason"] for row in sold["actions"] if row["side"] == "SELL"], ["f+10"])
+
     def test_live_log_guard(self):
         from tests.liveGuard import LiveGuardError
         from utils.deskFileLog import appendDeskFileLog
