@@ -14,6 +14,7 @@ MAX_STK = 180
 MAX_ITEM = 200
 REG_CHUNK = 40
 POLL_PER_CYCLE = 4
+STALE_MIN = 3
 
 
 def maDistancePct(price, ma):
@@ -140,10 +141,113 @@ def shouldBeat(lastAt, now, everySec=60):
         return True
 
 
-def applyPollPrice(info, price, tm):
-    """0B 가 이미 있으면 폴링 값으로 덮지 않는다."""
+def _hhmmss(raw):
+    digits = "".join(ch for ch in str(raw or "") if ch.isdigit())
+    if len(digits) < 4:
+        return None
+    digits = digits.zfill(6)[:6]
+    hour, minute, sec = int(digits[:2]), int(digits[2:4]), int(digits[4:6])
+    if hour > 23 or minute > 59 or sec > 59:
+        return None
+    return hour * 3600 + minute * 60 + sec
+
+
+def quoteAgeSec(info, now):
+    """마지막 틱이 얼마나 오래됐는지. 전일은 오늘 틱보다 크게, 시각이 없으면 None."""
+    if now is None:
+        return None
+    tick = _hhmmss((info or {}).get("tm"))
+    today = now.strftime("%Y%m%d")
+    ymd = str((info or {}).get("tickYmd") or "")
+    if ymd and ymd != today:
+        return 200000 + (86400 - (tick or 0))
+    if tick is None:
+        return None
+    nowSec = now.hour * 3600 + now.minute * 60 + now.second
+    if tick > nowSec:
+        return 200000 + (86400 - tick)
+    return nowSec - tick
+
+
+def quoteIsFresh(info, now, staleSec=None):
+    """오늘 0B·폴링이고 마지막 틱이 기준 분 안이면 신선하다."""
+    if staleSec is None:
+        staleSec = STALE_MIN * 60
+    src = str((info or {}).get("src") or "")
+    if src not in ("0B", "poll") or not (info or {}).get("curPrc"):
+        return False
+    ymd = str((info or {}).get("tickYmd") or "")
+    today = now.strftime("%Y%m%d") if now is not None else ""
+    if ymd and today and ymd != today:
+        return False
+    if not ymd:
+        return False
+    age = quoteAgeSec(info, now)
+    if age is None:
+        return False
+    return age <= float(staleSec)
+
+
+def classifyQuote(info, now, registered=True, staleSec=None):
+    """캐시가 비거나 낡은 이유. 신선하면 빈 문자열."""
+    if not registered:
+        return "미등록"
+    if not info or not info.get("curPrc"):
+        return "없음"
+    src = str(info.get("src") or "")
+    if src not in ("0B", "poll"):
+        return "전일"
+    ymd = str(info.get("tickYmd") or "")
+    today = now.strftime("%Y%m%d") if now is not None else ""
+    if not ymd or (today and ymd != today):
+        return "전일"
+    if quoteIsFresh(info, now, staleSec):
+        return ""
+    return "오래됨"
+
+
+def stalePollEntries(rows, ticks, now, registered=None, staleSec=None):
+    """구독 여부와 상관없이 낡거나 없는 종목. 없는 것이 먼저, 그 다음 오래된 순."""
+    reg = None if registered is None else {str(code) for code in registered}
+    out = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("stkCd") or "").strip()
+        if not code:
+            continue
+        info = (ticks or {}).get(code) or {}
+        onBook = True if reg is None else code in reg
+        reason = classifyQuote(info, now, registered=onBook, staleSec=staleSec)
+        if not reason:
+            continue
+        age = quoteAgeSec(info, now)
+        out.append({"stkCd": code, "reason": reason, "ageSec": age})
+
+    def _key(item):
+        age = item.get("ageSec")
+        missing = 0 if age is None else 1
+        return (missing, -(age or 0), item["stkCd"])
+
+    out.sort(key=_key)
+    return out
+
+
+def takeOldest(entries, limit):
+    """오래된 순으로 limit 종만."""
+    if int(limit or 0) <= 0:
+        return []
+    return [item["stkCd"] for item in (entries or [])[: int(limit)]]
+
+
+def applyPollPrice(info, price, tm, low=None, now=None, staleSec=None):
+    """더 새로운 오늘 0B 가 있으면 폴링 값으로 덮지 않는다."""
+    from datetime import datetime
+
     current = dict(info or {})
-    if str(current.get("src") or "") == "0B" and current.get("curPrc"):
+    moment = now or datetime.now()
+    src = str(current.get("src") or "")
+    if src == "0B" and quoteIsFresh(current, moment, staleSec):
         return current, False
     try:
         px = abs(float(str(price).replace(",", "").lstrip("+")))
@@ -153,7 +257,10 @@ def applyPollPrice(info, price, tm):
         return current, False
     current["curPrc"] = px
     current["src"] = "poll"
-    current["tm"] = str(tm or "")
+    current["tm"] = str(tm or moment.strftime("%H%M%S"))
+    current["tickYmd"] = moment.strftime("%Y%m%d")
+    if low not in (None, ""):
+        current["lowPrc"] = low
     return current, True
 
 
@@ -211,4 +318,5 @@ def formatSummary(summary):
     tail = " · ".join(top) if top else "거리 없음"
     fresh = int((summary or {}).get("fresh") or 0)
     total = int((summary or {}).get("total") or 0)
-    return f"[PBK01] 시세 {fresh}/{total} 틱 · {tail}"
+    stale = int((summary or {}).get("stale") or 0)
+    return f"[PBK01] 시세 {fresh}/{total} 틱 · stale 폴링 {stale}종 · {tail}"

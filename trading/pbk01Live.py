@@ -546,6 +546,8 @@ def _attachPrices(rows):
         item["price"] = info.get("curPrc") or info.get("krxPrc") or info.get("nxtPrc")
         item["tm"] = info.get("tm") or ""
         item["src"] = info.get("src") or ""
+        item["tickYmd"] = info.get("tickYmd") or ""
+        item["curPrc"] = info.get("curPrc") or item["price"]
         out.append(item)
     return out
 
@@ -575,14 +577,30 @@ def _fetchKa10001(code):
     }
 
 
-def refreshPbkQuotes(rows, positions, reason="PBK시세", fetch=None, pollLimit=None):
-    """후보·보유를 0B 에 추가하고, 한도 밖은 ka10001 로 받는다."""
-    global _pollCursor, _lastQuoteSummary
-    from trading.pbkQuotePlan import POLL_PER_CYCLE, planPbkQuotes, summarizeQuotes, takePollBatch
-    from trading.watchRtMonitor import _rtItemsOf, notePolledPx, pbkQuoteBudget, syncPbkTouch
+def refreshPbkQuotes(rows, positions, reason="PBK시세", fetch=None, pollLimit=None, now=None):
+    """후보·보유를 0B 에 추가하고, 오늘 틱이 없거나 오래된 종목은 ka10001 로 받는다."""
+    global _lastQuoteSummary
+    from datetime import datetime
 
+    from trading.pbkQuotePlan import (
+        POLL_PER_CYCLE,
+        planPbkQuotes,
+        stalePollEntries,
+        summarizeQuotes,
+        takeOldest,
+    )
+    from trading.watchRtMonitor import (
+        _rtItemsOf,
+        notePolledPx,
+        pbkQuoteBudget,
+        syncPbkTouch,
+        unmatchedTickCount,
+    )
+
+    moment = now or datetime.now()
     built = _attachPrices(_universeRows(rows, positions))
     budget = pbkQuoteBudget()
+    registered = set(budget.get("registered") or [])
 
     def _size(code):
         return len(_rtItemsOf(code) or [code])
@@ -595,8 +613,10 @@ def refreshPbkQuotes(rows, positions, reason="PBK시세", fetch=None, pollLimit=
         usedStocks=budget.get("usedStocks") or 0,
     )
     syncPbkTouch(plan["subscribe"], reason)
+    ticks = {row["stkCd"]: row for row in built}
+    stale = stalePollEntries(built, ticks, moment, registered=registered)
     limit = POLL_PER_CYCLE if pollLimit is None else int(pollLimit)
-    batch, _pollCursor = takePollBatch(plan["poll"], _pollCursor, limit)
+    batch = takeOldest(stale, limit)
     getter = fetch or _fetchKa10001
     polled = 0
     for code in batch:
@@ -607,13 +627,19 @@ def refreshPbkQuotes(rows, positions, reason="PBK시세", fetch=None, pollLimit=
         if notePolledPx(code, got.get("price"), got.get("tm") or "", got.get("low")):
             polled += 1
     summary = summarizeQuotes(built, {row["stkCd"]: row for row in _attachPrices(built)})
+    summary["stale"] = len(stale)
     _lastQuoteSummary = summary
+    reasons = {}
+    for item in stale:
+        reasons[item["reason"]] = reasons.get(item["reason"], 0) + 1
+    why = " ".join(f"{key} {cnt}" for key, cnt in sorted(reasons.items())) or "없음"
+    dropped = unmatchedTickCount()
     _safeLog(
         None,
-        f"[PBK01] 0B 대상 {len(plan['subscribe'])}종 · 폴링 {len(plan['poll'])}종 "
-        f"이번 {polled}종 ({reason})",
+        f"[PBK01] 0B 대상 {len(plan['subscribe'])}종 · stale 폴링 {len(stale)}종 "
+        f"이번 {polled}종 ({why}) 등록밖틱 {dropped} ({reason})",
     )
-    return {"plan": plan, "rows": built, "summary": summary}
+    return {"plan": plan, "rows": built, "summary": summary, "stale": stale}
 
 
 def _beatLoop():

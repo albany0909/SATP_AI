@@ -11,13 +11,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from trading.pbk01Live import announceCandidates, touchesForQuotes
 from trading.pbkQuotePlan import (
     applyPollPrice,
+    classifyQuote,
     formatSummary,
     maDistancePct,
     planPbkQuotes,
     rankForSubscription,
     regChunks,
     shouldBeat,
+    stalePollEntries,
     summarizeQuotes,
+    takeOldest,
     takePollBatch,
 )
 
@@ -81,15 +84,61 @@ class PbkQuotePlanTest(unittest.TestCase):
         self.assertEqual(summary["top"][0]["stkCd"], "005930")
         text = formatSummary(summary)
         self.assertIn("[PBK01] 시세 1/2", text)
+        self.assertIn("stale 폴링", text)
         self.assertIn("5이평", text)
         self.assertIn("20이평", text)
         self.assertNotIn("token", text.lower())
-        kept, changed = applyPollPrice({"src": "0B", "curPrc": 10}, 11, "100000")
+        from datetime import datetime
+
+        freshAt = datetime(2026, 11, 20, 10, 0, 30)
+        kept, changed = applyPollPrice(
+            {"src": "0B", "curPrc": 10, "tm": "100000", "tickYmd": "20261120"},
+            11,
+            "100010",
+            now=freshAt,
+        )
         self.assertFalse(changed)
         self.assertEqual(kept["curPrc"], 10)
-        polled, changed = applyPollPrice({}, "12345", "093000")
+        staleAt = datetime(2026, 11, 20, 9, 52, 0)
+        polled, changed = applyPollPrice(
+            {"src": "0B", "curPrc": 10, "tm": "195900", "tickYmd": "20261119"},
+            "12345",
+            "095200",
+            low="12000",
+            now=staleAt,
+        )
         self.assertTrue(changed)
         self.assertEqual(polled["src"], "poll")
+        self.assertEqual(polled["lowPrc"], "12000")
+        self.assertEqual(polled["tickYmd"], "20261120")
+
+    def test_stale_quotes_are_polled_oldest_first(self):
+        from datetime import datetime
+
+        now = datetime(2026, 11, 20, 9, 52, 0)
+        rows = [
+            {"stkCd": "053800"},
+            {"stkCd": "000210"},
+            {"stkCd": "071280"},
+            {"stkCd": "246690"},
+        ]
+        ticks = {
+            "000210": {"src": "0B", "curPrc": 1, "tm": "195900", "tickYmd": "20261119"},
+            "071280": {"src": "0B", "curPrc": 1, "tm": "094000", "tickYmd": "20261120"},
+            "246690": {"src": "0B", "curPrc": 1, "tm": "095100", "tickYmd": "20261120"},
+        }
+        stale = stalePollEntries(rows, ticks, now, registered={"000210", "071280", "246690", "053800"})
+        self.assertEqual(classifyQuote(ticks["246690"], now), "")
+        self.assertEqual(classifyQuote({}, now, registered=True), "없음")
+        self.assertEqual(classifyQuote({}, now, registered=False), "미등록")
+        self.assertEqual(classifyQuote(ticks["000210"], now), "전일")
+        self.assertEqual(classifyQuote(ticks["071280"], now), "오래됨")
+        self.assertEqual([item["stkCd"] for item in stale], ["053800", "000210", "071280"])
+        self.assertEqual(takeOldest(stale, 2), ["053800", "000210"])
+        from trading.watchRtMonitor import _splitRtItem
+
+        self.assertEqual(_splitRtItem("053800_NX"), ("053800", "NXT"))
+        self.assertEqual(_splitRtItem("A000210"), ("000210", "KRX"))
 
     def test_touch_uses_polled_price(self):
         got = touchesForQuotes(

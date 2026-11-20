@@ -933,6 +933,12 @@ def addWatchRtCodes(codes, reason="장중편입"):
 
 
 _pbkTouch = set()
+_unmatchedTicks = 0
+
+
+def unmatchedTickCount():
+    """등록 목록에 없는 코드로 도착한 0B 수. 형식 불일치 확인용."""
+    return int(_unmatchedTicks)
 
 
 def pbkQuoteBudget():
@@ -1035,19 +1041,16 @@ def _unregWatch(ws, reason):
 
 
 def notePolledPx(stkCd, price, tm="", low=None):
-    """REST 현재가. 이미 0B 가 있으면 덮지 않는다."""
+    """REST 현재가. 더 새로운 오늘 0B 가 있으면 덮지 않는다."""
     from trading.pbkQuotePlan import applyPollPrice
 
     cd = normStkCd(stkCd)
     if not cd:
         return False
     with _lock:
-        info, changed = applyPollPrice(_lastPx.get(cd), price, tm)
+        info, changed = applyPollPrice(_lastPx.get(cd), price, tm, low=low)
         if not changed:
             return False
-        if low not in (None, ""):
-            info["lowPrc"] = low
-        info["tickYmd"] = datetime.now().strftime("%Y%m%d")
         _lastPx[cd] = info
     return True
 
@@ -1080,6 +1083,8 @@ def _onWsMessage(msg):
         fireTick = False
         with _lock:
             if stkCd not in _regCodes:
+                global _unmatchedTicks
+                _unmatchedTicks += 1
                 continue
             info = dict(_lastPx.get(stkCd) or {})
             # 0B 는 변동 FID 만 올 수 있다. 가격만 온 틱이 등락률을 지우지 않게 한다.
