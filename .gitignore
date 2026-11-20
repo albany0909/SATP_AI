@@ -48,6 +48,8 @@ Thumbs.db
 config/data/algDayReview/
 config/data/stratValRun/
 config/data/*State.json
+config/data/desk_watchdog.pause
+config/data/desk_watchdog.lock
 config/data/surgeTrade/
 config/data/indexMembership.json
 # --- extra secrets / local ops (GitHub safety) ---
