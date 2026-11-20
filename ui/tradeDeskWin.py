@@ -1122,7 +1122,7 @@ class TradeDeskWin(QMainWindow):
         self.holdSumLbl.setStyleSheet("color: #000; font-weight: 600;")
         holdHeadLay.addWidget(self.holdSumLbl, 1)
         holdLay.addWidget(holdHead)
-        self.holdTbl = QTableWidget(0, 11)
+        self.holdTbl = QTableWidget(0, 13)
         self.holdTbl.setHorizontalHeaderLabels(
             [
                 "종목명",
@@ -1136,6 +1136,8 @@ class TradeDeskWin(QMainWindow):
                 "평가금액",
                 "현재가",
                 "최초매수일",
+                "전략",
+                "미체결",
             ]
         )
         self._tuneGrid(self.holdTbl, [])
@@ -4405,6 +4407,12 @@ class TradeDeskWin(QMainWindow):
 
             holds = visibleHoldRows("paper", self._acntAllHolds, pbkPos, lambda _cd: False)
             try:
+                from trading.pbkOrderPlan import fillHoldNames
+
+                holds = fillHoldNames(holds)
+            except Exception:
+                pass
+            try:
                 from trading.pbk01Live import notePbkAccountQty
 
                 notePbkAccountQty(self._acntAllHolds)
@@ -4605,6 +4613,8 @@ class TradeDeskWin(QMainWindow):
                     evltTxt,
                     cur,
                     firstBuyTxt,
+                    str(row.get("algText") or row.get("algLabel") or ""),
+                    str(row.get("openText") or ""),
                 ]
                 if pnlWon > 0:
                     pnlColor = _PNL_PLUS
@@ -4625,8 +4635,12 @@ class TradeDeskWin(QMainWindow):
                     item = QTableWidgetItem(val)
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     item.setForeground(QBrush(QColor("#000000")))
-                    # 0종목명 좌측, 마지막(최초매수일) 가운데, 나머지 우측
-                    if col == len(vals) - 1:
+                    # 0종목명·전략 좌측, 최초매수일 가운데, 나머지 우측
+                    if col in (0, 11):
+                        item.setTextAlignment(
+                            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                        )
+                    elif col == 10:
                         item.setTextAlignment(
                             Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
                         )

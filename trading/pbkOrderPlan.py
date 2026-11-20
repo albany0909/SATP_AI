@@ -86,12 +86,20 @@ def quoteTradable(quote, now=None):
 
 
 def _legBlocked(pos, leg):
-    if not isinstance(pos, dict):
+    """오늘 이미 낸 단계만 막는다. 마감 확정 뒤 잔량이 있으면 다음 터치는 허용한다."""
+    if not isinstance(pos, dict) or pos.get("released"):
         return False
     pending = (pos.get("pending") or {}).get(str(leg))
     if pending:
         return True
     legRow = pos.get(f"leg{leg}")
+    if isinstance(legRow, dict) and legRow.get("settled"):
+        try:
+            filled = int(legRow.get("filledQty") or 0)
+            remain = int(legRow.get("remainQty") or 0)
+        except (TypeError, ValueError):
+            return False
+        return filled > 0 and remain <= 0
     if isinstance(legRow, dict):
         try:
             if int(legRow.get("qty") or 0) > 0 or int(legRow.get("rmnQty") or 0) > 0:
@@ -139,12 +147,13 @@ def sellableQty(pos):
 
 
 def _slotUsed(pos):
-    if not isinstance(pos, dict):
+    if not isinstance(pos, dict) or pos.get("released") or pos.get("closed"):
         return False
     if _legBlocked(pos, 1) or _legBlocked(pos, 2):
         return True
+    raw = pos.get("brokerQty") if pos.get("brokerQty") is not None else pos.get("qty")
     try:
-        return int(pos.get("qty") or 0) > 0
+        return int(raw or 0) > 0
     except (TypeError, ValueError):
         return False
 
@@ -269,6 +278,10 @@ def buildLiveActions(
         if price is None:
             _skip(code, "시세 대기")
             continue
+        expire = str(row.get("expireDt") or pos.get("expireDt") or "")
+        if expire and str(ymd or "") > expire:
+            _skip(code, "창종료")
+            continue
         owns = code in used
         want = []
         if not _legBlocked(pos, 1):
@@ -295,6 +308,14 @@ def buildLiveActions(
                 continue
             limit = floorPx(price)
             qty = floorQty(legMoney(int(slotKrw), pct), price)
+            legRow = pos.get(f"leg{leg}") if isinstance(pos.get(f"leg{leg}"), dict) else {}
+            if legRow.get("settled"):
+                try:
+                    cap = int(legRow.get("remainQty") or 0)
+                except (TypeError, ValueError):
+                    cap = 0
+                if int(legRow.get("filledQty") or 0) > 0:
+                    qty = min(qty, cap)
             if qty < 1 or limit <= 0:
                 _skip(code, "수량0", leg)
                 continue
@@ -308,7 +329,10 @@ def buildLiveActions(
                 "fillPx": price,
                 "trdeTp": "0",
                 "reason": lineName,
-                "signalDt": row.get("signalDt") or "",
+                "signalDt": row.get("signalDt") or pos.get("signalDt") or "",
+                "expireDt": row.get("expireDt") or pos.get("expireDt") or "",
+                "hm": textHm,
+                "ask1": absPx(quote.get("ask") or quote.get("ask1") or quote.get("sel_bid")),
             })
     return {"actions": actions, "missed": missed, "skips": skips}
 
@@ -354,14 +378,35 @@ def applyPaperResult(positions, action, status, ordNo="", ymd="", calendar=None)
         found["closePx"] = fillPx
         found["closeReason"] = action.get("reason") or ""
         return rows
+    prev = found.get(f"leg{legKey}") if isinstance(found.get(f"leg{legKey}"), dict) else {}
+    keptFilled = int(prev.get("filledQty") or 0) if prev.get("settled") else 0
+    if prev.get("settled") and int(prev.get("originalPlan") or 0) > 0:
+        original = int(prev.get("originalPlan") or 0)
+    else:
+        original = qty
     leg = {
         "qty": qty,
+        "originalPlan": original,
+        "filledQty": keptFilled,
         "fillPx": fillPx,
         "limitPx": action.get("limitPx"),
         "ordNo": str(ordNo or ""),
         "ymd": str(ymd or ""),
+        "hm": str(action.get("hm") or ""),
+        "ask1": action.get("ask1"),
+        "settled": False,
     }
     found[f"leg{legKey}"] = leg
+    if action.get("signalDt") and not found.get("signalDt"):
+        found["signalDt"] = action.get("signalDt")
+    if action.get("expireDt") and not found.get("expireDt"):
+        found["expireDt"] = action.get("expireDt")
+    if found.get("released"):
+        found["released"] = False
+    if keptFilled > 0:
+        if not found.get("stkNm"):
+            found["stkNm"] = action.get("stkNm") or code
+        return rows
     if found.get("brokerQty") is None:
         found["brokerQty"] = 0
         found["brokerAvg"] = None
@@ -463,6 +508,12 @@ def noteBrokerFill(positions, stkCd, side, qty, px, ordNo="", cumQty=None):
     else:
         found["brokerQty"] = max(0, held - delta)
     found["brokerSrc"] = "fill"
+    from datetime import datetime
+
+    stamp = datetime.now().strftime("%H%M%S")
+    if not found.get("firstFillHm"):
+        found["firstFillHm"] = stamp
+    found["lastFillHm"] = stamp
     for legName in ("leg1", "leg2"):
         leg = found.get(legName)
         if isinstance(leg, dict) and _sameOrd(leg.get("ordNo"), ordNo):
@@ -662,8 +713,228 @@ def unfilledRemainder(positions):
     return out
 
 
+def _knownOrderFill(pos, leg):
+    book = (pos or {}).get("ordFill") or {}
+    key = _ordKey((leg or {}).get("ordNo"))
+    if not key or key not in book:
+        return None
+    try:
+        return max(0, int(book.get(key) or 0))
+    except (TypeError, ValueError):
+        return None
+
+
+def settlePositions(positions, asOfYmd, includeToday=False, accountKnown=False):
+    """장 마감 후 실체결만 남기고 미체결은 소멸시킨다. 새 주문은 만들지 않는다.
+
+    실체결이 있으면 그 단계의 잔량만 다음 터치 한도가 된다.
+    실체결이 0이면 슬롯을 풀고 후보로 되돌린다.
+    """
+    asOf = str(asOfYmd or "")
+    out = []
+    logs = []
+    for pos in positions or []:
+        if not isinstance(pos, dict):
+            continue
+        item = dict(pos)
+        if item.get("closed"):
+            out.append(item)
+            continue
+        brokerKnown = item.get("brokerQty") is not None or accountKnown
+        if not brokerKnown:
+            out.append(item)
+            continue
+        try:
+            broker = max(0, int(item.get("brokerQty") or 0))
+        except (TypeError, ValueError):
+            broker = 0
+        pool = broker
+        settledNow = []
+        for legName, legNo in (("leg1", 1), ("leg2", 2)):
+            leg = item.get(legName)
+            if not isinstance(leg, dict):
+                continue
+            leg = dict(leg)
+            if leg.get("settled"):
+                pool -= max(0, int(leg.get("filledQty") or 0))
+                item[legName] = leg
+                continue
+            orderDay = str(leg.get("ymd") or "")
+            if orderDay and orderDay > asOf:
+                item[legName] = leg
+                continue
+            if orderDay == asOf and not includeToday:
+                item[legName] = leg
+                continue
+            if not orderDay and not includeToday:
+                item[legName] = leg
+                continue
+            plan = int(leg.get("originalPlan") or leg.get("qty") or 0)
+            orderQty = int(leg.get("qty") or 0)
+            prior = int(leg.get("filledQty") or 0) if leg.get("originalPlan") else 0
+            known = _knownOrderFill(item, leg)
+            if known is None:
+                thisFill = min(max(0, orderQty), max(0, pool))
+            else:
+                thisFill = min(plan if plan else known, known)
+            pool = max(0, pool - thisFill)
+            totalFilled = prior + thisFill
+            if plan <= 0:
+                plan = orderQty
+            remain = max(0, plan - totalFilled)
+            expired = max(0, orderQty - thisFill)
+            leg.update({
+                "originalPlan": plan,
+                "filledQty": totalFilled,
+                "remainQty": remain,
+                "expiredQty": expired,
+                "rmnQty": 0,
+                "settled": True,
+            })
+            item[legName] = leg
+            settledNow.append(leg)
+            logs.append({
+                "ymd": orderDay or asOf,
+                "stkCd": str(item.get("stkCd") or ""),
+                "stkNm": item.get("stkNm") or "",
+                "leg": legNo,
+                "legName": "1차" if legNo == 1 else "2차",
+                "ordNo": str(leg.get("ordNo") or ""),
+                "ordQty": orderQty,
+                "limitPx": leg.get("limitPx"),
+                "fillPx": leg.get("fillPx"),
+                "brokerQty": thisFill,
+                "brokerAvg": item.get("brokerAvg"),
+                "expiredQty": expired,
+                "ordHm": str(leg.get("hm") or ""),
+                "firstFillHm": str(item.get("firstFillHm") or ""),
+                "lastFillHm": str(item.get("lastFillHm") or ""),
+                "ask1": leg.get("ask1"),
+            })
+        if not settledNow:
+            out.append(item)
+            continue
+        item["settledYmd"] = asOf
+        item["pending"] = {}
+        if broker <= 0:
+            item["released"] = True
+            item["qty"] = 0
+            item["brokerQty"] = 0
+            item["firstBuyDt"] = ""
+            item["exitDt"] = ""
+            for legName in ("leg1", "leg2"):
+                leg = item.get(legName)
+                if isinstance(leg, dict) and leg.get("settled") and int(leg.get("filledQty") or 0) <= 0:
+                    leg = dict(leg)
+                    leg["remainQty"] = 0
+                    item[legName] = leg
+        else:
+            item["released"] = False
+            item["qty"] = broker
+            if item.get("brokerAvg") not in (None, ""):
+                item["avg"] = item.get("brokerAvg")
+        out.append(item)
+    return out, logs
+
+
+def displayOpenQty(pos):
+    """아직 체결되지 않은 잔량. 계획 수량을 보유 수량으로 쓰지 않는다."""
+    if not isinstance(pos, dict) or pos.get("closed"):
+        return 0
+    plan = 0
+    rmn = 0
+    for key in ("leg1", "leg2"):
+        leg = pos.get(key) or {}
+        if not isinstance(leg, dict):
+            continue
+        try:
+            plan += int(leg.get("qty") or 0)
+        except (TypeError, ValueError):
+            pass
+        try:
+            rmn += int(leg.get("rmnQty") or 0)
+        except (TypeError, ValueError):
+            pass
+    if rmn <= 0:
+        for order in pos.get("openOrders") or []:
+            try:
+                rmn += int((order or {}).get("rmnQty") or 0)
+            except (TypeError, ValueError):
+                pass
+    broker = sellableQty(pos) if pos.get("brokerQty") is not None else 0
+    if rmn <= 0 and plan > broker:
+        rmn = plan - broker
+    if rmn <= 0:
+        try:
+            stated = int(pos.get("qty") or 0)
+        except (TypeError, ValueError):
+            stated = 0
+        if stated > broker:
+            rmn = stated - broker
+    return max(0, rmn)
+
+
+def _displayName(code, *candidates):
+    for raw in candidates:
+        text = str(raw or "").strip()
+        if text and text != str(code or ""):
+            return text
+    return str(code or "")
+
+
+def _annotateHold(item, pos=None):
+    algs = list(item.get("algCds") or [])
+    item["algText"] = str(item.get("algLabel") or (" · ".join(algs) if algs else ""))
+    openQty = displayOpenQty(pos) if pos is not None else int(item.get("openQty") or 0)
+    item["openQty"] = openQty
+    item["openText"] = f"미체결 {openQty}주" if openQty > 0 else ""
+    return item
+
+
+def fillHoldNames(rows, lookup=None):
+    """종목명이 비었거나 코드와 같으면 stkNm·마스터에서 채운다."""
+    pending = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("stkCd") or "")
+        name = str(row.get("stkNm") or "").strip()
+        if code and (not name or name == code):
+            pending.append(code)
+    found = {}
+    if pending:
+        if lookup is not None:
+            try:
+                found = lookup(pending) or {}
+            except Exception:
+                found = {}
+        else:
+            try:
+                from utils.pbkWatchScreen import lookupStkNames
+
+                found = lookupStkNames(pending) or {}
+            except Exception:
+                found = {}
+    out = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        item = dict(row)
+        code = str(item.get("stkCd") or "")
+        name = str(item.get("stkNm") or "").strip()
+        if code and (not name or name == code):
+            alt = str((found or {}).get(code) or "").strip()
+            if alt and alt != code:
+                item["stkNm"] = alt
+        out.append(item)
+    return out
+
+
 def paperHoldRows(accountRows, pbkPositions):
-    """모의 보유 표. 계좌 잔고와 PBK 포지션을 함께 둔다. RAM01 필터는 없다."""
+    """모의 보유 표. 수량·평단·매입금액은 실체결만 쓴다.
+
+    실체결이 0이어도 행은 남기고, 미체결 잔량은 openText 에만 둔다.
+    """
     by = {}
     for row in accountRows or []:
         if not isinstance(row, dict):
@@ -677,47 +948,55 @@ def paperHoldRows(accountRows, pbkPositions):
             continue
         item = dict(row)
         item["algCds"] = list(item.get("algCds") or [])
+        item["stkNm"] = _displayName(code, item.get("stkNm"))
         by[code] = item
     for pos in pbkPositions or []:
-        if not isinstance(pos, dict) or pos.get("closed"):
+        if not isinstance(pos, dict) or pos.get("closed") or pos.get("released"):
             continue
         code = str(pos.get("stkCd") or "")
         if not code:
             continue
+        name = _displayName(code, pos.get("stkNm"), (by.get(code) or {}).get("stkNm"))
         if code in by:
             algs = list(by[code].get("algCds") or [])
             if "PBK01" not in algs:
                 algs.append("PBK01")
             by[code]["algCds"] = algs
             by[code]["algLabel"] = " · ".join(algs)
+            by[code]["stkNm"] = name
+            _annotateHold(by[code], pos)
             continue
-        show = sellableQty(pos)
-        if show <= 0:
+        if pos.get("brokerQty") is None and not (pos.get("leg1") or pos.get("leg2") or pos.get("openOrders")):
             try:
-                show = int(pos.get("qty") or 0)
+                if int(pos.get("qty") or 0) <= 0:
+                    continue
             except (TypeError, ValueError):
-                show = 0
-        if show <= 0:
-            continue
-        px = absPx(pos.get("brokerAvg") if pos.get("brokerAvg") is not None else pos.get("avg")) or 0
-        by[code] = {
+                continue
+        show = sellableQty(pos) if pos.get("brokerQty") is not None else 0
+        avg = absPx(pos.get("brokerAvg")) if pos.get("brokerAvg") not in (None, "") else 0
+        avg = int(avg or 0)
+        pur = avg * show if show > 0 and avg > 0 else 0
+        by[code] = _annotateHold({
             "stkCd": code,
-            "stkNm": pos.get("stkNm") or code,
+            "stkNm": name,
             "qtyNum": show,
-            "avgNum": int(px),
-            "curNum": int(px),
-            "apiCurNum": int(px),
-            "purNum": int(px * show),
-            "evltNum": int(px * show),
+            "avgNum": avg if show > 0 else 0,
+            "curNum": avg if show > 0 else 0,
+            "apiCurNum": avg if show > 0 else 0,
+            "purNum": pur,
+            "evltNum": pur,
             "pnlNum": 0,
             "algCds": ["PBK01"],
             "algLabel": "PBK01",
             "firstBuyDt": pos.get("firstBuyDt") or "",
             "qty": str(show),
-            "avgPrc": str(int(px)),
-            "curPrc": str(int(px)),
+            "avgPrc": f"{avg:,}" if show > 0 and avg > 0 else "-",
+            "curPrc": f"{avg:,}" if show > 0 and avg > 0 else "-",
             "pnl": "0 (0%)",
-        }
+        }, pos)
+    for code, item in by.items():
+        if "openText" not in item:
+            _annotateHold(item, None)
     return list(by.values())
 
 
@@ -735,6 +1014,12 @@ def visibleHoldRows(mode, accountRows, pbkPositions, tradeOn):
                 out.append(item)
         return out
     return paperHoldRows(accountRows, pbkPositions)
+
+
+def fillsPath(folder, ymd):
+    from pathlib import Path
+
+    return Path(folder) / f"pbk01_fills_{ymd}.jsonl"
 
 
 def missedPath(folder, ymd):

@@ -15,6 +15,7 @@ MAX_ITEM = 200
 REG_CHUNK = 40
 POLL_PER_CYCLE = 4
 STALE_MIN = 3
+HOLD_POLL_SEC = 60
 
 
 def maDistancePct(price, ma):
@@ -240,31 +241,53 @@ def takeOldest(entries, limit):
     return [item["stkCd"] for item in (entries or [])[: int(limit)]]
 
 
-def pollBatch(rows, ticks, now, registered=None, limit=POLL_PER_CYCLE, staleSec=None):
-    """보유는 구독이 빠져도 전부 폴링하고, 그 다음 후보를 limit 만큼 넣는다.
+def holdPollForce(now):
+    """15:13~15:15 손절 직전에는 보유를 전부 다시 받는다."""
+    if now is None:
+        return False
+    hm = now.strftime("%H%M%S")
+    return "151300" <= hm <= "151559"
 
-    이미 신선한 시세가 있으면 보유라도 다시 받지 않는다.
+
+def _holdNeedsPoll(info, now, force=False):
+    """0B 가 60초 안이면 폴링하지 않는다. 그 외 보유는 60초를 넘기면 다시 받는다."""
+    if force:
+        return True
+    src = str((info or {}).get("src") or "")
+    age = quoteAgeSec(info, now)
+    if src == "0B" and age is not None and age <= HOLD_POLL_SEC:
+        return False
+    if not info or not info.get("curPrc"):
+        return True
+    if age is None:
+        return True
+    return age > HOLD_POLL_SEC
+
+
+def pollBatch(rows, ticks, now, registered=None, limit=POLL_PER_CYCLE, staleSec=None):
+    """보유는 60초를 넘기면 먼저 받고, 남는 칸만 후보에 쓴다.
+
+    15:13~15:15 에는 보유를 시세가 있어도 모두 넣는다.
     """
-    stale = stalePollEntries(rows, ticks, now, registered=registered, staleSec=staleSec)
+    force = holdPollForce(now)
+    holds = []
     holding = set()
     for row in rows or []:
-        if isinstance(row, dict) and row.get("holding"):
-            code = str(row.get("stkCd") or "").strip()
-            if code:
-                holding.add(code)
-    holds = []
-    rest = []
-    for item in stale:
-        code = item["stkCd"]
+        if not isinstance(row, dict) or not row.get("holding"):
+            continue
+        code = str(row.get("stkCd") or "").strip()
+        if not code or code in holding:
+            continue
+        holding.add(code)
         info = (ticks or {}).get(code) or {}
-        if code in holding:
-            if quoteIsFresh(info, now, staleSec):
-                continue
-            holds.append(code)
-        else:
-            rest.append(code)
-    extra = rest[: int(limit)] if int(limit or 0) > 0 else []
-    return holds + extra
+        if _holdNeedsPoll(info, now, force=force):
+            holds.append((quoteAgeSec(info, now), code))
+    holds.sort(key=lambda item: (-1 if item[0] is None else -item[0], item[1]))
+    holdCodes = [code for _age, code in holds]
+    stale = stalePollEntries(rows, ticks, now, registered=registered, staleSec=staleSec)
+    rest = [item["stkCd"] for item in stale if item["stkCd"] not in holding]
+    room = max(0, int(limit or 0) - len(holdCodes))
+    return holdCodes + rest[:room]
 
 
 def applyPollPrice(info, price, tm, low=None, now=None, staleSec=None):

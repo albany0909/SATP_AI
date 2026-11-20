@@ -15,6 +15,8 @@ from trading.pbkOrderPlan import (
     absPx,
     applyAccountQty,
     buildLiveActions,
+    displayOpenQty,
+    fillHoldNames,
     inBuySession,
     noteBrokerFill,
     paperHoldRows,
@@ -251,7 +253,10 @@ class PbkOrderPlanTest(unittest.TestCase):
         self.assertIn("PBK01", by["900290"]["algCds"])
         self.assertEqual(by["900290"]["qtyNum"], 927)
         self.assertEqual(by["000001"]["algLabel"], "PBK01")
-        self.assertEqual(sum(int(row["purNum"]) for row in rows), 927 * 2730 + 70000 + 10 * 1000)
+        self.assertEqual(by["000001"]["qtyNum"], 0)
+        self.assertEqual(by["000001"]["openText"], "미체결 10주")
+        self.assertEqual(by["000001"]["purNum"], 0)
+        self.assertEqual(sum(int(row["purNum"]) for row in rows if int(row["qtyNum"]) > 0), 927 * 2730 + 70000)
         real = visibleHoldRows(
             "real",
             account + [{"stkCd": "000660", "qtyNum": 3, "algCds": []}],
@@ -359,6 +364,7 @@ class PbkOrderPlanTest(unittest.TestCase):
                 session={"mode": "paper", "host": paper_host_url},
                 accountFetch=lambda: {"ok": True, "body": accountBody},
                 openFetch=lambda: {"ok": True, "body": openBody},
+                now=datetime(2026, 11, 20, 10, 30, 0),
             )
             self.assertTrue(restored["reconciled"])
             self.assertEqual(restored["held"], 5)
@@ -395,6 +401,149 @@ class PbkOrderPlanTest(unittest.TestCase):
             kept = reconcilePositions(positions, accountKnown=False)
             self.assertEqual(len(kept), 5)
             self.assertEqual(kept[0]["leg1"]["qty"], 2000)
+
+    def test_zero_fill_stays_on_screen_but_out_of_total(self):
+        pos = [{
+            "stkCd": "300120",
+            "stkNm": "300120",
+            "qty": 2453,
+            "avg": 2445,
+            "brokerQty": 0,
+            "leg1": {"qty": 2453, "fillPx": 2445, "ordNo": "0070400", "rmnQty": 2453},
+        }]
+        rows = paperHoldRows([], pos)
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["qtyNum"], 0)
+        self.assertEqual(row["qty"], "0")
+        self.assertEqual(row["avgNum"], 0)
+        self.assertEqual(row["purNum"], 0)
+        self.assertEqual(row["evltNum"], 0)
+        self.assertEqual(row["openText"], "미체결 2453주")
+        self.assertEqual(row["algText"], "PBK01")
+        self.assertEqual(displayOpenQty(pos[0]), 2453)
+        named = fillHoldNames(rows, lookup=lambda codes: {"300120": "라온피플"})
+        self.assertEqual(named[0]["stkNm"], "라온피플")
+        self.assertEqual(named[0]["algText"], "PBK01")
+        filled = paperHoldRows(
+            [{"stkCd": "300120", "stkNm": "라온피플", "qtyNum": 100, "avgNum": 2500, "purNum": 250000}],
+            [{"stkCd": "300120", "stkNm": "라온피플", "qty": 2453, "brokerQty": 100, "brokerAvg": 2500,
+              "leg1": {"qty": 2453, "rmnQty": 2353}}],
+        )
+        self.assertEqual(filled[0]["qtyNum"], 100)
+        self.assertEqual(filled[0]["openText"], "미체결 2353주")
+        self.assertIn("PBK01", filled[0]["algText"])
+
+    def test_partial_remainder_waits_for_next_touch(self):
+        from trading.pbkOrderPlan import settlePositions
+
+        old = [{
+            "stkCd": "900290",
+            "stkNm": "GRT",
+            "qty": 1316,
+            "avg": 2800,
+            "brokerQty": 481,
+            "brokerAvg": 2730,
+            "firstBuyDt": "20261120",
+            "exitDt": "20261204",
+            "leg1": {"qty": 1316, "fillPx": 2800, "limitPx": 2730, "ordNo": "0070310", "ymd": "20261120"},
+        }]
+        same, _logs = settlePositions(old, "20261120", includeToday=False)
+        self.assertFalse(same[0].get("settledYmd"))
+        blocked = buildLiveActions(
+            [{"stkCd": "900290", "stkNm": "GRT", "ma5": 3000, "ma20": 2000, "expireDt": "20270115"}],
+            {"900290": _fresh(2400, low=2400)},
+            same,
+            "100000",
+            "20261120",
+        )
+        self.assertEqual([row for row in blocked["actions"] if row["side"] == "BUY"], [])
+        settled, logs = settlePositions(old, "20261121", includeToday=False)
+        self.assertEqual(settled[0]["qty"], 481)
+        self.assertEqual(settled[0]["avg"], 2730)
+        self.assertEqual(settled[0]["leg1"]["remainQty"], 835)
+        self.assertEqual(settled[0]["leg1"]["expiredQty"], 835)
+        self.assertEqual(settled[0]["firstBuyDt"], "20261120")
+        self.assertEqual(logs[0]["ordNo"], "0070310")
+        self.assertEqual(logs[0]["fillPx"], 2800)
+        self.assertEqual(logs[0]["brokerQty"], 481)
+        self.assertIsNone(logs[0]["ask1"])
+        quiet = buildLiveActions(
+            [{"stkCd": "900290", "stkNm": "GRT", "ma5": 2000, "ma20": 1500, "expireDt": "20270115"}],
+            {"900290": _fresh(2500, low=2200)},
+            settled,
+            "100000",
+            "20261121",
+        )
+        self.assertEqual(quiet["actions"], [])
+        again = buildLiveActions(
+            [{"stkCd": "900290", "stkNm": "GRT", "ma5": 3000, "ma20": 2000, "expireDt": "20270115"}],
+            {"900290": _fresh(2900, low=2900)},
+            settled,
+            "100000",
+            "20261121",
+        )
+        buys = [row for row in again["actions"] if row["side"] == "BUY"]
+        self.assertEqual(len(buys), 1)
+        self.assertEqual(buys[0]["leg"], 1)
+        self.assertEqual(buys[0]["qty"], 835)
+
+    def test_zero_fill_releases_slot_and_does_not_reorder(self):
+        from strategies.impl.pullbackTwoStep import candidateRows
+        from trading.pbkOrderPlan import settlePositions
+
+        old = [{
+            "stkCd": "300120",
+            "stkNm": "라온피플",
+            "qty": 2453,
+            "avg": 2445,
+            "brokerQty": 0,
+            "firstBuyDt": "20261120",
+            "exitDt": "20261204",
+            "leg1": {"qty": 2453, "fillPx": 2445, "ordNo": "0070400", "ymd": "20261120"},
+        }]
+        settled, logs = settlePositions(old, "20261121", includeToday=False)
+        self.assertTrue(settled[0]["released"])
+        self.assertEqual(settled[0]["qty"], 0)
+        self.assertEqual(settled[0]["exitDt"], "")
+        self.assertEqual(logs[0]["expiredQty"], 2453)
+        self.assertEqual(paperHoldRows([], settled), [])
+        events = [{"stkCd": "300120", "signalDt": "20261118", "receiptDt": "20261117"}]
+        bars = [{"tradeDt": f"202611{day:02d}", "open": 3000, "high": 4000, "low": 2500, "close": 3500, "volume": 100}
+                for day in range(1, 21)]
+        rows = candidateRows(events, settled, {"300120": bars}, "20261121", calendar=[f"202611{day:02d}" for day in range(1, 29)])
+        self.assertIn("300120", [row["stkCd"] for row in rows])
+        noTouch = buildLiveActions(
+            [{"stkCd": "300120", "stkNm": "라온피플", "ma5": 2000, "ma20": 1500, "expireDt": "20270115"}],
+            {"300120": _fresh(4000, low=3100)},
+            settled,
+            "100000",
+            "20261121",
+        )
+        self.assertEqual(noTouch["actions"], [])
+        touched = buildLiveActions(
+            [{"stkCd": "300120", "stkNm": "라온피플", "ma5": 3000, "ma20": 2500, "expireDt": "20270115"}],
+            {"300120": _fresh(2900, low=2400)},
+            settled,
+            "100000",
+            "20261121",
+        )
+        buys = [row for row in touched["actions"] if row["side"] == "BUY"]
+        self.assertEqual([row["leg"] for row in buys], [1])
+        others = [{
+            "stkCd": f"{i:06d}",
+            "qty": 1,
+            "brokerQty": 1,
+            "leg1": {"qty": 1, "fillPx": 10, "ordNo": str(i), "ymd": "20261120", "settled": True, "filledQty": 1, "remainQty": 0},
+        } for i in range(1, 5)]
+        freed = buildLiveActions(
+            [{"stkCd": "300120", "ma5": 3000, "ma20": 2500, "expireDt": "20270115"}],
+            {"300120": _fresh(2900, low=2400)},
+            others + settled,
+            "100000",
+            "20261121",
+        )
+        self.assertTrue(any(row["stkCd"] == "300120" and row["side"] == "BUY" for row in freed["actions"]))
 
 
 if __name__ == "__main__":

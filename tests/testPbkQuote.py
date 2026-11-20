@@ -286,9 +286,36 @@ class PbkQuotePlanTest(unittest.TestCase):
             "000660": {"src": "poll", "curPrc": 10, "tm": "101000", "tickYmd": "20261120"},
         }
         batch = pollBatch(rows, ticks, now, registered=set(), limit=1)
-        self.assertEqual(set(batch[:2]), {"900290", "300080"})
-        self.assertEqual(batch[2:], ["005930"])
+        self.assertEqual(set(batch), {"900290", "300080"})
+        self.assertNotIn("005930", batch)
         self.assertNotIn("000660", batch)
+        wider = pollBatch(rows, ticks, now, registered=set(), limit=3)
+        self.assertEqual(wider[-1], "005930")
+
+    def test_holdings_polled_after_sixty_seconds_and_before_stop(self):
+        from datetime import datetime
+
+        from trading.pbkQuotePlan import pollBatch
+
+        now = datetime(2026, 11, 20, 10, 33, 0)
+        rows = [
+            {"stkCd": "900290", "holding": True},
+            {"stkCd": "300080", "holding": True},
+            {"stkCd": "005930", "holding": False},
+            {"stkCd": "000660", "holding": False},
+        ]
+        ticks = {
+            "900290": {"src": "poll", "curPrc": 2730, "tm": "102954", "tickYmd": "20261120"},
+            "300080": {"src": "0B", "curPrc": 100, "tm": "103230", "tickYmd": "20261120"},
+            "005930": {"src": "poll", "curPrc": 1, "tm": "090000", "tickYmd": "20261120"},
+            "000660": {"src": "poll", "curPrc": 1, "tm": "090000", "tickYmd": "20261120"},
+        }
+        batch = pollBatch(rows, ticks, now, registered={"300080"}, limit=4)
+        self.assertEqual(batch, ["900290", "000660", "005930"])
+        self.assertNotIn("300080", batch)
+        stop = datetime(2026, 11, 20, 15, 14, 0)
+        forced = pollBatch(rows, ticks, stop, registered={"300080"}, limit=2)
+        self.assertEqual(forced, ["900290", "300080"])
 
 
 if __name__ == "__main__":

@@ -502,7 +502,20 @@ def candidateRows(events, positions, barsByCode, today, calendar=None):
     for pos in positions or []:
         if not isinstance(pos, dict):
             continue
-        if pos.get("leg1") or int(pos.get("qty") or 0) > 0:
+        if pos.get("released") or pos.get("closed"):
+            continue
+        if pos.get("settled"):
+            remain = 0
+            for key in ("leg1", "leg2"):
+                leg = pos.get(key) or {}
+                if isinstance(leg, dict):
+                    try:
+                        remain += int(leg.get("remainQty") or 0)
+                    except (TypeError, ValueError):
+                        pass
+            if remain > 0:
+                continue
+        if pos.get("leg1") or pos.get("leg2") or int(pos.get("qty") or 0) > 0:
             held.add(str(pos.get("stkCd") or ""))
     if calendar is None and day:
         marks = [day]

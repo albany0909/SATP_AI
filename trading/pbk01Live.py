@@ -527,6 +527,8 @@ def _universeRows(rows, positions):
             qty = int(pos.get("qty") or 0)
         except (TypeError, ValueError):
             qty = 0
+        if pos.get("released"):
+            continue
         if code and (qty > 0 or pos.get("leg1") or pos.get("leg2")):
             held.add(code)
     try:
@@ -811,7 +813,43 @@ def notePbkBrokerFill(sideLabel, stkCd, qty, px, ordNo="", cumQty=None):
     return {"ok": True, "matched": True}
 
 
-def restorePaperBook(path=None, accountRows=None, openOrders=None, accountKnown=False):
+def _settleBook(filePath, saved, positions, includeToday=False, today=""):
+    """실체결로 확정하고 소멸 잔량을 날짜 파일에 남긴다. 재주문은 하지 않는다."""
+    from trading.pbkOrderPlan import fillsPath, settlePositions
+    from utils.pbk01Store import appendRow
+
+    today = str(today or datetime.now().strftime("%Y%m%d"))
+    updated, logs = settlePositions(
+        positions,
+        today,
+        includeToday=includeToday,
+        accountKnown=False,
+    )
+    if logs:
+        _saveBook(filePath, saved.get("announcedYmd") or today, saved.get("candidates") or [], updated)
+        for row in logs:
+            try:
+                appendRow(fillsPath(filePath.parent, row.get("ymd") or today), row)
+            except Exception as err:
+                _safeLog(None, f"[PBK01] 체결기록 실패 {type(err).__name__}")
+        _safeLog(None, f"[PBK01] 미체결 소멸 {len(logs)}건")
+    return updated
+
+
+def settleIfClosed(path=None, hm="", ymd=""):
+    """15:30 이후에는 오늘 주문까지, 그 전에는 전날만 확정한다. 주문은 내지 않는다."""
+    from utils.pbk01Store import latestByKind, pbkPath
+
+    textHm = "".join(ch for ch in str(hm or "") if ch.isdigit()).zfill(6)[-6:]
+    filePath = path or pbkPath("pbk01_state.jsonl")
+    saved = latestByKind(filePath, "state") or {}
+    positions = list(saved.get("positions") or [])
+    if not positions:
+        return []
+    return _settleBook(filePath, saved, positions, includeToday=textHm >= "153000")
+
+
+def restorePaperBook(path=None, accountRows=None, openOrders=None, accountKnown=False, now=None):
     """구 상태 파일을 읽어 보유를 유지하고, 잔고·미체결이 있으면 실제 수량만 맞춘다."""
     from trading.pbkOrderPlan import reconcilePositions
     from utils.pbk01Store import latestByKind, pbkPath
@@ -827,13 +865,24 @@ def restorePaperBook(path=None, accountRows=None, openOrders=None, accountKnown=
     )
     if updated != positions:
         _saveBook(filePath, saved.get("announcedYmd") or "", saved.get("candidates") or [], updated)
+    if accountKnown:
+        moment = now or datetime.now()
+        updated = _settleBook(
+            filePath,
+            saved,
+            updated,
+            includeToday=moment.strftime("%H%M%S") >= "153000",
+            today=moment.strftime("%Y%m%d"),
+        )
     held = 0
     for pos in updated:
+        if pos.get("released"):
+            continue
         try:
-            plan = int(pos.get("qty") or 0)
+            plan = int(pos.get("brokerQty") if pos.get("brokerQty") is not None else pos.get("qty") or 0)
         except (TypeError, ValueError):
             plan = 0
-        if plan > 0 or pos.get("leg1") or pos.get("leg2"):
+        if plan > 0 or ((pos.get("leg1") or pos.get("leg2")) and not pos.get("settled")):
             held += 1
     _safeLog(None, f"[PBK01] 재기동 보유 {held}종 복원")
     return {"ok": True, "positions": updated, "held": held}
@@ -890,12 +939,12 @@ def fetchPaperBook(session=None, accountFetch=None, openFetch=None):
     }
 
 
-def bootPaperBook(path=None, session=None, accountFetch=None, openFetch=None):
+def bootPaperBook(path=None, session=None, accountFetch=None, openFetch=None, now=None):
     """재기동 직후 한 번. 조회가 되면 실제 수량을 적고, 아니면 구 상태만 유지한다."""
     snap = fetchPaperBook(session=session, accountFetch=accountFetch, openFetch=openFetch)
     if not snap.get("ok"):
         _safeLog(None, f"[PBK01] 잔고 대조 보류 {snap.get('reason') or ''}")
-        restored = restorePaperBook(path=path, accountKnown=False)
+        restored = restorePaperBook(path=path, accountKnown=False, now=now)
         restored["reconciled"] = False
         return restored
     restored = restorePaperBook(
@@ -903,6 +952,7 @@ def bootPaperBook(path=None, session=None, accountFetch=None, openFetch=None):
         accountRows=snap.get("account") or [],
         openOrders=snap.get("orders") or [],
         accountKnown=True,
+        now=now,
     )
     restored["reconciled"] = True
     return restored
@@ -995,7 +1045,9 @@ def _loop():
             _safeLog(None, formatSummary(_lastQuoteSummary))
             _lastSummaryAt = time.time()
         try:
-            logUnfilledRemainder(hm=datetime.now().strftime("%H%M%S"))
+            hmNow = datetime.now().strftime("%H%M%S")
+            logUnfilledRemainder(hm=hmNow)
+            settleIfClosed(hm=hmNow)
         except Exception:
             pass
         first = False
