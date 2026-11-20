@@ -1091,7 +1091,10 @@ def _onWsMessage(msg):
             prcRaw = _nzQuote(vals.get("10"))
             fluRaw = _nzQuote(vals.get("12"))
             tmRaw = _nzQuote(vals.get("20"))
+            openRaw = _nzQuote(vals.get("16"))
             lowRaw = _nzQuote(vals.get("18"))
+            if openRaw is not None:
+                info["openPrc"] = openRaw
             if lowRaw is not None:
                 info["lowPrc"] = lowRaw
             if venue == "NXT":

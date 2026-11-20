@@ -322,8 +322,14 @@ def _safeLog(log, text):
         pass
 
 
-def quotesFromCache(codes):
-    """후보 종목의 캐시 현재가만 읽는다. 목록 밖은 보지 않는다."""
+def quotesFromCache(codes, now=None):
+    """후보 종목의 캐시 현재가만 읽는다. 등락 부호는 절대값으로 푼다."""
+    from datetime import datetime
+
+    from trading.pbkOrderPlan import absPx
+    from trading.pbkQuotePlan import quoteIsFresh
+
+    moment = now or datetime.now()
     out = {}
     try:
         from trading.watchRtMonitor import peekWatchLastPx
@@ -331,13 +337,20 @@ def quotesFromCache(codes):
         return out
     for code in codes or []:
         info = peekWatchLastPx(code) or {}
-        raw = info.get("curPrc") or info.get("krxPrc") or info.get("nxtPrc")
-        try:
-            px = float(str(raw).replace(",", ""))
-        except (TypeError, ValueError):
+        px = absPx(info.get("curPrc") or info.get("krxPrc") or info.get("nxtPrc"))
+        if px is None:
             continue
-        if px > 0:
-            out[str(code)] = {"price": px}
+        fresh = quoteIsFresh(info, moment)
+        out[str(code)] = {
+            "price": px,
+            "low": absPx(info.get("lowPrc")),
+            "open": absPx(info.get("openPrc")),
+            "src": info.get("src") or "",
+            "tm": info.get("tm") or "",
+            "tickYmd": info.get("tickYmd") or "",
+            "fresh": fresh,
+            "curPrc": info.get("curPrc"),
+        }
     return out
 
 
@@ -476,14 +489,23 @@ def runPbkCycle(now=None, loader=None, sender=None, log=None, path=None, quotes=
     if enabled:
         if quotes is None:
             try:
-                refreshPbkQuotes(rows, positions, reason="PBK시세")
+                refreshPbkQuotes(rows, positions, reason="PBK시세", now=now)
             except Exception as err:
                 _safeLog(log, f"[PBK01] 시세 구독 실패 {type(err).__name__}")
-            quotes = quotesFromCache([row.get("stkCd") for row in rows] + list(owned))
-        touches = touchesForQuotes(rows, quotes or {}, owned=owned)
+            quotes = quotesFromCache([row.get("stkCd") for row in rows] + list(owned), now=now)
+        usable = {}
+        for code, quote in (quotes or {}).items():
+            if isinstance(quote, dict) and quote.get("fresh") is False:
+                continue
+            usable[code] = quote
+        touches = touchesForQuotes(rows, usable, owned=owned)
     return {
         "announced": _announcedYmd,
         "candidates": rows,
+        "positions": positions,
+        "quotes": quotes or {},
+        "ymd": ymd,
+        "hm": hm,
         "touches": touches,
         "enabled": bool(enabled),
     }
@@ -573,6 +595,7 @@ def _fetchKa10001(code):
     return {
         "price": body.get("cur_prc"),
         "low": body.get("low_pric"),
+        "open": body.get("open_pric"),
         "tm": datetime.now().strftime("%H%M%S"),
     }
 
@@ -642,6 +665,135 @@ def refreshPbkQuotes(rows, positions, reason="PBK시세", fetch=None, pollLimit=
     return {"plan": plan, "rows": built, "summary": summary, "stale": stale}
 
 
+def _paperSession():
+    from config.config import paper_host_url
+
+    mode = "paper"
+    try:
+        from utils.tradeSession import getDeskTradeMode
+
+        mode = getDeskTradeMode()
+    except Exception:
+        mode = "paper"
+    return {"mode": mode, "host": paper_host_url}
+
+
+def _saveBook(path, ymd, candidates, positions):
+    from utils.pbk01Store import appendRow
+
+    appendRow(path, {
+        "kind": "state",
+        "announcedYmd": str(ymd or ""),
+        "scannedAt": datetime.now().strftime("%H:%M"),
+        "candidates": list(candidates or []),
+        "positions": list(positions or []),
+    })
+
+
+def _missedFile(ymd):
+    from trading.pbkOrderPlan import missedPath
+    from utils.pbk01Store import pbkPath
+
+    return missedPath(pbkPath(".").parent, ymd)
+
+
+def placePaperCycle(result, broker=None, session=None, log=None, sender=None, path=None, now=None, chaseMaxPct=None):
+    """신선한 터치만 모의 주문. 놓친 터치는 파일에만 남긴다."""
+    from strategies.impl.pullbackTwoStep import PaperOnlyError
+    from trading.pbkOrderPlan import applyPaperResult, buildLiveActions, pbkChaseMaxPct
+    from utils.pbk01Store import appendRow, latestByKind, pbkPath
+
+    if not (result or {}).get("enabled"):
+        return {"actions": [], "missed": [], "skips": []}
+    filePath = path or pbkPath("pbk01_state.jsonl")
+    saved = latestByKind(filePath, "state") or {}
+    positions = list((result or {}).get("positions") or saved.get("positions") or [])
+    candidates = list((result or {}).get("candidates") or saved.get("candidates") or [])
+    ymd = str((result or {}).get("ymd") or "")
+    hm = str((result or {}).get("hm") or "")
+    pct = pbkChaseMaxPct() if chaseMaxPct is None else chaseMaxPct
+    plan = buildLiveActions(
+        candidates,
+        (result or {}).get("quotes") or {},
+        positions,
+        hm,
+        ymd,
+        chaseMaxPct=pct,
+        now=now,
+    )
+    for row in plan["missed"]:
+        _safeLog(log, f"[PBK01] 당일 터치 놓침 {row.get('stkCd')} {row.get('lineName')} 괴리 {row.get('gapPct')}%")
+        try:
+            appendRow(_missedFile(row.get("ymd") or ymd), row)
+        except Exception as err:
+            _safeLog(log, f"[PBK01] 놓침 기록 실패 {type(err).__name__}")
+    for row in plan["skips"]:
+        if row.get("reason") in ("시세 대기", "슬롯한도", "시간외", "매도대기"):
+            _safeLog(log, f"[PBK01] 스킵 {row.get('stkCd')} {row.get('reason')}")
+    useBroker = broker or paperBroker
+    sess = session if session is not None else _paperSession()
+    failed = set()
+    for action in plan["actions"]:
+        code = str(action.get("stkCd") or "")
+        if action.get("side") == "BUY" and code in failed:
+            continue
+        positions = applyPaperResult(positions, action, "pending", ymd=ymd)
+        _saveBook(filePath, ymd, candidates, positions)
+        try:
+            got = useBroker(action, sess) or {}
+        except PaperOnlyError:
+            failed.add(code)
+            positions = applyPaperResult(positions, action, "fail", ymd=ymd)
+            _saveBook(filePath, ymd, candidates, positions)
+            _safeLog(log, f"[PBK01] 거절 {action.get('stkCd')} 실전가드")
+            continue
+        except Exception as err:
+            failed.add(code)
+            positions = applyPaperResult(positions, action, "fail", ymd=ymd)
+            _saveBook(filePath, ymd, candidates, positions)
+            _safeLog(log, f"[PBK01] 거절 {action.get('stkCd')} {type(err).__name__}")
+            continue
+        if not got.get("ok"):
+            failed.add(code)
+            positions = applyPaperResult(positions, action, "fail", ymd=ymd)
+            _saveBook(filePath, ymd, candidates, positions)
+            _safeLog(log, f"[PBK01] 거절 {action.get('stkCd')} {got.get('reason') or got.get('errMsg') or '주문실패'}")
+            continue
+        positions = applyPaperResult(
+            positions, action, "filled", ordNo=got.get("ordNo") or "", ymd=ymd,
+        )
+        _saveBook(filePath, ymd, candidates, positions)
+        _safeLog(
+            log,
+            f"[PBK01] 체결 {action.get('side')} {action.get('stkCd')} "
+            f"{action.get('reason')} {action.get('qty')}주 {action.get('fillPx')}",
+        )
+        if sender is not None:
+            try:
+                sender(
+                    f"[PBK01] 체결 {action.get('side')} {action.get('stkCd')} "
+                    f"{action.get('reason')} {action.get('qty')}주 {action.get('fillPx')}"
+                )
+            except Exception:
+                _safeLog(log, "[PBK01] 텔레그램 전송 실패 RuntimeError")
+        if action.get("side") == "BUY":
+            try:
+                from utils.pbkWatchScreen import applyScreenFill
+
+                applyScreenFill("매수", action.get("stkCd"), action.get("qty"))
+            except Exception:
+                pass
+        elif action.get("side") == "SELL":
+            try:
+                from utils.pbkWatchScreen import applyScreenFill
+
+                applyScreenFill("매도", action.get("stkCd"), action.get("qty"))
+            except Exception:
+                pass
+    plan["positions"] = positions
+    return plan
+
+
 def _beatLoop():
     """스캔이 오래 걸려도 1분마다 생존 로그를 남긴다."""
     while True:
@@ -666,11 +818,18 @@ def _loop():
                 sendTelegramMsg(text)
 
             result = runPbkCycle(force=first, sender=_send) or {}
+            placed = placePaperCycle(result, sender=_send) or {}
         except Exception as err:
             _safeLog(None, f"[PBK01] 루프 오류 {type(err).__name__}")
+            placed = {}
         elapsed = time.time() - started
         touches = result.get("touches") or []
-        _safeLog(None, f"[PBK01] 사이클 끝 {elapsed:.0f}s 터치 {len(touches)}")
+        _safeLog(
+            None,
+            f"[PBK01] 사이클 끝 {elapsed:.0f}s 터치 {len(touches)} "
+            f"주문 {len(placed.get('actions') or [])} "
+            f"놓침 {len(placed.get('missed') or [])}",
+        )
         if shouldBeat(_lastSummaryAt, time.time(), 300):
             _safeLog(None, formatSummary(_lastQuoteSummary))
             _lastSummaryAt = time.time()
