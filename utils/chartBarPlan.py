@@ -29,7 +29,7 @@ def chartFetchExpired(startedMono, nowMono, timeoutSec=CHART_FETCH_TIMEOUT_SEC):
 
 
 def unifiedStkCd(code):
-    """키움 SOR 통합 코드. 명세 예: 039490_AL. ka00001 이 아니다."""
+    """키움 SOR 통합 코드. 명세 예: 039490_AL. 영문 포함 6자리도 그대로 붙인다."""
     from utils.stkCdUtil import normStkCd
 
     text = normStkCd(code).upper()
@@ -37,6 +37,8 @@ def unifiedStkCd(code):
         text = text[:-3]
     if text.endswith("_NX"):
         text = text[:-3]
+    if len(text) == 6 and text.isalnum():
+        return text + UNIFIED_STK_SUFFIX
     digits = ""
     for ch in text:
         if ch.isdigit():
@@ -46,6 +48,16 @@ def unifiedStkCd(code):
     if len(digits) < 6:
         return ""
     return digits[-6:] + UNIFIED_STK_SUFFIX
+
+
+def chartSkipOnce(code, reason, today, seen):
+    """같은 종목·사유는 하루에 한 번만 로그한다. 새로 남기면 True."""
+    day = str(today or "")[:8]
+    key = (day, str(code or ""), str(reason or ""))
+    if not day or key in (seen or set()):
+        return False
+    seen.add(key)
+    return True
 
 
 def chartTailNeedsRefresh(maxDt, today):

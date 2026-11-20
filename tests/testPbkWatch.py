@@ -128,6 +128,15 @@ class PbkWatchScreenTest(unittest.TestCase):
         self.assertIn("263860", detail)
         self.assertEqual(formatPx(13800000000), "13,800,000,000")
         self.assertEqual(formatPx(None), "-")
+        self.assertEqual(formatPx("-32700"), "32,700")
+        self.assertEqual(formatPx("+32700"), "32,700")
+        self.assertEqual(formatPx(0), "-")
+        self.assertEqual(formatPx(""), "-")
+        live = screenPrice({"src": "0B", "curPrc": "-32700"}, closePx=25800, inSession=True)
+        self.assertEqual(live, 32700)
+        self.assertEqual(formatPx(live), "32,700")
+        down = {"role": "후보", "holding": False, "ma5": 32000, "ma20": 28000}
+        self.assertEqual(pbkRowTone(down, live, None, 3)["tone"], "near")
         live = screenPrice({"src": "0B", "curPrc": "33300"}, closePx=25800, inSession=True)
         closed = screenPrice({"src": "0B", "curPrc": "33300"}, closePx=25800, inSession=False)
         self.assertEqual(live, 33300)
@@ -153,6 +162,10 @@ class PbkWatchScreenTest(unittest.TestCase):
             calls.append(("watch", list(codes)))
             return {"000660": "SK하이닉스"}
 
+        def fileNames(codes):
+            calls.append(("file", list(codes)))
+            return {}
+
         def kiwoom(codes):
             calls.append(("kiwoom", list(codes)))
             return {"263860": "지니언스"}
@@ -162,6 +175,7 @@ class PbkWatchScreenTest(unittest.TestCase):
             masterFn=master,
             watchFn=watch,
             kiwoomFn=kiwoom,
+            fileFn=fileNames,
             cache={},
         )
         self.assertEqual(got["005930"], "삼성전자")
@@ -170,7 +184,8 @@ class PbkWatchScreenTest(unittest.TestCase):
         self.assertEqual(got["999999"], "999999")
         self.assertEqual(calls[0][0], "master")
         self.assertNotIn("005930", calls[1][1])
-        self.assertEqual(calls[2][1], ["263860", "999999"])
+        self.assertEqual(calls[2][0], "file")
+        self.assertEqual(calls[3][1], ["263860", "999999"])
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "pbk01_state.jsonl"
             path.write_text(json.dumps({
@@ -182,6 +197,24 @@ class PbkWatchScreenTest(unittest.TestCase):
             self.assertEqual(rows[0]["stkNm"], "지니언스")
             kept = loadScreenRows(path, names={})
             self.assertEqual(kept[0]["stkNm"], "263860")
+            named = lookupStkNames(
+                ["483350"],
+                masterFn=lambda _codes: {},
+                watchFn=lambda _codes: {},
+                fileFn=lambda _codes: {"483350": "딜리셔스"},
+                kiwoomFn=lambda _codes: {"483350": "키움이름"},
+                cache={},
+            )
+            self.assertEqual(named["483350"], "딜리셔스")
+            fromKiwoom = lookupStkNames(
+                ["483350"],
+                masterFn=lambda _codes: {},
+                watchFn=lambda _codes: {},
+                fileFn=lambda _codes: {},
+                kiwoomFn=lambda _codes: {"483350": "딜리셔스"},
+                cache={},
+            )
+            self.assertEqual(fromKiwoom["483350"], "딜리셔스")
 
     def test_fill_flips_to_hold_and_flat_keeps_candidate(self):
         resetScreenFills()
@@ -253,6 +286,72 @@ class PbkWatchScreenTest(unittest.TestCase):
             self.assertEqual(json.loads(live.read_text(encoding="utf-8")), {"deskTradeMode": "paper", "keep": 1})
         self.assertEqual(pbkRowTone(cand, 101.2, None, 1.0)["tone"], "none")
         self.assertEqual(pbkRowTone(cand, 101, None, 1.0)["tone"], "near")
+
+    def test_letter_code_and_old_tick_and_skip_log(self):
+        from datetime import datetime, timedelta
+
+        from utils.chartBarPlan import chartSkipOnce, unifiedStkCd
+
+        self.assertEqual(unifiedStkCd("222800"), "222800_AL")
+        self.assertEqual(unifiedStkCd("0035S0"), "0035S0_AL")
+        self.assertEqual(unifiedStkCd("0158S0"), "0158S0_AL")
+        self.assertEqual(unifiedStkCd("0162D0"), "0162D0_AL")
+        self.assertEqual(unifiedStkCd("039490_AL"), "039490_AL")
+        self.assertEqual(unifiedStkCd("0035"), "")
+        seen = set()
+        self.assertTrue(chartSkipOnce("0035S0", "거부", "20261120", seen))
+        self.assertFalse(chartSkipOnce("0035S0", "거부", "20261120", seen))
+        self.assertTrue(chartSkipOnce("0035S0", "거부", "20261121", seen))
+
+        import trading.watchRtMonitor as mon
+
+        ymd = datetime.now().strftime("%Y%m%d")
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+        self.assertTrue(mon.cachedQuoteIsNewer(
+            {"tm": "143706", "tickYmd": ymd}, ymd, "125123",
+        ))
+        self.assertFalse(mon.cachedQuoteIsNewer(
+            {"tm": "235900", "tickYmd": yesterday}, ymd, "000100",
+        ))
+        savedPx = dict(mon._lastPx)
+        savedCodes = list(mon._regCodes)
+        try:
+            mon._lastPx.clear()
+            mon._regCodes[:] = ["101730"]
+            mon._lastPx["101730"] = {
+                "curPrc": "3880", "src": "poll", "tm": "143706", "tickYmd": ymd,
+            }
+            with patch.object(mon, "_flushLastPxCache", lambda *a, **k: None), patch(
+                "trading.maTouchLive.onMaTouchTick", lambda *a, **k: None,
+            ):
+                mon._onWsMessage({"trnm": "REAL", "data": [{
+                    "type": "0B",
+                    "item": "101730",
+                    "values": {"10": "-3540", "20": "125123"},
+                }]})
+                self.assertEqual(mon._lastPx["101730"]["curPrc"], "3880")
+                self.assertEqual(mon._lastPx["101730"]["src"], "poll")
+                mon._onWsMessage({"trnm": "REAL", "data": [{
+                    "type": "0B",
+                    "item": "101730",
+                    "values": {"10": "-3600", "20": "150000"},
+                }]})
+                self.assertEqual(mon._lastPx["101730"]["curPrc"], "-3600")
+                self.assertEqual(mon._lastPx["101730"]["src"], "0B")
+                mon._lastPx["101730"] = {
+                    "curPrc": "1000", "src": "poll", "tm": "235900", "tickYmd": yesterday,
+                }
+                mon._onWsMessage({"trnm": "REAL", "data": [{
+                    "type": "0B",
+                    "item": "101730",
+                    "values": {"10": "-1100", "20": "000100"},
+                }]})
+                self.assertEqual(mon._lastPx["101730"]["curPrc"], "-1100")
+                self.assertEqual(mon._lastPx["101730"]["tickYmd"], ymd)
+        finally:
+            mon._lastPx.clear()
+            mon._lastPx.update(savedPx)
+            mon._regCodes[:] = savedCodes
 
 
 if __name__ == "__main__":

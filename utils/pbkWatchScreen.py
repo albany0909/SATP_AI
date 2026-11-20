@@ -405,6 +405,30 @@ def _watchNames(codes):
     return out
 
 
+def _pbkFileNames(codes):
+    """PBK 상태 파일에 적힌 종목명. 마스터에 없는 신규 상장 코드용."""
+    want = {_code(code) for code in (codes or []) if _code(code)}
+    if not want:
+        return {}
+    try:
+        from utils.pbk01Store import latestByKind, pbkPath
+
+        saved = latestByKind(pbkPath("pbk01_state.jsonl"), "state") or {}
+    except Exception:
+        return {}
+    out = {}
+    for item in list(saved.get("candidates") or []) + list(saved.get("positions") or []):
+        if not isinstance(item, dict):
+            continue
+        code = _code(item.get("stkCd"))
+        if code not in want:
+            continue
+        name = _realName(item.get("stkNm") or item.get("name"), code)
+        if name:
+            out[code] = name
+    return out
+
+
 def _kiwoomNames(codes):
     """키움 ka10001 종목명. 앞 단계에서 못 찾은 코드만."""
     from api.getStkInfo import fetchStkInfo
@@ -422,8 +446,8 @@ def _kiwoomNames(codes):
     return out
 
 
-def lookupStkNames(codes, masterFn=None, watchFn=None, kiwoomFn=None, cache=None):
-    """종목마스터, 관심종목, 키움 순. 셋 다 없으면 코드."""
+def lookupStkNames(codes, masterFn=None, watchFn=None, kiwoomFn=None, cache=None, fileFn=None):
+    """종목마스터, 관심종목, PBK 후보 파일, 키움 순. 없으면 코드."""
     store = _nameCache if cache is None else cache
     pending = []
     out = {}
@@ -436,7 +460,12 @@ def lookupStkNames(codes, masterFn=None, watchFn=None, kiwoomFn=None, cache=None
             continue
         out[code] = ""
         pending.append(code)
-    for source in (masterFn or _masterNames, watchFn or _watchNames, kiwoomFn or _kiwoomNames):
+    for source in (
+        masterFn or _masterNames,
+        watchFn or _watchNames,
+        fileFn or _pbkFileNames,
+        kiwoomFn or _kiwoomNames,
+    ):
         if not pending:
             break
         try:
@@ -491,10 +520,14 @@ def loadScreenRows(statePath=None, accountHolds=None, names=None):
 
 
 def _px(raw):
+    """키움 현재가. 하락 틱의 마이너스 부호는 떼고, 0·빈값은 없다."""
     if raw is None or raw == "":
         return None
+    text = str(raw).replace(",", "").strip()
+    if text[:1] in "+-":
+        text = text[1:]
     try:
-        num = float(str(raw).replace(",", ""))
+        num = abs(float(text))
     except (TypeError, ValueError):
         return None
     if num <= 0:

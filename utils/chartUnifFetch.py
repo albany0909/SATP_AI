@@ -147,6 +147,17 @@ def fetchUnifiedPeriod(hostUrl, token, stkCd, barTp, today, tokenType="bearer", 
     return {"ok": True, "bars": got, "stk": stk, "barTp": barTp}
 
 
+_chartSkipLogged = set()
+
+
+def _quietChartMiss(code, err):
+    """영문 코드 거부나 빈 코드는 반복 로그를 내지 않는다."""
+    text = str(err or "")
+    if "종목코드 없음" in text:
+        return True
+    return any(ch.isalpha() for ch in str(code or ""))
+
+
 def refreshUnifiedCharts(stkCds, today=None, backfill=True):
     """표시 종목의 통합 일·주·월봉. 오늘 봉이 있으면 꼬리만 다시 덮어쓴다."""
     from utils.chartUnifStore import unifBarStat, upsertUnifBars
@@ -186,8 +197,14 @@ def refreshUnifiedCharts(stkCds, today=None, backfill=True):
                 tokenType=tokenType, isPaper=isPaper, backfill=needOld,
             )
             if not fetched.get("ok"):
-                failCnt += 1
                 err = fetched.get("errMsg") or "조회실패"
+                if _quietChartMiss(code, err):
+                    from utils.chartBarPlan import chartSkipOnce
+
+                    if chartSkipOnce(code, err, day, _chartSkipLogged):
+                        termLog(f"[deskChart] 통합봉 건너뜀 {code} {barTp}: {err}")
+                    continue
+                failCnt += 1
                 fails.append(f"{code}:{barTp}:{err}")
                 termLog(f"[deskChart] 통합봉 실패 {code} {barTp}: {err}")
                 continue

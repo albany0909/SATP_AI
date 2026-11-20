@@ -1092,6 +1092,30 @@ def _onLogin(ws):
     _regWatch(ws, codes, "LOGIN(시세구간)")
 
 
+def _clockSec(raw):
+    digits = "".join(ch for ch in str(raw or "") if ch.isdigit())
+    if len(digits) < 4:
+        return None
+    digits = digits.zfill(6)[:6]
+    hour, minute, sec = int(digits[:2]), int(digits[2:4]), int(digits[4:6])
+    if hour > 23 or minute > 59 or sec > 59:
+        return None
+    return hour * 3600 + minute * 60 + sec
+
+
+def cachedQuoteIsNewer(info, newYmd, newTm):
+    """캐시가 들어온 0B 보다 나중이면 True. 날짜가 다르면 날짜가 이긴다."""
+    oldYmd = str((info or {}).get("tickYmd") or "")
+    oldSec = _clockSec((info or {}).get("tm"))
+    newSec = _clockSec(newTm)
+    today = str(newYmd or "")
+    if len(oldYmd) != 8 or len(today) != 8 or oldSec is None or newSec is None:
+        return False
+    if oldYmd != today:
+        return oldYmd > today
+    return oldSec > newSec
+
+
 def _onWsMessage(msg):
     """0B 현재가 캐시 후 이평선터치 모의 신호로 넘긴다."""
     if not isinstance(msg, dict) or msg.get("trnm") != "REAL":
@@ -1106,16 +1130,19 @@ def _onWsMessage(msg):
             continue
         vals = row.get("values") or {}
         fireTick = False
+        today = datetime.now().strftime("%Y%m%d")
         with _lock:
             if stkCd not in _regCodes:
                 global _unmatchedTicks
                 _unmatchedTicks += 1
                 continue
             info = dict(_lastPx.get(stkCd) or {})
+            tmRaw = _nzQuote(vals.get("20"))
+            if cachedQuoteIsNewer(info, today, tmRaw):
+                continue
             # 0B 는 변동 FID 만 올 수 있다. 가격만 온 틱이 등락률을 지우지 않게 한다.
             prcRaw = _nzQuote(vals.get("10"))
             fluRaw = _nzQuote(vals.get("12"))
-            tmRaw = _nzQuote(vals.get("20"))
             openRaw = _nzQuote(vals.get("16"))
             lowRaw = _nzQuote(vals.get("18"))
             if openRaw is not None:
@@ -1158,7 +1185,7 @@ def _onWsMessage(msg):
                 info["tm"] = info.get("krxTm") or info.get("nxtTm")
                 info["exch"] = "KRX"
             info["src"] = "0B"
-            info["tickYmd"] = datetime.now().strftime("%Y%m%d")
+            info["tickYmd"] = today
             info.pop("dayCloseDt", None)
             _lastPx[stkCd] = info
             _dayCloseSeeded.discard(stkCd)
