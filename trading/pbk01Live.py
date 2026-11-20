@@ -641,7 +641,9 @@ def refreshPbkQuotes(rows, positions, reason="PBK시세", fetch=None, pollLimit=
     ticks = {row["stkCd"]: row for row in built}
     stale = stalePollEntries(built, ticks, moment, registered=registered)
     limit = POLL_PER_CYCLE if pollLimit is None else int(pollLimit)
-    batch = pollBatch(built, ticks, moment, registered=registered, limit=limit)
+    batch = pollBatch(
+        built, ticks, moment, registered=registered, limit=limit, priorityCodes=touchWaitCodes(),
+    )
     getter = fetch or _fetchKa10001
     polled = 0
     for code in batch:
@@ -681,8 +683,10 @@ def _paperSession():
 
 
 def _saveBook(path, ymd, candidates, positions):
+    from trading.pbkOrderPlan import fillBookNames
     from utils.pbk01Store import appendRow
 
+    positions = fillBookNames(positions, candidates)
     appendRow(path, {
         "kind": "state",
         "announcedYmd": str(ymd or ""),
@@ -699,7 +703,20 @@ def _missedFile(ymd):
     return missedPath(pbkPath(".").parent, ymd)
 
 
-def placePaperCycle(result, broker=None, session=None, log=None, sender=None, path=None, now=None, chaseMaxPct=None, requireBroker=False):
+_touchWaitCds = []
+
+
+def noteTouchWait(codes):
+    """직전 사이클에서 시세가 낡아 건너뛴 종목. 다음 폴링에서 먼저 받는다."""
+    global _touchWaitCds
+    _touchWaitCds = [str(code) for code in (codes or []) if str(code or "").strip()]
+
+
+def touchWaitCodes():
+    return list(_touchWaitCds)
+
+
+def placePaperCycle(result, broker=None, session=None, log=None, sender=None, path=None, now=None, chaseMaxPct=None, requireBroker=False, askFetch=None):
     """신선한 터치만 모의 주문. 놓친 터치는 파일에만 남긴다."""
     from strategies.impl.pullbackTwoStep import PaperOnlyError
     from trading.pbkOrderPlan import applyPaperResult, buildLiveActions, pbkChaseMaxPct
@@ -714,9 +731,26 @@ def placePaperCycle(result, broker=None, session=None, log=None, sender=None, pa
     ymd = str((result or {}).get("ymd") or "")
     hm = str((result or {}).get("hm") or "")
     pct = pbkChaseMaxPct() if chaseMaxPct is None else chaseMaxPct
+    quotes = dict((result or {}).get("quotes") or {})
+    if askFetch is not None:
+        for row in candidates:
+            code = str((row or {}).get("stkCd") or "")
+            if not code:
+                continue
+            quote = dict(quotes.get(code) or {})
+            if quote.get("ask") not in (None, ""):
+                quotes[code] = quote
+                continue
+            try:
+                got = askFetch(code)
+            except Exception:
+                got = None
+            if got not in (None, ""):
+                quote["ask"] = got
+            quotes[code] = quote
     plan = buildLiveActions(
         candidates,
-        (result or {}).get("quotes") or {},
+        quotes,
         positions,
         hm,
         ymd,
@@ -730,9 +764,13 @@ def placePaperCycle(result, broker=None, session=None, log=None, sender=None, pa
             appendRow(_missedFile(row.get("ymd") or ymd), row)
         except Exception as err:
             _safeLog(log, f"[PBK01] 놓침 기록 실패 {type(err).__name__}")
+    waited = []
     for row in plan["skips"]:
-        if row.get("reason") in ("시세 대기", "슬롯한도", "시간외", "매도대기"):
+        if row.get("reason") in ("시세 대기", "슬롯한도", "시간외", "매도대기", "잔고불일치"):
             _safeLog(log, f"[PBK01] 스킵 {row.get('stkCd')} {row.get('reason')}")
+        if row.get("reason") == "시세 대기" and row.get("stkCd"):
+            waited.append(row.get("stkCd"))
+    noteTouchWait(waited)
     useBroker = broker or paperBroker
     sess = session if session is not None else _paperSession()
     failed = set()
@@ -813,7 +851,7 @@ def notePbkBrokerFill(sideLabel, stkCd, qty, px, ordNo="", cumQty=None):
     return {"ok": True, "matched": True}
 
 
-def _settleBook(filePath, saved, positions, includeToday=False, today=""):
+def _settleBook(filePath, saved, positions, includeToday=False, today="", orderFills=None):
     """실체결로 확정하고 소멸 잔량을 날짜 파일에 남긴다. 재주문은 하지 않는다."""
     from trading.pbkOrderPlan import fillsPath, settlePositions
     from utils.pbk01Store import appendRow
@@ -824,7 +862,19 @@ def _settleBook(filePath, saved, positions, includeToday=False, today=""):
         today,
         includeToday=includeToday,
         accountKnown=False,
+        orderFills=orderFills,
     )
+    names = {}
+    for item in list(saved.get("candidates") or []) + list(updated or []):
+        code = str((item or {}).get("stkCd") or "")
+        name = str((item or {}).get("stkNm") or "").strip()
+        if code and name and name != code:
+            names[code] = name
+    for row in logs:
+        code = str(row.get("stkCd") or "")
+        cur = str(row.get("stkNm") or "").strip()
+        if code and (not cur or cur == code) and names.get(code):
+            row["stkNm"] = names[code]
     if logs:
         _saveBook(filePath, saved.get("announcedYmd") or today, saved.get("candidates") or [], updated)
         for row in logs:
@@ -849,7 +899,7 @@ def settleIfClosed(path=None, hm="", ymd=""):
     return _settleBook(filePath, saved, positions, includeToday=textHm >= "153000")
 
 
-def restorePaperBook(path=None, accountRows=None, openOrders=None, accountKnown=False, now=None):
+def restorePaperBook(path=None, accountRows=None, openOrders=None, accountKnown=False, now=None, orderFills=None):
     """구 상태 파일을 읽어 보유를 유지하고, 잔고·미체결이 있으면 실제 수량만 맞춘다."""
     from trading.pbkOrderPlan import reconcilePositions
     from utils.pbk01Store import latestByKind, pbkPath
@@ -863,6 +913,21 @@ def restorePaperBook(path=None, accountRows=None, openOrders=None, accountKnown=
         openOrders=openOrders,
         accountKnown=accountKnown,
     )
+    mismatches = []
+    if accountKnown:
+        from trading.pbkOrderPlan import balanceMismatches
+
+        mismatches = balanceMismatches(updated, accountRows)
+        bad = {row["stkCd"] for row in mismatches}
+        for pos in updated:
+            if str(pos.get("stkCd") or "") in bad:
+                pos["buyHold"] = True
+                pos["buyHoldReason"] = "잔고불일치"
+        for row in mismatches:
+            _safeLog(
+                None,
+                f"[PBK01] 잔고 불일치 {row['stkCd']} 상태 {row['stateQty']} 계좌 {row['acctQty']} 신규매수 보류",
+            )
     if updated != positions:
         _saveBook(filePath, saved.get("announcedYmd") or "", saved.get("candidates") or [], updated)
     if accountKnown:
@@ -873,6 +938,7 @@ def restorePaperBook(path=None, accountRows=None, openOrders=None, accountKnown=
             updated,
             includeToday=moment.strftime("%H%M%S") >= "153000",
             today=moment.strftime("%Y%m%d"),
+            orderFills=orderFills,
         )
     held = 0
     for pos in updated:
@@ -885,10 +951,37 @@ def restorePaperBook(path=None, accountRows=None, openOrders=None, accountKnown=
         if plan > 0 or ((pos.get("leg1") or pos.get("leg2")) and not pos.get("settled")):
             held += 1
     _safeLog(None, f"[PBK01] 재기동 보유 {held}종 복원")
-    return {"ok": True, "positions": updated, "held": held}
+    return {"ok": True, "positions": updated, "held": held, "mismatches": mismatches}
 
 
-def fetchPaperBook(session=None, accountFetch=None, openFetch=None):
+def fetchPaperAsk(stkCd, session=None):
+    """모의 호가의 매도 1호가. 없거나 실전이면 None. 현재가로 대체하지 않는다."""
+    from config.config import paper_host_url, real_host_url
+    from trading.pbkOrderPlan import parseAsk
+
+    sess = session if session is not None else _paperSession()
+    host = str((sess or {}).get("host") or "")
+    mode = str((sess or {}).get("mode") or "")
+    if mode != "paper" or host != str(paper_host_url) or host == str(real_host_url) or "mockapi.kiwoom.com" not in host:
+        return None
+    try:
+        from config import runtimeState
+        from api.getHoga import fetchHoga
+        from utils.trRateLimit import acquireTrSlot
+
+        token = runtimeState.getToken("paper")
+        if not token:
+            return None
+        acquireTrSlot("ka10004", mode="paper")
+        got = fetchHoga(paper_host_url, token, stkCd, tokenType=runtimeState.paperTokenType or "bearer")
+    except Exception:
+        return None
+    if not got or not got.get("ok"):
+        return None
+    return parseAsk(got.get("body") or {})
+
+
+def fetchPaperBook(session=None, accountFetch=None, openFetch=None, cntrFetch=None):
     """모의 호스트의 잔고·미체결만 읽는다. 실전 호스트는 호출하지 않는다."""
     from config.config import paper_host_url, real_host_url
     from trading.pbkOrderPlan import parseAccountHolds, parseOpenOrders
@@ -920,6 +1013,14 @@ def fetchPaperBook(session=None, accountFetch=None, openFetch=None):
             acquireTrSlot("ka10075", mode="paper")
             return fetchOpenOrd(paper_host_url, token, tokenType=tokenType)
 
+        if cntrFetch is None:
+            def cntrFetch():
+                from api.getCntr import fetchCntr
+                from utils.trRateLimit import acquireTrSlot
+
+                acquireTrSlot("ka10076", mode="paper")
+                return fetchCntr(paper_host_url, token, tokenType=tokenType)
+
     try:
         acct = accountFetch() or {}
     except Exception as err:
@@ -932,10 +1033,21 @@ def fetchPaperBook(session=None, accountFetch=None, openFetch=None):
         return {"ok": False, "reason": type(err).__name__, "account": [], "orders": []}
     if not opened.get("ok"):
         return {"ok": False, "reason": "OPEN", "account": [], "orders": []}
+    fills = {}
+    if cntrFetch is not None:
+        try:
+            booked = cntrFetch() or {}
+        except Exception:
+            booked = {}
+        if booked.get("ok"):
+            from trading.pbkOrderPlan import parseFillQty
+
+            fills = parseFillQty(booked.get("body") or {})
     return {
         "ok": True,
         "account": parseAccountHolds(acct.get("body") or {}),
         "orders": parseOpenOrders(opened.get("body") or {}),
+        "fills": fills,
     }
 
 
@@ -953,8 +1065,20 @@ def bootPaperBook(path=None, session=None, accountFetch=None, openFetch=None, no
         openOrders=snap.get("orders") or [],
         accountKnown=True,
         now=now,
+        orderFills=snap.get("fills") or None,
     )
     restored["reconciled"] = True
+    for row in restored.get("mismatches") or []:
+        text = (
+            f"[PBK01] 잔고 불일치 {row['stkCd']} 상태 {row['stateQty']} "
+            f"계좌 {row['acctQty']} 신규매수 보류"
+        )
+        try:
+            from telegram.telSend import sendTelegramMsg
+
+            sendTelegramMsg(text)
+        except Exception:
+            _safeLog(None, "[PBK01] 텔레그램 전송 실패 RuntimeError")
     return restored
 
 
@@ -1029,7 +1153,9 @@ def _loop():
                 sendTelegramMsg(text)
 
             result = runPbkCycle(force=first, sender=_send) or {}
-            placed = placePaperCycle(result, sender=_send, requireBroker=True) or {}
+            placed = placePaperCycle(
+                result, sender=_send, requireBroker=True, askFetch=fetchPaperAsk,
+            ) or {}
         except Exception as err:
             _safeLog(None, f"[PBK01] 루프 오류 {type(err).__name__}")
             placed = {}

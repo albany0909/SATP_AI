@@ -10,6 +10,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import tests.liveGuard  # noqa: E402 운영 로그·DB·키움 차단
+
 from strategies.impl.pullbackTwoStep import PaperOnlyError, floorQty, legMoney, submitPbkOrder
 from trading.pbkOrderPlan import (
     absPx,
@@ -28,11 +30,12 @@ from trading.pbkOrderPlan import (
 )
 
 
-def _fresh(price, low=None, openPx=None):
+def _fresh(price, low=None, openPx=None, ask=None):
     return {
         "price": price,
         "low": low,
         "open": openPx,
+        "ask": price if ask is None else ask,
         "fresh": True,
         "src": "0B",
         "tickYmd": "20261120",
@@ -544,6 +547,86 @@ class PbkOrderPlanTest(unittest.TestCase):
             "20261121",
         )
         self.assertTrue(any(row["stkCd"] == "300120" and row["side"] == "BUY" for row in freed["actions"]))
+
+    def test_settle_uses_balance_not_stale_fill(self):
+        from trading.pbkOrderPlan import balanceMismatches, settlePositions
+
+        old = [{
+            "stkCd": "300080",
+            "stkNm": "플리토",
+            "qty": 876,
+            "brokerQty": 876,
+            "brokerAvg": 3200,
+            "ordFill": {"1": 171},
+            "openOrders": [{"stkCd": "300080", "ordNo": "0000001", "side": "BUY", "rmnQty": 355}],
+            "leg1": {"qty": 526, "fillPx": 3300, "ordNo": "0000001", "ymd": "20261120"},
+            "leg2": {"qty": 350, "fillPx": 3100, "ordNo": "0000002", "ymd": "20261120"},
+        }]
+        settled, logs = settlePositions(
+            old, "20261121", includeToday=False, orderFills={"1": 526, "2": 350},
+        )
+        self.assertEqual(settled[0]["leg1"]["filledQty"], 526)
+        self.assertEqual(settled[0]["leg1"]["expiredQty"], 0)
+        self.assertEqual(settled[0]["leg1"]["remainQty"], 0)
+        self.assertEqual(settled[0]["leg2"]["filledQty"], 350)
+        self.assertFalse(settled[0].get("buyHold"))
+        self.assertEqual(sum(row["brokerQty"] for row in logs), 876)
+        self.assertEqual(paperHoldRows([], settled)[0]["openText"], "")
+        stale, _logs = settlePositions(old, "20261121", includeToday=False)
+        self.assertEqual(stale[0]["leg1"]["filledQty"], 526)
+        self.assertEqual(stale[0]["leg1"]["expiredQty"], 0)
+        bad = balanceMismatches(old, [{"stkCd": "300080", "qtyNum": 171}])
+        self.assertEqual(bad[0]["acctQty"], 171)
+        held = buildLiveActions(
+            [{"stkCd": "300080", "stkNm": "플리토", "ma5": 4000, "ma20": 3000}],
+            {"300080": _fresh(3500, low=3500)},
+            [{**old[0], "buyHold": True}],
+            "100000",
+            "20261121",
+        )
+        self.assertEqual([row for row in held["actions"] if row["side"] == "BUY"], [])
+
+    def test_missing_ask_does_not_buy(self):
+        quote = _fresh(10000, low=9900)
+        quote.pop("ask")
+        plan = buildLiveActions(
+            [{"stkCd": "900290", "stkNm": "GRT", "ma5": 10000, "ma20": 9000}],
+            {"900290": quote},
+            [],
+            "100000",
+            "20261120",
+        )
+        self.assertEqual(plan["actions"], [])
+        self.assertEqual(plan["missed"][0]["reason"], "호가없음")
+        wide = buildLiveActions(
+            [{"stkCd": "900290", "stkNm": "GRT", "ma5": 10000, "ma20": 9000}],
+            {"900290": _fresh(10050, low=9900, ask=10300)},
+            [],
+            "100000",
+            "20261120",
+            chaseMaxPct=2,
+        )
+        self.assertEqual(wide["actions"], [])
+        self.assertEqual(wide["missed"][0]["reason"], "당일 터치 놓침")
+        near = buildLiveActions(
+            [{"stkCd": "900290", "stkNm": "GRT", "ma5": 10000, "ma20": 9000}],
+            {"900290": _fresh(10050, low=9900, ask=10100)},
+            [],
+            "100000",
+            "20261120",
+            chaseMaxPct=2,
+        )
+        buy = [row for row in near["actions"] if row["side"] == "BUY"][0]
+        self.assertEqual(buy["limitPx"], 10100)
+        self.assertEqual(buy["trdeTp"], "0")
+        self.assertEqual(buy["ask1"], 10100)
+
+    def test_live_log_guard(self):
+        from tests.liveGuard import LiveGuardError
+        from utils.deskFileLog import appendDeskFileLog
+
+        with self.assertRaises(LiveGuardError):
+            appendDeskFileLog("미체결 잔량 900290 2000")
 
 
 if __name__ == "__main__":

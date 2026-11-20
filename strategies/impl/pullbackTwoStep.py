@@ -11,7 +11,7 @@ import re
 
 ALG_CD = "PBK01"
 STRAT_ID = "pullbackTwoStep_v1"
-ALG_VER = 1
+ALG_VER = 2
 NAME_KR = "실적 장대양봉 눌림목"
 ENGLISH_NAME = "Earnings Pullback Two Step"
 
@@ -735,7 +735,7 @@ def algVerHistPayload(gitHash="", ymd="2026-11-19"):
         "stratId": STRAT_ID,
         "algVer": ALG_VER,
         "ymd": ymd,
-        "note": "v1 실적 장대양봉 눌림 2분할. 모의 전용. 주문 기본 비활성.",
+        "note": "v2 모의 매수는 매도 1호가 지정가. 호가가 이평+추격한도를 넘거나 호가가 없으면 미주문. 백테스트 체결은 min(시가, 이평).",
         "gitHash": str(gitHash or "")[:16],
         "src": "manual",
     }

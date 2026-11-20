@@ -291,6 +291,11 @@ class PbkQuotePlanTest(unittest.TestCase):
         self.assertNotIn("000660", batch)
         wider = pollBatch(rows, ticks, now, registered=set(), limit=3)
         self.assertEqual(wider[-1], "005930")
+        waited = pollBatch(
+            rows, ticks, now, registered=set(), limit=1, priorityCodes=["005930"],
+        )
+        self.assertIn("005930", waited)
+        self.assertLess(waited.index("900290"), waited.index("005930"))
 
     def test_holdings_polled_after_sixty_seconds_and_before_stop(self):
         from datetime import datetime

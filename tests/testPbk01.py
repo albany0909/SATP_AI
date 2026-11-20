@@ -10,6 +10,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import tests.liveGuard  # noqa: E402
+
 from scripts.deployPackUtil import shouldSkipRel
 from strategies.impl.pullbackTwoStep import (
     PaperOnlyError,
@@ -208,7 +210,7 @@ class Pbk01Test(unittest.TestCase):
 
         spec = loadStratSpec("pullbackTwoStep_v1")
         self.assertEqual(spec["algCd"], "PBK01")
-        self.assertEqual(spec["version"], 1)
+        self.assertEqual(spec["version"], 2)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         text = formatCandidateLog([{
@@ -262,6 +264,7 @@ class Pbk01Test(unittest.TestCase):
         def _loader2(_ymd):
             pack = _loader(_ymd)
             pack["disclosures"] = {"005930": pack["disclosures"]}
+            pack["refreshBars"] = False
             return pack
 
         live._announcedYmd = ""
@@ -309,7 +312,7 @@ class Pbk01Test(unittest.TestCase):
 
         def _empty(_ymd):
             calls.append(_ymd)
-            return {"bars": {}, "disclosures": {}, "positions": []}
+            return {"bars": {}, "disclosures": {}, "positions": [], "refreshBars": False}
 
         with tempfile.TemporaryDirectory() as folder2:
             early = Path(folder2) / "pbk01_state.jsonl"

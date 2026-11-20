@@ -264,7 +264,7 @@ def _holdNeedsPoll(info, now, force=False):
     return age > HOLD_POLL_SEC
 
 
-def pollBatch(rows, ticks, now, registered=None, limit=POLL_PER_CYCLE, staleSec=None):
+def pollBatch(rows, ticks, now, registered=None, limit=POLL_PER_CYCLE, staleSec=None, priorityCodes=None):
     """보유는 60초를 넘기면 먼저 받고, 남는 칸만 후보에 쓴다.
 
     15:13~15:15 에는 보유를 시세가 있어도 모두 넣는다.
@@ -286,8 +286,25 @@ def pollBatch(rows, ticks, now, registered=None, limit=POLL_PER_CYCLE, staleSec=
     holdCodes = [code for _age, code in holds]
     stale = stalePollEntries(rows, ticks, now, registered=registered, staleSec=staleSec)
     rest = [item["stkCd"] for item in stale if item["stkCd"] not in holding]
-    room = max(0, int(limit or 0) - len(holdCodes))
-    return holdCodes + rest[:room]
+    pri = []
+    seen = set(holdCodes)
+    for raw in priorityCodes or []:
+        code = str(raw or "").strip()
+        if not code or code in seen:
+            continue
+        info = (ticks or {}).get(code) or {}
+        if quoteIsFresh(info, now, staleSec):
+            continue
+        seen.add(code)
+        pri.append(code)
+    priTake = pri[: max(0, int(limit or 0))]
+    room = max(0, int(limit or 0) - len(holdCodes) - len(priTake))
+    restTake = []
+    for code in rest:
+        if code in seen or len(restTake) >= room:
+            continue
+        restTake.append(code)
+    return holdCodes + priTake + restTake
 
 
 def applyPollPrice(info, price, tm, low=None, now=None, staleSec=None):
