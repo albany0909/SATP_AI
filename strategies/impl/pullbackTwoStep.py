@@ -728,7 +728,7 @@ def submitPbkOrder(action, session, broker, paperOnly=True, log=None):
     return broker(action, session)
 
 
-def algVerHistPayload(gitHash="", ymd="2026-11-19"):
+def algVerHistPayload(gitHash="", ymd="2026-11-20"):
     """AI_ALG_VER_HIST 에 넣을 값. 이 함수는 DB 를 열지 않는다."""
     return {
         "algCd": ALG_CD,
