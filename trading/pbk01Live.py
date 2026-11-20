@@ -568,7 +568,11 @@ def _fetchKa10001(code):
     if not got.get("ok"):
         return None
     body = got.get("body") or {}
-    return {"price": body.get("cur_prc"), "tm": datetime.now().strftime("%H%M%S")}
+    return {
+        "price": body.get("cur_prc"),
+        "low": body.get("low_pric"),
+        "tm": datetime.now().strftime("%H%M%S"),
+    }
 
 
 def refreshPbkQuotes(rows, positions, reason="PBK시세", fetch=None, pollLimit=None):
@@ -600,7 +604,7 @@ def refreshPbkQuotes(rows, positions, reason="PBK시세", fetch=None, pollLimit=
             got = getter(code) or {}
         except Exception:
             got = {}
-        if notePolledPx(code, got.get("price"), got.get("tm") or ""):
+        if notePolledPx(code, got.get("price"), got.get("tm") or "", got.get("low")):
             polled += 1
     summary = summarizeQuotes(built, {row["stkCd"]: row for row in _attachPrices(built)})
     _lastQuoteSummary = summary

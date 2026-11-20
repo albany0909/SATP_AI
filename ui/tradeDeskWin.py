@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -1541,6 +1542,27 @@ class TradeDeskWin(QMainWindow):
         self.regimeSettLbl.setStyleSheet("font-size: 12px; color: #212121;")
         regimeBoxLay.addWidget(self.regimeSettLbl)
         settLay.addWidget(regimeBox)
+        nearRow = QHBoxLayout()
+        nearRow.addWidget(QLabel("인접 범위"))
+        self.pbkNearEdit = QLineEdit()
+        self.pbkNearEdit.setPlaceholderText("3.0")
+        self.pbkNearEdit.setToolTip(
+            "후보 현재가가 다음 매수 이평(5이평, 1차 체결 후 20이평) 위 0~이 퍼센트이면 연노랑. "
+            "현재가나 저가가 그 선 이하면 연주황. 보유는 연초록."
+        )
+        from utils.pbkWatchScreen import pbkNearPct
+
+        self.pbkNearEdit.setText(f"{pbkNearPct():g}")
+        nearRow.addWidget(self.pbkNearEdit, 1)
+        nearRow.addWidget(QLabel("%"))
+        pbkNearBtn = QPushButton("저장")
+        pbkNearBtn.clicked.connect(self._savePbkNearPct)
+        nearRow.addWidget(pbkNearBtn)
+        settLay.addLayout(nearRow)
+        self.pbkNearLbl = QLabel("키가 없으면 3%를 씁니다. 저장 전 파일은 바꾸지 않습니다.")
+        self.pbkNearLbl.setStyleSheet("color: #666; font-size: 12px;")
+        self.pbkNearLbl.setWordWrap(True)
+        settLay.addWidget(self.pbkNearLbl)
         try:
             from ui.mmgSettRow import addMmgSettRow
 
@@ -5698,6 +5720,7 @@ class TradeDeskWin(QMainWindow):
         self.tradeWatchTitle.setText(self._titleText(title))
         if not view:
             view = [{"role": "", "stkNm": "후보·보유 없음", "stkCd": ""}]
+        self._pbkToneMeta = {}
         frz.setUpdatesEnabled(False)
         try:
             frz.setRowCount(len(view))
@@ -5712,6 +5735,13 @@ class TradeDeskWin(QMainWindow):
                 else:
                     expireTxt = expire or "-"
                 held = str(row.get("role") or "") == "보유"
+                self._pbkToneMeta[code] = {
+                    "role": str(row.get("role") or ""),
+                    "holding": bool(row.get("holding")) or held,
+                    "ma5": row.get("ma5"),
+                    "ma20": row.get("ma20"),
+                    "leg1": row.get("leg1"),
+                }
                 vals = [
                     (str(row.get("role") or ""), None),
                     (code, code),
@@ -5732,10 +5762,9 @@ class TradeDeskWin(QMainWindow):
                             item.setData(Qt.ItemDataRole.UserRole + 1, str(sortVal))
                     if col == 2 and code:
                         item.setData(Qt.ItemDataRole.UserRole, code)
-                    if held:
-                        item.setBackground(QBrush(QColor("#E8F5E9")))
-                        item.setForeground(QBrush(QColor("#212121")))
                     frz.setItem(i, col, item)
+                if code:
+                    self._paintPbkRowTone(frz, i, self._pbkToneMeta.get(code), px, quote.get("lowPrc"))
             self._watchPaintCds = paint
             self._pbkPxCol = 5
             self._fitWatchFrozenWidth()
@@ -5834,6 +5863,8 @@ class TradeDeskWin(QMainWindow):
             return
         if str(getattr(self, "_watchAlgCd", "") or "") != "pbk":
             return
+        if getattr(self, "_pbkSortBusy", False) or getattr(self, "_watchRefreshBusy", False):
+            return
         frz = getattr(self, "tradeWatchFrozen", None)
         if frz is None or not frz.isVisible():
             return
@@ -5863,8 +5894,51 @@ class TradeDeskWin(QMainWindow):
                 item.setText(formatPx(px))
                 if px is not None:
                     item.setData(Qt.ItemDataRole.UserRole + 1, float(px))
+                meta = (getattr(self, "_pbkToneMeta", None) or {}).get(code)
+                if meta is not None:
+                    self._paintPbkRowTone(frz, i, meta, px, quote.get("lowPrc"))
         finally:
             frz.setSortingEnabled(sorting)
+
+    def _paintPbkRowTone(self, frz, row, meta, price, low):
+        """색만 바꾼다. 행을 다시 만들지 않는다."""
+        from utils.pbkWatchScreen import pbkNearPct, pbkRowTone
+
+        tone = pbkRowTone(meta or {}, price, low, pbkNearPct())
+        key = tone["bg"] or ""
+        mark = frz.item(row, 0)
+        if mark is not None and mark.data(Qt.ItemDataRole.UserRole + 4) == key:
+            return
+        bg = QBrush(QColor(tone["bg"])) if tone["bg"] else QBrush()
+        fg = QBrush(QColor(tone["fg"])) if tone["fg"] else QBrush()
+        for col in range(frz.columnCount()):
+            cell = frz.item(row, col)
+            if cell is None:
+                continue
+            cell.setBackground(bg)
+            cell.setForeground(fg)
+            cell.setData(Qt.ItemDataRole.UserRole + 4, key)
+
+    def _savePbkNearPct(self):
+        """인접 퍼센트만 저장한다. 다른 설정 키는 건드리지 않는다."""
+        from config.settingsStore import patchSettings
+        from utils.pbkWatchScreen import pbkNearPct
+
+        text = str(self.pbkNearEdit.text() or "").strip().replace("%", "").replace(",", "")
+        try:
+            val = float(text)
+        except ValueError:
+            self.pbkNearLbl.setStyleSheet("color: #c62828; font-size: 12px;")
+            self.pbkNearLbl.setText("숫자를 입력하세요")
+            return
+        if val <= 0:
+            self.pbkNearLbl.setStyleSheet("color: #c62828; font-size: 12px;")
+            self.pbkNearLbl.setText("0보다 커야 합니다")
+            return
+        patchSettings({"pbkNearPct": val})
+        self.pbkNearEdit.setText(f"{val:g}")
+        self.pbkNearLbl.setStyleSheet("color: #2e7d32; font-size: 12px;")
+        self.pbkNearLbl.setText(f"저장됨: {pbkNearPct():g}%")
 
     def _fillSurgeWatch(self):
         """저장된 스냅샷만 그린다. 여기서 주문을 내지 않는다. 다시 그리는 동안 차트 탭을 열지 않는다."""

@@ -40,6 +40,104 @@ def _code(raw):
     return normStkCd(raw) or ""
 
 
+PBK_NEAR_PCT = 3.0
+HOLD_BG = "#E8F5E9"
+NEAR_BG = "#FFF59D"
+TOUCH_BG = "#FFE0B2"
+TONE_FG = "#212121"
+
+
+def pbkNearPct(settings=None):
+    """인접 퍼센트. 키가 없으면 3. 파일을 쓰지 않는다."""
+    if settings is None:
+        try:
+            from config.settingsStore import loadSettings
+
+            settings = loadSettings() or {}
+        except Exception:
+            settings = {}
+    raw = settings.get("pbkNearPct") if isinstance(settings, dict) else None
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return PBK_NEAR_PCT
+    if val <= 0:
+        return PBK_NEAR_PCT
+    return val
+
+
+def leg1Filled(row):
+    """1차(5이평) 체결. 매매 슬롯의 leg1 과 같다."""
+    if not isinstance(row, dict):
+        return False
+    leg = row.get("leg1")
+    if isinstance(leg, dict):
+        try:
+            if int(leg.get("qty") or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            pass
+        return leg.get("fillPx") is not None or leg.get("px") is not None
+    return bool(leg)
+
+
+def nextBuyLine(row):
+    """다음 매수 선. 미체결은 5이평, 1차 뒤에는 20이평."""
+    if leg1Filled(row):
+        return "ma20", (row or {}).get("ma20")
+    return "ma5", (row or {}).get("ma5")
+
+
+def _toneNum(raw):
+    if raw is None or raw == "":
+        return None
+    try:
+        num = abs(float(str(raw).replace(",", "").lstrip("+")))
+    except (TypeError, ValueError):
+        return None
+    if num <= 0:
+        return None
+    return num
+
+
+def pbkRowTone(row, price=None, low=None, nearPct=None):
+    """보유는 연초록, 선 이하는 연주황, 위 0~임계는 연노랑.
+
+    보유가 인접·터치보다 우선이다. 색이 없으면 bg 는 None.
+    """
+    pct = PBK_NEAR_PCT if nearPct is None else nearPct
+    try:
+        pct = float(pct)
+    except (TypeError, ValueError):
+        pct = PBK_NEAR_PCT
+    if pct <= 0:
+        pct = PBK_NEAR_PCT
+    lineKey, line = nextBuyLine(row or {})
+    linePx = _toneNum(line)
+    px = _toneNum(price)
+    lowPx = _toneNum(low)
+    holding = bool((row or {}).get("holding")) or str((row or {}).get("role") or "") == "보유"
+    if holding:
+        tone = "hold"
+    elif linePx is None:
+        tone = "none"
+    elif (px is not None and px <= linePx) or (lowPx is not None and lowPx <= linePx):
+        tone = "touch"
+    elif px is not None and linePx < px and (px - linePx) / linePx * 100.0 <= pct:
+        tone = "near"
+    else:
+        tone = "none"
+    bg = {"hold": HOLD_BG, "near": NEAR_BG, "touch": TOUCH_BG}.get(tone)
+    return {
+        "tone": tone,
+        "bg": bg,
+        "fg": TONE_FG if bg else None,
+        "lineKey": lineKey,
+        "line": linePx,
+        "nearPct": pct,
+    }
+
+
 def _held(row):
     if not isinstance(row, dict):
         return False
@@ -99,6 +197,8 @@ def unionRows(candidates, positions, accountHolds):
             continue
         row = slot(code)
         row["holding"] = True
+        if item.get("leg1"):
+            row["leg1"] = item.get("leg1")
         name = str(item.get("stkNm") or item.get("STK_NM") or item.get("name") or "").strip()
         if name:
             row["stkNm"] = name

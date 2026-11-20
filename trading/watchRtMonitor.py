@@ -1034,7 +1034,7 @@ def _unregWatch(ws, reason):
     termLog(f"[watchRt] 0B 해지 ({reason}) {len(codes)}종")
 
 
-def notePolledPx(stkCd, price, tm=""):
+def notePolledPx(stkCd, price, tm="", low=None):
     """REST 현재가. 이미 0B 가 있으면 덮지 않는다."""
     from trading.pbkQuotePlan import applyPollPrice
 
@@ -1045,6 +1045,8 @@ def notePolledPx(stkCd, price, tm=""):
         info, changed = applyPollPrice(_lastPx.get(cd), price, tm)
         if not changed:
             return False
+        if low not in (None, ""):
+            info["lowPrc"] = low
         info["tickYmd"] = datetime.now().strftime("%Y%m%d")
         _lastPx[cd] = info
     return True
@@ -1084,6 +1086,9 @@ def _onWsMessage(msg):
             prcRaw = _nzQuote(vals.get("10"))
             fluRaw = _nzQuote(vals.get("12"))
             tmRaw = _nzQuote(vals.get("20"))
+            lowRaw = _nzQuote(vals.get("18"))
+            if lowRaw is not None:
+                info["lowPrc"] = lowRaw
             if venue == "NXT":
                 if prcRaw is not None:
                     info["nxtPrc"] = prcRaw

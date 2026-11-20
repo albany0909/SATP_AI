@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import sys
 
@@ -11,7 +12,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from strategies.impl.pullbackTwoStep import formatBoardLine, formatCandidateLog
 from utils.pbkWatchScreen import (
+    HOLD_BG,
+    NEAR_BG,
+    TOUCH_BG,
     applyScreenFill,
+    leg1Filled,
+    nextBuyLine,
+    pbkNearPct,
+    pbkRowTone,
     backupWatchOnce,
     bootWatchSelection,
     collectionCodes,
@@ -213,6 +221,38 @@ class PbkWatchScreenTest(unittest.TestCase):
         )
         self.assertEqual([row["stkCd"] for row in priced], ["035420", "005930", "000660"])
         resetScreenFills()
+
+    def test_row_tone_near_touch_and_hold_priority(self):
+        cand = {"role": "후보", "holding": False, "ma5": 100, "ma20": 80}
+        self.assertEqual(nextBuyLine(cand)[0], "ma5")
+        self.assertEqual(pbkRowTone(cand, 103, None, 3)["tone"], "near")
+        self.assertEqual(pbkRowTone(cand, 103, None, 3)["bg"], NEAR_BG)
+        self.assertEqual(pbkRowTone(cand, 103.1, None, 3)["tone"], "none")
+        self.assertEqual(pbkRowTone(cand, 100, None, 3)["tone"], "touch")
+        self.assertEqual(pbkRowTone(cand, 110, 99, 3)["bg"], TOUCH_BG)
+        held = {"role": "보유", "holding": True, "ma5": 100, "ma20": 80, "leg1": {"qty": 1}}
+        self.assertTrue(leg1Filled(held))
+        self.assertEqual(nextBuyLine(held)[0], "ma20")
+        self.assertEqual(pbkRowTone(held, 70, 70, 3)["tone"], "hold")
+        self.assertEqual(pbkRowTone(held, 70, 70, 3)["bg"], HOLD_BG)
+        second = {"role": "후보", "holding": False, "ma5": 100, "ma20": 80, "leg1": {"qty": 2}}
+        self.assertEqual(nextBuyLine(second)[0], "ma20")
+        self.assertEqual(pbkRowTone(second, 82, None, 3)["tone"], "near")
+        self.assertEqual(pbkRowTone(second, 70, None, 3)["tone"], "touch")
+        self.assertEqual(pbkNearPct({}), 3.0)
+        self.assertEqual(pbkNearPct({"pbkNearPct": 1.5}), 1.5)
+        with tempfile.TemporaryDirectory() as folder:
+            live = Path(folder) / "settings.json"
+            live.write_text(json.dumps({"deskTradeMode": "paper", "keep": 1}), encoding="utf-8")
+            import config.settingsStore as store
+
+            with patch.object(store, "_SETTINGS_PATH", live), patch.object(
+                store, "_DEFAULT_PATH", Path(folder) / "missing-default.json",
+            ):
+                self.assertEqual(pbkNearPct(store.loadSettings()), 3.0)
+            self.assertEqual(json.loads(live.read_text(encoding="utf-8")), {"deskTradeMode": "paper", "keep": 1})
+        self.assertEqual(pbkRowTone(cand, 101.2, None, 1.0)["tone"], "none")
+        self.assertEqual(pbkRowTone(cand, 101, None, 1.0)["tone"], "near")
 
 
 if __name__ == "__main__":

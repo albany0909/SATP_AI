@@ -118,6 +118,10 @@ class PbkBoardCrashTest(unittest.TestCase):
             app.processEvents()
             self.assertEqual(calls, [True, True])
             self.assertFalse(win._watchRefreshBusy)
+            win._pbkSortBusy = True
+            win._tickPbkWatchPx()
+            self.assertFalse(win.tradeWatchFrozen.isSortingEnabled())
+            win._pbkSortBusy = False
             ordered = sortRoleGroups(
                 [{"role": "후보", "v": 1}, {"role": "보유", "v": 0}],
                 lambda row: row["v"],
