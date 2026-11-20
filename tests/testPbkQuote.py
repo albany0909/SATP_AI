@@ -225,6 +225,71 @@ class PbkQuotePlanTest(unittest.TestCase):
             mon._pbkTouch.clear()
             mon._pbkTouch.update(savedPbk)
 
+    def test_account_sync_keeps_pbk_subscription(self):
+        import trading.watchRtMonitor as mon
+
+        pbk = [f"{i:06d}" for i in range(1, 57)]
+        watch = [f"{i:06d}" for i in range(100, 113)]
+        savedCodes = list(mon._regCodes)
+        savedItems = dict(mon._regItems)
+        savedPbk = set(mon._pbkTouch)
+        removed = []
+
+        class _Ws:
+            isLoggedIn = True
+
+            def sendReg(self, types, items, grpNo="1", refresh="1"):
+                return None
+
+            def sendRemove(self, types, items, grpNo="1"):
+                removed.append(list(items))
+
+        try:
+            mon._regCodes[:] = list(pbk)
+            mon._regItems.clear()
+            mon._regItems.update({code: [code] for code in pbk})
+            mon._pbkTouch.clear()
+            mon._pbkTouch.update(pbk)
+            with patch.object(mon, "_isQuoteSessionNow", return_value=True), patch.object(
+                mon, "_monCodes", return_value=list(watch),
+            ), patch.object(mon, "getWsClient", return_value=_Ws()), patch.object(
+                mon, "_isNxtStk", return_value=False,
+            ), patch.object(mon, "_writeState", lambda *_a, **_k: None), patch(
+                "trading.maTouchLive.prepareMaTouchSession", lambda *_a, **_k: None,
+            ):
+                mon.reregWatchForExch("실계좌동기화")
+            self.assertEqual(removed, [])
+            for code in pbk:
+                self.assertIn(code, mon._regCodes)
+            for code in watch:
+                self.assertIn(code, mon._regCodes)
+        finally:
+            mon._regCodes[:] = savedCodes
+            mon._regItems.clear()
+            mon._regItems.update(savedItems)
+            mon._pbkTouch.clear()
+            mon._pbkTouch.update(savedPbk)
+
+    def test_holdings_polled_when_subscription_dropped(self):
+        from datetime import datetime
+
+        from trading.pbkQuotePlan import pollBatch
+
+        now = datetime(2026, 11, 20, 10, 11, 0)
+        rows = [
+            {"stkCd": "900290", "holding": True},
+            {"stkCd": "300080", "holding": True},
+            {"stkCd": "005930", "holding": False},
+            {"stkCd": "000660", "holding": True},
+        ]
+        ticks = {
+            "000660": {"src": "poll", "curPrc": 10, "tm": "101000", "tickYmd": "20261120"},
+        }
+        batch = pollBatch(rows, ticks, now, registered=set(), limit=1)
+        self.assertEqual(set(batch[:2]), {"900290", "300080"})
+        self.assertEqual(batch[2:], ["005930"])
+        self.assertNotIn("000660", batch)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

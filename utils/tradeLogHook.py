@@ -88,6 +88,12 @@ def emitFillLog(sideLabel, stkCd, stkNm, qty, px, ordNo="", cmsn=0, tax=0, cumQt
         mmgOnBrokerFill(sideLabel, stkCd, qty, px, ordNo)
     except Exception:
         pass
+    try:
+        from trading.pbk01Live import notePbkBrokerFill
+
+        notePbkBrokerFill(sideLabel, stkCd, qty, px, ordNo, cumQty=cumQty)
+    except Exception:
+        pass
     fn = _fillHook
     if fn is None:
         return

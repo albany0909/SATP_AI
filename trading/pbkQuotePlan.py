@@ -240,6 +240,33 @@ def takeOldest(entries, limit):
     return [item["stkCd"] for item in (entries or [])[: int(limit)]]
 
 
+def pollBatch(rows, ticks, now, registered=None, limit=POLL_PER_CYCLE, staleSec=None):
+    """보유는 구독이 빠져도 전부 폴링하고, 그 다음 후보를 limit 만큼 넣는다.
+
+    이미 신선한 시세가 있으면 보유라도 다시 받지 않는다.
+    """
+    stale = stalePollEntries(rows, ticks, now, registered=registered, staleSec=staleSec)
+    holding = set()
+    for row in rows or []:
+        if isinstance(row, dict) and row.get("holding"):
+            code = str(row.get("stkCd") or "").strip()
+            if code:
+                holding.add(code)
+    holds = []
+    rest = []
+    for item in stale:
+        code = item["stkCd"]
+        info = (ticks or {}).get(code) or {}
+        if code in holding:
+            if quoteIsFresh(info, now, staleSec):
+                continue
+            holds.append(code)
+        else:
+            rest.append(code)
+    extra = rest[: int(limit)] if int(limit or 0) > 0 else []
+    return holds + extra
+
+
 def applyPollPrice(info, price, tm, low=None, now=None, staleSec=None):
     """더 새로운 오늘 0B 가 있으면 폴링 값으로 덮지 않는다."""
     from datetime import datetime

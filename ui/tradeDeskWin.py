@@ -4362,36 +4362,56 @@ class TradeDeskWin(QMainWindow):
                     str(r.get("stkNm") or ""),
                 )
             )
-        # 실계좌관리: 보유 전체는 관심, 매매 버튼 종목만 좌측
+        # 실전은 RAM01 매매 등록만. 모의는 계좌 잔고와 PBK 보유를 함께 보여 준다.
         self._acntAllHolds = list(holds)
-        syncGot = {}
+        mode = "paper"
         try:
-            from trading.realAcntMgr import isTradeOn, syncAcntHolds
+            from utils.tradeSession import getDeskTradeMode
 
-            syncGot = syncAcntHolds(self._acntAllHolds) or {}
-        except Exception as err:
-            termLog(f"[매매창] 실계좌 관심 동기화 실패: {err}")
-
-            def isTradeOn(_cd):
-                return False
-
-        tradeHolds = []
-        for row in self._acntAllHolds:
-            if not isTradeOn(row.get("stkCd")):
-                continue
-            row["algCds"] = ["RAM01"]
-            row["algLabel"] = "실계좌"
-            tradeHolds.append(row)
-        holds = tradeHolds
-        self._holdSkipCds = set()
-        self._holdRows = holds
-        if syncGot.get("changed"):
+            mode = getDeskTradeMode()
+        except Exception:
+            mode = "paper"
+        if str(mode).lower() == "real":
+            syncGot = {}
             try:
-                from trading.watchRtMonitor import reregWatchForExch
+                from trading.realAcntMgr import isTradeOn, syncAcntHolds
 
-                reregWatchForExch("실계좌동기화")
+                syncGot = syncAcntHolds(self._acntAllHolds) or {}
+            except Exception as err:
+                termLog(f"[매매창] 실계좌 관심 동기화 실패: {err}")
+
+                def isTradeOn(_cd):
+                    return False
+
+            from trading.pbkOrderPlan import visibleHoldRows
+
+            holds = visibleHoldRows("real", self._acntAllHolds, [], isTradeOn)
+            if syncGot.get("changed"):
+                try:
+                    from trading.watchRtMonitor import reregWatchForExch
+
+                    reregWatchForExch("실계좌동기화")
+                except Exception:
+                    pass
+        else:
+            pbkPos = []
+            try:
+                from utils.pbk01Store import latestByKind, pbkPath
+
+                pbkPos = (latestByKind(pbkPath("pbk01_state.jsonl"), "state") or {}).get("positions") or []
+            except Exception:
+                pbkPos = []
+            from trading.pbkOrderPlan import visibleHoldRows
+
+            holds = visibleHoldRows("paper", self._acntAllHolds, pbkPos, lambda _cd: False)
+            try:
+                from trading.pbk01Live import notePbkAccountQty
+
+                notePbkAccountQty(self._acntAllHolds)
             except Exception:
                 pass
+        self._holdSkipCds = set()
+        self._holdRows = holds
         self._acntReady = True
         self._paintHoldings()
         # 원장 청산 반영 후 관심 행번호 색을 보유와 맞춘다

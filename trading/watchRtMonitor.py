@@ -804,15 +804,40 @@ def _flatItems(regMap, codes=None):
     return items
 
 
+def _codesWithPbk(codes):
+    """관심 목록에 PBK 보유·후보 구독을 다시 붙인다."""
+    out = []
+    seen = set()
+    for raw in list(codes or []):
+        cd = normStkCd(raw)
+        if cd and cd not in seen:
+            seen.add(cd)
+            out.append(cd)
+    with _lock:
+        extra = list(_pbkTouch)
+    for cd in extra:
+        if cd and cd not in seen:
+            seen.add(cd)
+            out.append(cd)
+    return out
+
+
 def reregWatchForExch(reason="거래소변경"):
-    """매매 거래소 변경 시 시세 구간이면 0B 를 다시 등록한다."""
+    """매매 거래소 변경 시 시세 구간이면 0B 를 다시 등록한다.
+
+    계좌 동기화는 기존 구독을 지우지 않고 없는 종목만 더한다.
+    """
     if not _isQuoteSessionNow():
         termLog(f"[watchRt] {reason} — 시세구간 외, 다음 구독에 반영")
         return
+    if reason == "실계좌동기화":
+        addWatchRtCodes(_monCodes(), reason)
+        return
     ws = getWsClient()
+    codes = _codesWithPbk(_monCodes())
     _unregWatch(ws, reason)
     if ws is not None and getattr(ws, "isLoggedIn", False):
-        _regWatch(ws, _monCodes(), reason)
+        _regWatch(ws, codes, reason)
     else:
         termLog(f"[watchRt] {reason} — WS 미로그인, LOGIN 후 구독")
 

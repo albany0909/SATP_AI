@@ -94,10 +94,12 @@ def _legBlocked(pos, leg):
     legRow = pos.get(f"leg{leg}")
     if isinstance(legRow, dict):
         try:
-            if int(legRow.get("qty") or 0) > 0:
+            if int(legRow.get("qty") or 0) > 0 or int(legRow.get("rmnQty") or 0) > 0:
                 return True
         except (TypeError, ValueError):
             pass
+        if str(legRow.get("ordNo") or "").strip():
+            return True
         return legRow.get("fillPx") is not None
     return bool(legRow)
 
@@ -121,6 +123,21 @@ def _posByCode(positions):
     return out
 
 
+def sellableQty(pos):
+    """매도 수량. brokerQty 가 있으면 키움 실제 잔고만 쓴다."""
+    if not isinstance(pos, dict):
+        return 0
+    if pos.get("brokerQty") is not None:
+        try:
+            return max(0, int(pos.get("brokerQty") or 0))
+        except (TypeError, ValueError):
+            return 0
+    try:
+        return max(0, int(pos.get("qty") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _slotUsed(pos):
     if not isinstance(pos, dict):
         return False
@@ -142,6 +159,7 @@ def buildLiveActions(
     slotKrw=6_000_000,
     slotLimit=5,
     now=None,
+    requireBroker=False,
 ):
     """주문·놓침·건너뜀. 브로커는 호출하지 않고, 과거 가격으로 체결을 만들지 않는다."""
     from strategies.impl.pullbackTwoStep import (
@@ -186,11 +204,12 @@ def buildLiveActions(
         if pos.get("closed") or (pos.get("pending") or {}).get("sell"):
             _skip(code, "매도대기")
             continue
-        try:
-            qty = int(pos.get("qty") or 0)
-        except (TypeError, ValueError):
-            qty = 0
+        if requireBroker and pos.get("brokerQty") is None:
+            _skip(code, "실체결대기")
+            continue
+        qty = sellableQty(pos)
         if qty <= 0:
+            _skip(code, "실체결없음")
             continue
         quote = (quotes or {}).get(code) or {}
         if not quoteTradable(quote, now):
@@ -343,6 +362,9 @@ def applyPaperResult(positions, action, status, ordNo="", ymd="", calendar=None)
         "ymd": str(ymd or ""),
     }
     found[f"leg{legKey}"] = leg
+    if found.get("brokerQty") is None:
+        found["brokerQty"] = 0
+        found["brokerAvg"] = None
     fills = []
     for key in ("leg1", "leg2"):
         row = found.get(key)
@@ -358,6 +380,361 @@ def applyPaperResult(positions, action, status, ordNo="", ymd="", calendar=None)
     if not found.get("stkNm"):
         found["stkNm"] = action.get("stkNm") or code
     return rows
+
+
+def _ordKey(raw):
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    bare = text.lstrip("0")
+    return bare or "0"
+
+
+def _sameOrd(left, right):
+    a = _ordKey(left)
+    b = _ordKey(right)
+    return bool(a) and a == b
+
+
+def noteBrokerFill(positions, stkCd, side, qty, px, ordNo="", cumQty=None):
+    """키움 00 체결. 전략 기록가(fillPx)는 바꾸지 않고 실제 수량·평균만 누적한다.
+
+    같은 주문번호의 누적 체결(cumQty)이 이미 반영된 값보다 크지 않으면 더하지 않는다.
+    """
+    code = str(stkCd or "")
+    sideText = str(side or "")
+    buy = "매수" in sideText or sideText.upper() in ("BUY", "B")
+    sell = "매도" in sideText or sideText.upper() in ("SELL", "S")
+    try:
+        q = abs(int(qty or 0))
+    except (TypeError, ValueError):
+        q = 0
+    price = absPx(px)
+    if not code or q <= 0 or price is None or not (buy or sell):
+        return list(positions or []), False
+    rows = [dict(pos) for pos in (positions or []) if isinstance(pos, dict)]
+    found = None
+    for pos in rows:
+        if str(pos.get("stkCd") or "") != code:
+            continue
+        pending = pos.get("pending") or {}
+        legs = [pos.get("leg1"), pos.get("leg2")]
+        matched = False
+        if str(ordNo or ""):
+            for item in list(pending.values()) + [leg for leg in legs if isinstance(leg, dict)]:
+                if _sameOrd((item or {}).get("ordNo"), ordNo):
+                    matched = True
+                    break
+            for item in pos.get("openOrders") or []:
+                if _sameOrd((item or {}).get("ordNo"), ordNo):
+                    matched = True
+                    break
+        if matched or not str(ordNo or ""):
+            found = pos
+            break
+    if found is None:
+        return rows, False
+    book = dict(found.get("ordFill") or {})
+    key = _ordKey(ordNo) or str(ordNo or "")
+    try:
+        prev = int(book.get(key) or 0)
+    except (TypeError, ValueError):
+        prev = 0
+    if cumQty not in (None, ""):
+        try:
+            target = abs(int(cumQty))
+        except (TypeError, ValueError):
+            target = prev + q
+    else:
+        target = prev + q
+    delta = max(0, target - prev)
+    book[key] = max(prev, target)
+    found["ordFill"] = book
+    try:
+        held = int(found.get("brokerQty") or 0)
+    except (TypeError, ValueError):
+        held = 0
+    if buy:
+        oldAvg = absPx(found.get("brokerAvg")) or 0
+        newQty = held + delta
+        if delta and newQty > 0:
+            found["brokerAvg"] = ((oldAvg * held) + (price * delta)) / newQty
+        found["brokerQty"] = newQty
+    else:
+        found["brokerQty"] = max(0, held - delta)
+    found["brokerSrc"] = "fill"
+    for legName in ("leg1", "leg2"):
+        leg = found.get(legName)
+        if isinstance(leg, dict) and _sameOrd(leg.get("ordNo"), ordNo):
+            try:
+                plan = int(leg.get("qty") or 0)
+            except (TypeError, ValueError):
+                plan = 0
+            leg = dict(leg)
+            leg["rmnQty"] = max(0, plan - int(book.get(key) or 0))
+            found[legName] = leg
+    return rows, True
+
+
+def applyAccountQty(positions, accountRows):
+    """잔고 조회의 실제 수량. 전략 기록 수량과는 따로 둔다."""
+    by = {}
+    for row in accountRows or []:
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("stkCd") or "")
+        try:
+            qty = int(row.get("qtyNum") or 0)
+        except (TypeError, ValueError):
+            qty = 0
+        if code and qty > 0:
+            by[code] = row
+    rows = []
+    changed = False
+    for pos in positions or []:
+        if not isinstance(pos, dict):
+            continue
+        item = dict(pos)
+        code = str(item.get("stkCd") or "")
+        acct = by.get(code)
+        if acct is not None:
+            newQty = int(acct.get("qtyNum") or 0)
+            avg = acct.get("avgNum")
+            newAvg = absPx(avg) if avg not in (None, "") else item.get("brokerAvg")
+            if item.get("brokerQty") != newQty or item.get("brokerAvg") != newAvg:
+                item["brokerQty"] = newQty
+                item["brokerAvg"] = newAvg
+                item["brokerSrc"] = "account"
+                changed = True
+        rows.append(item)
+    return rows, changed
+
+
+def parseOpenOrders(body):
+    """ka10075 미체결(oso). 잔량이 있는 행만."""
+    from api.getAcntEvlt import parsePadNum
+    from utils.stkCdUtil import normStkCd
+
+    out = []
+    for item in (body or {}).get("oso") or []:
+        if not isinstance(item, dict):
+            continue
+        rmn = parsePadNum(item.get("oso_qty")) or 0
+        if rmn <= 0:
+            continue
+        sideName = str(item.get("io_tp_nm") or "")
+        side = "SELL" if "매도" in sideName else "BUY"
+        out.append({
+            "stkCd": normStkCd(item.get("stk_cd")),
+            "ordNo": str(item.get("ord_no") or "").strip(),
+            "side": side,
+            "ordQty": parsePadNum(item.get("ord_qty")) or 0,
+            "rmnQty": int(rmn),
+            "fillQty": parsePadNum(item.get("cntr_qty")) or 0,
+            "fillPx": absPx(item.get("cntr_pric")),
+        })
+    return out
+
+
+def parseAccountHolds(body):
+    """kt00004 보유. 잔량이 있는 종목만."""
+    from api.getAcntEvlt import parsePadNum
+    from utils.stkCdUtil import normStkCd
+
+    out = []
+    raw = (body or {}).get("stk_acnt_evlt_prst") or []
+    if not isinstance(raw, list):
+        return out
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        qty = parsePadNum(item.get("rmnd_qty")) or 0
+        if qty <= 0:
+            continue
+        code = normStkCd(item.get("stk_cd"))
+        if not code:
+            continue
+        out.append({
+            "stkCd": code,
+            "stkNm": item.get("stk_nm") or code,
+            "qtyNum": int(qty),
+            "avgNum": parsePadNum(item.get("avg_prc")) or 0,
+        })
+    return out
+
+
+def reconcilePositions(positions, accountRows=None, openOrders=None, accountKnown=False):
+    """구 상태(주문 시점 전량으로 적힌 leg)를 보유로 유지한다.
+
+    잔고가 있으면 실제 수량·평균만 덮어쓰고, 미체결은 기존 주문번호에 잔량만 붙인다.
+    새 주문은 만들지 않는다.
+    """
+    acct = {}
+    for row in accountRows or []:
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("stkCd") or "")
+        try:
+            qty = int(row.get("qtyNum") or 0)
+        except (TypeError, ValueError):
+            qty = 0
+        if code and qty > 0:
+            acct[code] = row
+    orders = [row for row in (openOrders or []) if isinstance(row, dict)]
+    out = []
+    for pos in positions or []:
+        if not isinstance(pos, dict):
+            continue
+        item = dict(pos)
+        code = str(item.get("stkCd") or "")
+        if accountKnown:
+            row = acct.get(code)
+            if row is None:
+                item["brokerQty"] = 0
+                item["brokerSrc"] = "account"
+            else:
+                item["brokerQty"] = int(row.get("qtyNum") or 0)
+                avg = row.get("avgNum")
+                if avg not in (None, ""):
+                    item["brokerAvg"] = absPx(avg)
+                item["brokerSrc"] = "account"
+        book = dict(item.get("ordFill") or {})
+        opens = []
+        for order in orders:
+            if str(order.get("stkCd") or "") != code:
+                continue
+            if str(order.get("side") or "BUY") != "BUY":
+                continue
+            opens.append(dict(order))
+            key = _ordKey(order.get("ordNo"))
+            filled = int(order.get("fillQty") or 0)
+            if not filled:
+                filled = max(0, int(order.get("ordQty") or 0) - int(order.get("rmnQty") or 0))
+            if key:
+                book[key] = max(int(book.get(key) or 0), filled)
+        item["ordFill"] = book
+        item["openOrders"] = opens
+        for legName in ("leg1", "leg2"):
+            leg = item.get(legName)
+            if not isinstance(leg, dict):
+                continue
+            leg = dict(leg)
+            matched = None
+            for order in opens:
+                if _sameOrd(leg.get("ordNo"), order.get("ordNo")):
+                    matched = order
+                    break
+            if matched is None and not str(leg.get("ordNo") or "") and len(opens) == 1:
+                matched = opens[0]
+                leg["ordNo"] = str(matched.get("ordNo") or "")
+            if matched is not None:
+                leg["rmnQty"] = int(matched.get("rmnQty") or 0)
+                if not str(leg.get("ordNo") or ""):
+                    leg["ordNo"] = str(matched.get("ordNo") or "")
+            item[legName] = leg
+        out.append(item)
+    return out
+
+
+def unfilledRemainder(positions):
+    """주문 수량과 실제 체결 수량의 차이. 추격 주문은 만들지 않는다."""
+    out = []
+    for pos in positions or []:
+        if not isinstance(pos, dict) or pos.get("closed"):
+            continue
+        plan = 0
+        for key in ("leg1", "leg2"):
+            leg = pos.get(key) or {}
+            if isinstance(leg, dict):
+                try:
+                    plan += int(leg.get("qty") or 0)
+                except (TypeError, ValueError):
+                    pass
+        broker = sellableQty(pos) if pos.get("brokerQty") is not None else 0
+        left = plan - broker
+        if left > 0:
+            out.append({
+                "stkCd": str(pos.get("stkCd") or ""),
+                "planQty": plan,
+                "brokerQty": broker,
+                "leftQty": left,
+            })
+    return out
+
+
+def paperHoldRows(accountRows, pbkPositions):
+    """모의 보유 표. 계좌 잔고와 PBK 포지션을 함께 둔다. RAM01 필터는 없다."""
+    by = {}
+    for row in accountRows or []:
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("stkCd") or "")
+        try:
+            qty = int(row.get("qtyNum") or 0)
+        except (TypeError, ValueError):
+            qty = 0
+        if not code or qty <= 0:
+            continue
+        item = dict(row)
+        item["algCds"] = list(item.get("algCds") or [])
+        by[code] = item
+    for pos in pbkPositions or []:
+        if not isinstance(pos, dict) or pos.get("closed"):
+            continue
+        code = str(pos.get("stkCd") or "")
+        if not code:
+            continue
+        if code in by:
+            algs = list(by[code].get("algCds") or [])
+            if "PBK01" not in algs:
+                algs.append("PBK01")
+            by[code]["algCds"] = algs
+            by[code]["algLabel"] = " · ".join(algs)
+            continue
+        show = sellableQty(pos)
+        if show <= 0:
+            try:
+                show = int(pos.get("qty") or 0)
+            except (TypeError, ValueError):
+                show = 0
+        if show <= 0:
+            continue
+        px = absPx(pos.get("brokerAvg") if pos.get("brokerAvg") is not None else pos.get("avg")) or 0
+        by[code] = {
+            "stkCd": code,
+            "stkNm": pos.get("stkNm") or code,
+            "qtyNum": show,
+            "avgNum": int(px),
+            "curNum": int(px),
+            "apiCurNum": int(px),
+            "purNum": int(px * show),
+            "evltNum": int(px * show),
+            "pnlNum": 0,
+            "algCds": ["PBK01"],
+            "algLabel": "PBK01",
+            "firstBuyDt": pos.get("firstBuyDt") or "",
+            "qty": str(show),
+            "avgPrc": str(int(px)),
+            "curPrc": str(int(px)),
+            "pnl": "0 (0%)",
+        }
+    return list(by.values())
+
+
+def visibleHoldRows(mode, accountRows, pbkPositions, tradeOn):
+    """실전은 RAM01 매매 등록만. 모의는 계좌 잔고와 PBK 보유를 보여 준다."""
+    if str(mode or "").lower() == "real":
+        out = []
+        for row in accountRows or []:
+            if not isinstance(row, dict):
+                continue
+            if tradeOn(row.get("stkCd")):
+                item = dict(row)
+                item["algCds"] = ["RAM01"]
+                item["algLabel"] = "실계좌"
+                out.append(item)
+        return out
+    return paperHoldRows(accountRows, pbkPositions)
 
 
 def missedPath(folder, ymd):
