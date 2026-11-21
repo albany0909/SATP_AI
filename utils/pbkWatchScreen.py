@@ -200,6 +200,10 @@ def unionRows(candidates, positions, accountHolds):
         row["holding"] = True
         if item.get("leg1"):
             row["leg1"] = item.get("leg1")
+        if item.get("firstBuyDt"):
+            row["firstBuyDt"] = str(item.get("firstBuyDt"))
+        if item.get("exitDt"):
+            row["exitDt"] = str(item.get("exitDt"))
         name = str(item.get("stkNm") or item.get("STK_NM") or item.get("name") or "").strip()
         if name:
             row["stkNm"] = name
@@ -562,6 +566,18 @@ def _px(raw):
     if num <= 0:
         return None
     return num
+
+
+def holdingExitDay(row):
+    """보유 예상 매도일. 첫 체결일을 0번째로 센 f+10 거래일. 휴장일은 뺀다."""
+    from strategies.impl.pullbackTwoStep import _ymd
+
+    day = _ymd((row or {}).get("exitDt"))
+    if day:
+        return day
+    from trading.pbkOrderPlan import exitDtFromFirst
+
+    return exitDtFromFirst((row or {}).get("firstBuyDt")) or ""
 
 
 def formatPx(value):

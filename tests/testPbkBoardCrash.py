@@ -271,6 +271,65 @@ class PbkBoardCrashTest(unittest.TestCase):
         app.processEvents()
         win.close()
 
+    def test_chart_tab_is_first_and_hold_exit_is_red(self):
+        from trading.pbkOrderPlan import exitDtFromFirst
+        from utils.pbkWatchScreen import holdingExitDay
+
+        sell = exitDtFromFirst("20261120")
+        self.assertEqual(sell, "20261204")
+        for code in ("900290", "300080", "300120", "071970", "094840"):
+            self.assertEqual(holdingExitDay({"stkCd": code, "firstBuyDt": "20261120"}), "20261204")
+        self.assertEqual(
+            holdingExitDay({"firstBuyDt": "20261120", "exitDt": "20261204"}),
+            "20261204",
+        )
+
+        app = QApplication.instance() or QApplication([])
+        from ui.tradeDeskWin import TradeDeskWin
+
+        win = TradeDeskWin()
+        rail = win.chartTab.parentWidget().layout()
+        self.assertIs(rail.itemAt(0).widget(), win.chartTab)
+        self.assertEqual(win._sideKey, "")
+        self.assertFalse(win.sidePanel.isVisible())
+        self.assertFalse(any(btn.isChecked() for btn in (
+            win.chartTab, win.acctTab, win.stratTab, win.dayTab,
+            win.logTab, win.errTab, win.settTab, win.mgrTab,
+        )))
+        rows = [
+            {
+                "role": "보유", "holding": True, "stkCd": "300120", "stkNm": "라온피플",
+                "ma5": 2500, "ma20": 2400, "firstBuyDt": "20261120", "exitDt": "20261204",
+                "expireDt": "20270115",
+            },
+            {
+                "role": "후보", "candidate": True, "stkCd": "005930", "stkNm": "삼성전자",
+                "ma5": 70000, "ma20": 69000, "expireDt": "20270115",
+            },
+        ]
+        with patch("utils.pbkWatchScreen.loadScreenRows", return_value=rows), patch(
+            "utils.pbkWatchScreen.watchScreenOn", return_value=True,
+        ), patch("utils.pbkWatchScreen.noteScreenRefresh", return_value={}), patch(
+            "utils.pbkWatchScreen.ensureWatchBackup", return_value={"ok": True},
+        ), patch("trading.watchRtMonitor.getWatchLastPxMap", return_value={}), patch(
+            "trading.watchRtMonitor._isQuoteSessionNow", return_value=False,
+        ):
+            win._watchAlgCd = "pbk"
+            win._fillPbkWatch()
+        frz = win.tradeWatchFrozen
+        hold = next(i for i in range(frz.rowCount()) if frz.item(i, 1).text() == "300120")
+        cand = next(i for i in range(frz.rowCount()) if frz.item(i, 1).text() == "005930")
+        self.assertEqual(frz.item(hold, 6).text(), "2026-12-04")
+        self.assertEqual(frz.item(hold, 6).foreground().color().name().lower(), "#d32f2f")
+        self.assertEqual(frz.item(cand, 6).text(), "2027-01-15")
+        self.assertNotEqual(frz.item(cand, 6).foreground().color().name().lower(), "#d32f2f")
+        win._sideKey = "acct"
+        win._applyWatchChartPick("300120", "라온피플")
+        self.assertEqual(win._sideKey, "acct")
+        self.assertFalse(win.chartTab.isChecked())
+        app.processEvents()
+        win.close()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -1620,12 +1620,12 @@ class TradeDeskWin(QMainWindow):
         self.chartTab.clicked.connect(lambda c: self._onSideTab("chart", c))
         self.settTab.clicked.connect(lambda c: self._onSideTab("sett", c))
         self.mgrTab.clicked.connect(lambda c: self._onSideTab("mgr", c))
+        railLay.addWidget(self.chartTab)
         railLay.addWidget(self.acctTab)
         railLay.addWidget(self.stratTab)
         railLay.addWidget(self.dayTab)
         railLay.addWidget(self.logTab)
         railLay.addWidget(self.errTab)
-        railLay.addWidget(self.chartTab)
         railLay.addWidget(self.settTab)
         railLay.addWidget(self.mgrTab)
         railLay.addStretch(1)
@@ -5682,6 +5682,7 @@ class TradeDeskWin(QMainWindow):
         from utils.pbkWatchScreen import (
             ensureWatchBackup,
             formatPx,
+            holdingExitDay,
             keepShownPx,
             legacyWatchRows,
             loadScreenRows,
@@ -5765,6 +5766,14 @@ class TradeDeskWin(QMainWindow):
                 else:
                     expireTxt = expire or "-"
                 held = str(row.get("role") or "") == "보유"
+                if held:
+                    sellDay = holdingExitDay(row)
+                    if len(sellDay) == 8:
+                        expireTxt = f"{sellDay[:4]}-{sellDay[4:6]}-{sellDay[6:8]}"
+                        expire = sellDay
+                    else:
+                        expireTxt = "-"
+                        expire = ""
                 self._pbkToneMeta[code] = {
                     "role": str(row.get("role") or ""),
                     "holding": bool(row.get("holding")) or held,
@@ -6062,6 +6071,11 @@ class TradeDeskWin(QMainWindow):
             cell.setBackground(bg)
             cell.setForeground(fg)
             cell.setData(Qt.ItemDataRole.UserRole + 4, key)
+        if str((meta or {}).get("role") or "") == "보유" and frz.columnCount() > 6:
+            head = frz.horizontalHeaderItem(6)
+            cell = frz.item(row, 6)
+            if cell is not None and head is not None and head.text() == "만료일":
+                cell.setForeground(QBrush(QColor("#d32f2f")))
         return str((meta or {}).get("role") or "") != "보유"
 
     def _savePbkNearPct(self):
