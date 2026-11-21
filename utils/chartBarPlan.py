@@ -703,20 +703,21 @@ def deskSideSplitSizes(total, saved=None, chartOpen=False):
 
 
 def chartActionForWatchPick(userPick, code, currentCode="", refreshBusy=False, syncBusy=False, chartOpen=False):
-    """관심종목 행 선택 때 차트 탭을 열지 결정한다.
+    """관심종목 행 선택 때 열린 차트만 다시 그릴지 결정한다.
 
-    반환: open(탭을 연다), reload(이미 열린 차트만 바꾼다), ignore.
-    표 갱신·동기 재선택은 userPick 이 아니거나 busy 이므로 탭을 열지 않는다.
+    반환: reload(차트 탭이 이미 열려 있고 종목이 바뀜), ignore.
+    다른 탭이면 탭을 열지 않고 차트도 그리지 않는다.
+    표 갱신·동기 재선택은 userPick 이 아니거나 busy 이므로 그리지 않는다.
     """
     if refreshBusy or syncBusy or not userPick:
         return "ignore"
     if not str(code or "").strip():
         return "ignore"
-    if chartOpen:
-        if str(code) == str(currentCode or ""):
-            return "ignore"
-        return "reload"
-    return "open"
+    if not chartOpen:
+        return "ignore"
+    if str(code) == str(currentCode or ""):
+        return "ignore"
+    return "reload"
 
 
 def mergeLoadCodes(*groups):

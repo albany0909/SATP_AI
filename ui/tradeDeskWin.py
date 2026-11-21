@@ -1989,7 +1989,7 @@ class TradeDeskWin(QMainWindow):
         return cd, nm
 
     def _onWatchRowPicked(self):
-        """관심종목 고정 칸·가로 칸에서 사용자가 고르면 차트 탭을 연다."""
+        """관심종목 행은 선택만 한다. 차트 탭이 이미 열려 있을 때만 그 종목을 그린다."""
         if getattr(self, "_watchRefreshBusy", False):
             return
         if getattr(self, "_chartSelBusy", False):
@@ -2016,7 +2016,7 @@ class TradeDeskWin(QMainWindow):
         self._applyWatchChartPick(cd, nm)
 
     def _onSurgeRowPicked(self):
-        """급등주 표에서 사용자가 고르면 같은 차트 탭을 연다."""
+        """급등주 행도 선택만 한다. 차트 탭이 열려 있을 때만 그 종목을 그린다."""
         if getattr(self, "_watchRefreshBusy", False) or getattr(self, "_chartSelBusy", False):
             return
         cd, nm = self._selectedSurgeStk()
@@ -2038,7 +2038,7 @@ class TradeDeskWin(QMainWindow):
         return cd, nm
 
     def _applyWatchChartPick(self, cd, nm):
-        """실제 행 선택만 차트 탭을 연다. 갱신 중이면 열지 않는다."""
+        """차트 탭이 열려 있을 때만 종목을 바꾼다. 탭은 열지 않는다."""
         from utils.chartBarPlan import chartActionForWatchPick
 
         action = chartActionForWatchPick(
@@ -2049,19 +2049,13 @@ class TradeDeskWin(QMainWindow):
             syncBusy=getattr(self, "_chartSelBusy", False),
             chartOpen=getattr(self, "_sideKey", "") == "chart",
         )
-        if action == "ignore":
+        if action != "reload":
             return
         self._chartStkCd = cd
         self._chartStkNm = nm
         self._chartFetchTried = set()
         self._subscribeChartQuote(cd)
-        if action == "reload":
-            self._reloadDeskChart()
-            return
-        btn = getattr(self, "chartTab", None)
-        if btn is not None and not btn.isChecked():
-            btn.setChecked(True)
-        self._onSideTab("chart", True)
+        self._reloadDeskChart()
 
     def _subscribeChartQuote(self, code):
         """차트로 연 종목은 0B 구독에 넣는다. 주문은 내지 않는다."""

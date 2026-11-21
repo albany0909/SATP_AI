@@ -1739,7 +1739,7 @@ class SurgeTradeTest(unittest.TestCase):
         self.assertNotIn("backtest.engine", src)
         from utils.chartBarPlan import chartActionForWatchPick
 
-        self.assertEqual(chartActionForWatchPick(True, "002320", chartOpen=False), "open")
+        self.assertEqual(chartActionForWatchPick(True, "002320", chartOpen=False), "ignore")
         self.assertEqual(
             chartActionForWatchPick(True, "053800", currentCode="002320", chartOpen=True),
             "reload",
@@ -3114,7 +3114,7 @@ class SurgeTradeTest(unittest.TestCase):
             "qty": 0,
         })
         self.assertTrue(any(pullbackMarks(bars)))
-        self.assertEqual(chartActionForWatchPick(True, "005930", chartOpen=False), "open")
+        self.assertEqual(chartActionForWatchPick(True, "005930", chartOpen=False), "ignore")
         pane = DeskStkChartPane()
         pane.resize(980, 720)
         pane.show()
@@ -3231,7 +3231,7 @@ class SurgeTradeTest(unittest.TestCase):
         bars = [{"tradeDt": f"202001{i:02d}" if i < 28 else f"202002{(i % 28) + 1:02d}", "open": 10, "high": 10, "low": 9, "close": 10, "qty": 0} for i in range(1, 251)]
         bars.append({"tradeDt": "20201201", "open": 10, "high": 12, "low": 10, "close": 12, "qty": 0})
         bars.append({"tradeDt": "20201202", "open": 12, "high": 13, "low": 11, "close": 13, "qty": 0})
-        self.assertEqual(chartActionForWatchPick(True, "005930", chartOpen=False), "open")
+        self.assertEqual(chartActionForWatchPick(True, "005930", chartOpen=False), "ignore")
         pane = DeskStkChartPane()
         pane.resize(980, 720)
         pane.show()
