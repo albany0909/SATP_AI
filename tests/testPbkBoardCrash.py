@@ -48,10 +48,11 @@ class PbkBoardCrashTest(unittest.TestCase):
         app.processEvents()
         self.assertEqual(win.tradeWatchFrozen.rowCount(), 48)
         self.assertFalse(win.tradeWatchFrozen.isSortingEnabled())
-        text = win.pbkBoard.text()
-        self.assertNotIn("\n", text)
-        self.assertLessEqual(win.pbkBoard.height(), 22)
-        self.assertTrue(text.startswith("[PBK01]"))
+        self.assertIsNone(win.pbkBoard)
+        from PySide6.QtWidgets import QLabel
+
+        for lab in win.findChildren(QLabel):
+            self.assertNotRegex(lab.text(), r"후보\s*\d+건")
         win.close()
 
     def test_hold_color_sort_and_refresh_reentry(self):
@@ -129,6 +130,63 @@ class PbkBoardCrashTest(unittest.TestCase):
             )
             self.assertEqual([row["role"] for row in ordered], ["보유", "후보"])
         resetScreenFills()
+        win.close()
+
+    def test_ma_cells_stay_and_code_column_is_hidden(self):
+        from utils.pbkWatchScreen import keepShownPx, pbkVisibleWidths
+
+        self.assertEqual(keepShownPx("2,500", "-"), "2,500")
+        self.assertEqual(keepShownPx("2,500", "2,600"), "2,600")
+        self.assertEqual(keepShownPx("-", "-"), "-")
+        shown = pbkVisibleWidths((72, 72, 110, 80, 80, 80, 88), codeCol=1)
+        self.assertEqual(shown[1], 0)
+        self.assertEqual(sum(shown), 72 + 72 + 110 + 80 + 80 + 80 + 88)
+        self.assertGreater(shown[3], 80)
+        self.assertGreater(shown[4], 80)
+
+        app = QApplication.instance() or QApplication([])
+        from ui.tradeDeskWin import TradeDeskWin
+
+        win = TradeDeskWin()
+        row = {
+            "role": "보유", "candidate": True, "holding": True,
+            "stkCd": "005930", "stkNm": "삼성전자",
+            "ma5": 2500, "ma20": 2400, "expireDt": "20261231",
+        }
+        blank = dict(row)
+        blank["ma5"] = None
+        blank["ma20"] = None
+        calls = {"n": 0}
+
+        def _rows(*_a, **_k):
+            calls["n"] += 1
+            return [dict(row if calls["n"] == 1 else blank)]
+
+        with patch("utils.pbkWatchScreen.loadScreenRows", side_effect=_rows), patch(
+            "utils.pbkWatchScreen.watchScreenOn", return_value=True,
+        ), patch("utils.pbkWatchScreen.noteScreenRefresh", return_value={}), patch(
+            "utils.pbkWatchScreen.ensureWatchBackup", return_value={"ok": True},
+        ), patch("trading.watchRtMonitor.getWatchLastPxMap", return_value={}), patch(
+            "trading.watchRtMonitor._isQuoteSessionNow", return_value=False,
+        ):
+            win._watchAlgCd = "pbk"
+            win._fillPbkWatch()
+            ma5 = win.tradeWatchFrozen.item(0, 3)
+            ma20 = win.tradeWatchFrozen.item(0, 4)
+            self.assertEqual(ma5.text(), "2,500")
+            self.assertEqual(ma20.text(), "2,400")
+            win._fillPbkWatch()
+        self.assertIs(win.tradeWatchFrozen.item(0, 3), ma5)
+        self.assertIs(win.tradeWatchFrozen.item(0, 4), ma20)
+        self.assertEqual(ma5.text(), "2,500")
+        self.assertEqual(ma20.text(), "2,400")
+        self.assertTrue(win.tradeWatchFrozen.isColumnHidden(1))
+        self.assertEqual(win.tradeWatchFrozen.item(0, 1).text(), "005930")
+        win.tradeWatchFrozen.selectRow(0)
+        code, name = win._selectedWatchStk()
+        self.assertEqual(code, "005930")
+        self.assertEqual(name, "삼성전자")
+        app.processEvents()
         win.close()
 
 

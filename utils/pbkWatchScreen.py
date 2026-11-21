@@ -543,6 +543,31 @@ def formatPx(value):
     return f"{int(round(num)):,}"
 
 
+def keepShownPx(prevText, newText):
+    """새 값이 비면 이미 보이던 가격을 유지한다. 계산이 바뀐 것은 아니다."""
+    new = "-" if newText in (None, "") else str(newText)
+    prev = "" if prevText is None else str(prevText)
+    if new == "-" and prev not in ("", "-"):
+        return prev
+    return new
+
+
+def pbkVisibleWidths(widths, codeCol=1):
+    """숨긴 종목코드 칸의 너비를 나머지 칸에 나눈다."""
+    cols = [int(w) for w in widths or []]
+    if not cols or codeCol < 0 or codeCol >= len(cols):
+        return tuple(cols)
+    spare = cols[codeCol]
+    cols[codeCol] = 0
+    visible = [i for i in range(len(cols)) if i != codeCol]
+    if not visible or spare <= 0:
+        return tuple(cols)
+    share, extra = divmod(int(spare), len(visible))
+    for n, idx in enumerate(visible):
+        cols[idx] += share + (1 if n < extra else 0)
+    return tuple(cols)
+
+
 def screenPrice(quote, closePx=None, inSession=False):
     """장중에는 0B 현재가, 장외에는 최근 종가."""
     quote = quote or {}

@@ -369,7 +369,9 @@ class Pbk01Test(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         live._startupDone = False
         live._scanYmd = ""
-        self.assertIn("pbkBoard", Path("ui/tradeDeskWin.py").read_text(encoding="utf-8"))
+        src = Path("ui/tradeDeskWin.py").read_text(encoding="utf-8")
+        self.assertNotIn("self.pbkBoard = QLabel", src)
+        self.assertNotIn("outer.addWidget(self.pbkBoard)", src)
         self.assertIn("v1", Path("strategies/docs/pullbackTwoStep_v1.md").read_text(encoding="utf-8"))
 
     def test_real_boot_blocked_and_universe_rules(self):

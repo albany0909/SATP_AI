@@ -1089,12 +1089,7 @@ class TradeDeskWin(QMainWindow):
         )
         sessLay.addWidget(self.indsLbl, 1)
         outer.addWidget(sessRow)
-        self.pbkBoard = QLabel("[PBK01] 후보 0건 · 보유 0/5 · 최근 재스캔 --:--")
-        self.pbkBoard.setWordWrap(False)
-        self.pbkBoard.setFixedHeight(22)
-        self.pbkBoard.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.pbkBoard.setStyleSheet("font-size: 12px; color: #37474F;")
-        outer.addWidget(self.pbkBoard)
+        self.pbkBoard = None
         self._paintIndsBar()
         self._opsAlgTimer = QTimer(self)
         self._opsAlgTimer.timeout.connect(self.refreshOpsAlgBar)
@@ -5675,6 +5670,8 @@ class TradeDeskWin(QMainWindow):
             frz.setSortingEnabled(False)
             if frz.columnCount() != 5:
                 frz.setColumnCount(5)
+            for col in range(frz.columnCount()):
+                frz.setColumnHidden(col, False)
             frz.setVisible(True)
         if tbl is not None:
             tbl.setVisible(True)
@@ -5685,9 +5682,11 @@ class TradeDeskWin(QMainWindow):
         from utils.pbkWatchScreen import (
             ensureWatchBackup,
             formatPx,
+            keepShownPx,
             legacyWatchRows,
             loadScreenRows,
             noteScreenRefresh,
+            pbkVisibleWidths,
             readWatchBackup,
             screenCodes,
             screenPrice,
@@ -5704,11 +5703,13 @@ class TradeDeskWin(QMainWindow):
         frz.setSortingEnabled(False)
         if frz.columnCount() != len(headers):
             frz.setColumnCount(len(headers))
-        frz.setHorizontalHeaderLabels(headers)
-        plain = QStyledItemDelegate(frz)
-        for col in range(len(headers)):
-            frz.setItemDelegateForColumn(col, plain)
-        self._WATCH_FRZ_W = (72, 72, 110, 80, 80, 80, 88)
+            plain = QStyledItemDelegate(frz)
+            for col in range(len(headers)):
+                frz.setItemDelegateForColumn(col, plain)
+        if frz.horizontalHeaderItem(0) is None or frz.horizontalHeaderItem(0).text() != headers[0]:
+            frz.setHorizontalHeaderLabels(headers)
+        self._WATCH_FRZ_W = pbkVisibleWidths((72, 72, 110, 80, 80, 80, 88), codeCol=1)
+        frz.setColumnHidden(1, True)
         if tbl is not None:
             tbl.setVisible(False)
         inSession = False
@@ -5770,6 +5771,9 @@ class TradeDeskWin(QMainWindow):
                     "ma20": row.get("ma20"),
                     "leg1": row.get("leg1"),
                 }
+                prevCodeItem = frz.item(i, 1)
+                prevCode = str(prevCodeItem.text() if prevCodeItem is not None else "")
+                same = bool(code) and prevCode == code
                 vals = [
                     (str(row.get("role") or ""), None),
                     (code, code),
@@ -5781,16 +5785,10 @@ class TradeDeskWin(QMainWindow):
                 ]
                 paint.append(code)
                 for col, (text, sortVal) in enumerate(vals):
-                    item = SurgeSortItem(text)
-                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    if sortVal not in (None, ""):
-                        try:
-                            item.setData(Qt.ItemDataRole.UserRole + 1, float(sortVal))
-                        except (TypeError, ValueError):
-                            item.setData(Qt.ItemDataRole.UserRole + 1, str(sortVal))
-                    if col == 2 and code:
-                        item.setData(Qt.ItemDataRole.UserRole, code)
-                    frz.setItem(i, col, item)
+                    if same and col in (3, 4):
+                        cell = frz.item(i, col)
+                        text = keepShownPx(cell.text() if cell is not None else "", text)
+                    self._putWatchCell(frz, i, col, text, sortVal, code if col == 2 else None)
                 if code:
                     self._paintPbkRowTone(frz, i, self._pbkToneMeta.get(code), px, quote.get("lowPrc"))
             self._watchPaintCds = paint
@@ -5804,6 +5802,27 @@ class TradeDeskWin(QMainWindow):
         if getattr(self, "_pbkSortCol", None) is not None:
             self._reorderPbkRows(frz, self._pbkSortCol, bool(getattr(self, "_pbkSortDesc", False)))
         QTimer.singleShot(0, self, self._enablePbkSort)
+
+    def _putWatchCell(self, frz, row, col, text, sortVal, userCode=None):
+        """글자가 같을 때는 셀을 갈아끼우지 않는다."""
+        shown = "" if text is None else str(text)
+        item = frz.item(row, col)
+        if item is None:
+            item = SurgeSortItem(shown)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            frz.setItem(row, col, item)
+        elif item.text() != shown:
+            item.setText(shown)
+        if sortVal not in (None, ""):
+            try:
+                stored = float(sortVal)
+            except (TypeError, ValueError):
+                stored = str(sortVal)
+            if item.data(Qt.ItemDataRole.UserRole + 1) != stored:
+                item.setData(Qt.ItemDataRole.UserRole + 1, stored)
+        if userCode and item.data(Qt.ItemDataRole.UserRole) != userCode:
+            item.setData(Qt.ItemDataRole.UserRole, userCode)
+        return item
 
     def _bindPbkSortHeader(self, frz):
         """헤더 클릭은 직접 정렬한다. Qt 정렬은 보유 그룹을 아래로 보낼 수 있다."""
