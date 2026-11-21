@@ -4,7 +4,7 @@ import json
 import sys
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -699,6 +699,69 @@ class PbkOrderPlanTest(unittest.TestCase):
             )
             self.assertEqual([row for row in again["actions"] if row["side"] == "BUY" and row["leg"] == 1], [])
 
+    def test_signal_date_from_history_or_prior_long_candle(self):
+        from strategies.impl.pullbackTwoStep import longCandleBefore
+        from trading.pbkOrderPlan import completeHoldRecords, signalDtForHold
+        import trading.pbk01Live as live
+
+        dates = []
+        cur = datetime(2026, 10, 1)
+        while len(dates) < 30:
+            if cur.weekday() < 5:
+                dates.append(cur.strftime("%Y%m%d"))
+            cur += timedelta(days=1)
+        bars = [{
+            "tradeDt": day, "open": 1000, "high": 1000, "low": 1000,
+            "close": 1000, "volume": 100, "amount": 400_000_000,
+        } for day in dates]
+        bars[24]["open"] = 1000
+        bars[24]["close"] = 1200
+        bars[24]["high"] = 1200
+        bars[24]["volume"] = 400
+        self.assertEqual(longCandleBefore(bars, dates[26]), dates[24])
+        self.assertEqual(
+            signalDtForHold("094840", [], None, bars, firstBuyDt=dates[26]),
+            dates[24],
+        )
+        flat = [dict(bar, open=1000, close=1000, high=1000, volume=100) for bar in bars]
+        self.assertEqual(signalDtForHold("300120", [], None, flat, firstBuyDt=dates[26]), "")
+        history = [
+            {"kind": "state", "candidates": [{"stkCd": "A094840", "signalDt": "2026-11-18"}]},
+            {"stkCd": "300120", "signalDate": "20261104"},
+        ]
+        self.assertEqual(signalDtForHold("094840", [], None, None, history=history), "20261118")
+        filled = completeHoldRecords(
+            [
+                {"stkCd": "094840", "qty": 10, "firstBuyDt": dates[26], "brokerQty": 10},
+                {"stkCd": "300120", "qty": 10, "firstBuyDt": dates[26], "brokerQty": 10},
+            ],
+            [],
+            barsByCode={"094840": bars, "300120": flat},
+            history=history,
+        )
+        self.assertEqual(filled[0]["signalDt"], "20261118")
+        self.assertEqual(filled[1]["signalDt"], "20261104")
+        good = [{"stkCd": "094840", "qty": 10, "brokerQty": 10, "signalDt": dates[24]}]
+        poorBars = [dict(bar, amount=1_000) for bar in bars]
+        bad = [{"stkCd": "300120", "qty": 10, "brokerQty": 10, "signalDt": dates[24]}]
+        rows, blocked = live._markHeldAmount(
+            [{"stkCd": "094840"}, {"stkCd": "300120"}],
+            good + bad,
+            {"094840": bars, "300120": poorBars},
+        )
+        by = {row["stkCd"]: row for row in rows}
+        self.assertTrue(by["094840"]["amtOk"])
+        self.assertNotIn("094840", blocked)
+        self.assertFalse(by["300120"]["amtOk"])
+        self.assertIn("300120", blocked)
+        unknown, blocked2 = live._markHeldAmount(
+            [],
+            [{"stkCd": "071970", "qty": 1, "brokerQty": 1, "leg1": {"qty": 1}}],
+            {},
+        )
+        self.assertIn("071970", blocked2)
+        self.assertFalse(unknown[0]["amtOk"])
+
     def test_signal_date_comes_from_disclosure_when_candidate_has_none(self):
         from trading.pbkOrderPlan import signalDtForHold
 
@@ -796,13 +859,13 @@ class PbkOrderPlanTest(unittest.TestCase):
             self.assertEqual(pos["leg2"]["rmnQty"], 0)
             saved = json.loads(path.read_text(encoding="utf-8").strip().splitlines()[-1])
             self.assertEqual(saved["positions"][0]["stkNm"], "라온피플")
-            self.assertFalse(saved["candidates"][0]["amtOk"])
+            self.assertIsNot(saved["candidates"][0].get("amtOk"), False)
             fill = Path(folder) / "pbk01_fills_20261120.jsonl"
             lines = [json.loads(line) for line in fill.read_text(encoding="utf-8").splitlines() if line.strip()]
             self.assertEqual({row["expiredQty"] for row in lines}, {981, 800})
             self.assertTrue(all(row["stkNm"] == "라온피플" for row in lines))
             notes = [line for line in logs if "대금미달 300120 추가매수 보류" in line]
-            self.assertEqual(len(notes), 1)
+            self.assertEqual(notes, [])
             cycle = []
             sent = []
             live.placePaperCycle(

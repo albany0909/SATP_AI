@@ -458,7 +458,9 @@ def runPbkCycle(now=None, loader=None, sender=None, log=None, path=None, quotes=
             _startupDone = True
         if dueDaily:
             _scanYmd = ymd
-        positions = _completeHeld(positions, rows, discs, bars, asOf=asOf)
+        positions = _completeHeld(
+            positions, rows, discs, bars, asOf=asOf, history=_signalHistory(path),
+        )
         rows, _blocked = _markHeldAmount(rows, positions, bars)
         if quotes is None:
             quotes = pack.get("quotes") or {}
@@ -473,7 +475,9 @@ def runPbkCycle(now=None, loader=None, sender=None, log=None, path=None, quotes=
             rows = []
             positions = []
         heldBars = _barsForHeld(rows, positions)
-        positions = _completeHeld(positions, rows, None, heldBars)
+        positions = _completeHeld(
+            positions, rows, None, heldBars, history=_signalHistory(path),
+        )
         rows, _blocked = _markHeldAmount(rows, positions, heldBars)
     owned = []
     for pos in positions or []:
@@ -575,12 +579,27 @@ def _markHeldAmount(candidates, positions, barsByCode):
             continue
         sig = str(pos.get("signalDt") or (by.get(code) or {}).get("signalDt") or "")
         bars = (barsByCode or {}).get(code)
-        ok = False
-        if sig and bars:
-            got = signalAmt20(bars, sig)
-            ok = bool(got and got.get("ok"))
         row = by.get(code)
-        if ok:
+        if not sig:
+            if row is None:
+                row = {
+                    "stkCd": code,
+                    "stkNm": pos.get("stkNm") or "",
+                    "signalDt": "",
+                    "ma5": pos.get("ma5"),
+                    "ma20": pos.get("ma20"),
+                }
+                rows.append(row)
+                by[code] = row
+            row["amtOk"] = False
+            blocked.append(code)
+            continue
+        if not bars:
+            continue
+        got = signalAmt20(bars, sig)
+        if not got:
+            continue
+        if got.get("ok"):
             if row is not None:
                 row["amtOk"] = True
             continue
@@ -599,7 +618,34 @@ def _markHeldAmount(candidates, positions, barsByCode):
     return rows, blocked
 
 
-def _completeHeld(positions, candidates, disclosures, barsByCode, asOf="", names=None):
+def _signalHistory(path):
+    """이전 상태와 체결 기록. 최신 후보에 신호일이 없어도 여기서 찾는다."""
+    import os
+    from pathlib import Path
+
+    from utils.pbk01Store import readRows
+
+    if path is None and os.environ.get("SATP_TEST") == "1":
+        return []
+    filePath = Path(path) if path else None
+    if filePath is None:
+        try:
+            from utils.pbk01Store import pbkPath
+
+            filePath = pbkPath("pbk01_state.jsonl")
+        except Exception:
+            return []
+    rows = list(readRows(filePath))
+    try:
+        fills = sorted(filePath.parent.glob("pbk01_fills_*.jsonl"))
+    except Exception:
+        fills = []
+    for fill in fills:
+        rows.extend(readRows(fill))
+    return rows
+
+
+def _completeHeld(positions, candidates, disclosures, barsByCode, asOf="", names=None, history=None):
     from trading.pbkOrderPlan import completeHoldRecords
 
     return completeHoldRecords(
@@ -609,6 +655,7 @@ def _completeHeld(positions, candidates, disclosures, barsByCode, asOf="", names
         barsByCode=barsByCode,
         names=names,
         asOf=asOf,
+        history=history,
     )
 
 
@@ -1107,7 +1154,10 @@ def restorePaperBook(path=None, accountRows=None, openOrders=None, accountKnown=
     includeToday = moment.strftime("%H%M%S") >= "153000"
     discs, bars = _holdContext(updated, disclosures, barsByCode)
     nameMap = _namesFor(updated, candidates, accountRows, names)
-    updated = _completeHeld(updated, candidates, discs, bars, asOf=today, names=nameMap)
+    history = _signalHistory(filePath)
+    updated = _completeHeld(
+        updated, candidates, discs, bars, asOf=today, names=nameMap, history=history,
+    )
     for pos in updated:
         code = str(pos.get("stkCd") or "")
         if code and nameMap.get(code):
@@ -1130,7 +1180,9 @@ def restorePaperBook(path=None, accountRows=None, openOrders=None, accountKnown=
 
     for pos in updated:
         _dropExpiredOpenOrders(pos, today, includeToday)
-    updated = _completeHeld(updated, candidates, discs, bars, asOf=today, names=nameMap)
+    updated = _completeHeld(
+        updated, candidates, discs, bars, asOf=today, names=nameMap, history=history,
+    )
     candidates, blocked = _markHeldAmount(candidates, updated, bars)
     for code in blocked:
         _logAmtHold(code, boot=True)

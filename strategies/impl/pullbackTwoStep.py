@@ -343,6 +343,25 @@ def _windowDays(calendar, receipt, limit, n=CANDLE_WINDOW):
     return out
 
 
+def longCandleBefore(bars, firstBuyDt, window=BUY_WINDOW):
+    """첫 체결일보다 앞선 최근 장대양봉. 매수창 안의 날만 본다."""
+    rows = _sortBars(normalizeDayBars(bars))
+    days = [_barDt(bar) for bar in rows]
+    first = _ymd(firstBuyDt)
+    if not first:
+        return ""
+    prior = [i for i, day in enumerate(days) if day and day < first]
+    if not prior:
+        return ""
+    span = prior[-int(window):] if window else prior
+    picked = ""
+    for idx in span:
+        day = days[idx]
+        if _longOn(rows, days, day):
+            picked = day
+    return picked
+
+
 def _longOn(rows, days, day):
     if day not in days:
         return False

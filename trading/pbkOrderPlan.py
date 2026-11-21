@@ -409,38 +409,77 @@ def _firstFillDay(pos):
     return min(found) if found else ""
 
 
-def signalDtForHold(code, candidates=None, disclosures=None, bars=None, firstBuyDt="", asOf=""):
-    """후보의 장대양봉일을 먼저 쓰고, 없으면 공시와 일봉에서 찾는다."""
-    for row in candidates or []:
-        if not isinstance(row, dict) or str(row.get("stkCd") or "") != str(code or ""):
+def _normCode(raw):
+    from utils.stkCdUtil import normStkCd
+
+    return normStkCd(raw)
+
+
+def _signalText(row):
+    from strategies.impl.pullbackTwoStep import _ymd
+
+    if not isinstance(row, dict):
+        return ""
+    return _ymd(row.get("signalDt") or row.get("signalDate") or row.get("candleDt"))
+
+
+def signalFromRecords(code, records):
+    """상태·체결 기록에 이미 적힌 장대양봉일. 마지막 값을 쓴다."""
+    want = _normCode(code)
+    if not want:
+        return ""
+    found = ""
+    for row in records or []:
+        if not isinstance(row, dict):
             continue
-        sig = str(row.get("signalDt") or "")[:8]
-        if len(sig) == 8:
-            return sig
+        buckets = [row]
+        for key in ("positions", "candidates"):
+            nested = row.get(key)
+            if isinstance(nested, list):
+                buckets.extend(item for item in nested if isinstance(item, dict))
+        for item in buckets:
+            if _normCode(item.get("stkCd") or item.get("stk_cd") or item.get("code")) != want:
+                continue
+            sig = _signalText(item)
+            if sig:
+                found = sig
+    return found
+
+
+def signalDtForHold(code, candidates=None, disclosures=None, bars=None, firstBuyDt="", asOf="", history=None):
+    """후보·이전 기록·공시의 장대양봉일을 쓰고, 없으면 첫 체결 직전 장대양봉을 쓴다."""
+    from strategies.impl.pullbackTwoStep import _ymd, findCandleEvents, longCandleBefore
+
+    recorded = signalFromRecords(code, candidates) or signalFromRecords(code, history)
+    if recorded:
+        return recorded
+    want = _normCode(code)
     items = []
     if isinstance(disclosures, dict):
-        items = list(disclosures.get(code) or [])
+        for key, val in disclosures.items():
+            if _normCode(key) == want:
+                items = list(val or [])
+                break
     elif isinstance(disclosures, list):
         items = list(disclosures)
-    if not items or not bars:
-        return ""
-    from strategies.impl.pullbackTwoStep import findCandleEvents
-
-    events = findCandleEvents(bars, items, code, asOf=asOf or None)
-    first = str(firstBuyDt or "")[:8]
     picked = ""
-    for event in events or []:
-        sig = str((event or {}).get("signalDt") or "")[:8]
-        if len(sig) != 8:
-            continue
-        if first and sig > first:
-            continue
-        if sig >= picked:
-            picked = sig
-    return picked
+    if items and bars:
+        events = findCandleEvents(bars, items, want or code, asOf=asOf or None)
+        first = _ymd(firstBuyDt)
+        for event in events or []:
+            sig = _ymd((event or {}).get("signalDt"))
+            if not sig:
+                continue
+            if first and sig > first:
+                continue
+            if sig >= picked:
+                picked = sig
+    if picked:
+        return picked
+    return longCandleBefore(bars, firstBuyDt)
 
 
-def completeHoldRecords(positions, candidates=None, disclosures=None, barsByCode=None, names=None, asOf=""):
+def completeHoldRecords(positions, candidates=None, disclosures=None, barsByCode=None, names=None, asOf="", history=None):
     """비어 있는 signalDt·exitDt·stkNm 만 채운다. 있는 값은 바꾸지 않는다."""
     out = []
     for pos in positions or []:
@@ -454,14 +493,15 @@ def completeHoldRecords(positions, candidates=None, disclosures=None, barsByCode
         first = _firstFillDay(item)
         if first and not str(item.get("firstBuyDt") or ""):
             item["firstBuyDt"] = first
-        if code and not str(item.get("signalDt") or ""):
+        if code and not _signalText(item):
             sig = signalDtForHold(
                 code,
                 candidates,
                 disclosures,
-                (barsByCode or {}).get(code),
+                (barsByCode or {}).get(code) or (barsByCode or {}).get(_normCode(code)),
                 firstBuyDt=item.get("firstBuyDt") or "",
                 asOf=asOf,
+                history=history,
             )
             if sig:
                 item["signalDt"] = sig
