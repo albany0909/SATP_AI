@@ -797,14 +797,14 @@ def decideEod(final=False):
                "maxExposurePct": p["maxExposurePct"], "haltAdds": halt,
                "barsSinceAdd": _barsSince(bars, v.get("lastAddDt"))}
         ap, whyNot = addPlan(v, ind, ctx, p)
-        if ap:
+        if ap and isMmgEnabled():
             plan.append({"cd": cd, "act": "ADD", "qty": ap["qty"], "px": ap["px"], "why": ap["setup"],
                          "stopAfter": ap["stopAfter"], "n": int(v.get("nAdds") or 0) + 1})
             expo += ap["qty"] * ap["px"]
         else:
             plan.append({"cd": cd, "act": "HOLD", "why": whyNot, "stop": round(float(v["stop"]))})
     # 자동정찰
-    if p.get("autoScout"):
+    if p.get("autoScout") and isMmgEnabled():
         d = _day()
         slots = int(p["autoScoutMaxPerDay"]) - len(d["autoScouts"])
         nPos = len(pos)
@@ -862,8 +862,10 @@ def executePlan(auction=True):
             return []
         d["executed"] = True
         _saveState()
+    from utils.algMgr import actionsWhenStopped
+
     done = []
-    for it in plan:
+    for it in actionsWhenStopped(isMmgEnabled(), plan):
         cd, act = it["cd"], it["act"]
         if act == "EXIT":
             no = _placeOrd(cd, "SELL", it["qty"], it["px"], {"reason": it["why"]}, auction=auction)
@@ -1062,7 +1064,10 @@ def _isTradingDay():
 
 
 def _tick():
-    if not isMmgEnabled() or not _isTradingDay():
+    if not _isTradingDay():
+        return
+    enabled = isMmgEnabled()
+    if not enabled and not listMmgPositions():
         return
     hms = _nowHms()
     d = _day()
@@ -1080,7 +1085,7 @@ def _tick():
         decideEod()
     if _EXEC_START_TM <= hms <= _EXEC_END_TM and d.get("decided") and not d.get("executed"):
         executePlan(auction=True)
-    if hms >= _SCREEN_TM and not d.get("screened"):
+    if enabled and hms >= _SCREEN_TM and not d.get("screened"):
         d["screened"] = True
         _saveState()
         threading.Thread(target=_safeScreen, name="mmgScreener", daemon=True).start()
@@ -1106,8 +1111,8 @@ def startManualMgrLive():
     global _workerStarted
     if _workerStarted:
         return
-    if not isMmgEnabled():
-        termLog("[MMG01] 비활성 — 기동 생략")
+    if not isMmgEnabled() and not listMmgPositions():
+        termLog("[MMG01] 비활성 — 보유 없음, 기동 생략")
         return
     _workerStarted = True
     threading.Thread(target=_loop, name="mmg01Live", daemon=True).start()

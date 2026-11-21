@@ -4,7 +4,7 @@
   "name": "수동정찰 종가 피라미딩",
   "status": "paper",
   "version": 1,
-  "enabled": true,
+  "enabled": false,
   "timeframe": "1d (EOD decision) + intraday protective stop only",
   "docPath": "strategies/docs/manualMgr_v1.md",
   "universe": {

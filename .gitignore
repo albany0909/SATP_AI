@@ -7,6 +7,7 @@ config/data/loginLocal.json
 config/data/deskLoginSession.json
 config/data/deskApiKeys.json
 config/data/lastBootLogin.txt
+config/data/marketRegime.jsonl
 config/data/_update_download.zip
 tradeApp/
 
@@ -47,6 +48,10 @@ Thumbs.db
 config/data/algDayReview/
 config/data/stratValRun/
 config/data/*State.json
+config/data/desk_watchdog.pause
+config/data/desk_watchdog.lock
+config/data/surgeTrade/
+config/data/indexMembership.json
 # --- extra secrets / local ops (GitHub safety) ---
 *.pem
 *.p12

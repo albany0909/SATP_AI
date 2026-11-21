@@ -1,0 +1,47 @@
+{
+  "stratId": "atrPullback_v1",
+  "algCd": "ATR01",
+  "name": "눌림 ATR",
+  "englishName": "Pullback ATR",
+  "status": "unimplemented",
+  "version": 1,
+  "enabled": false,
+  "timeframe": "day",
+  "docPath": "docs/algSpec/ATR01.md",
+  "universe": {
+    "type": "chart",
+    "note": "차트에 눌림이 찍힌 일봉. 주문 유니버스는 아직 없다."
+  },
+  "params": {
+    "paperOnly": true,
+    "smaPeriod": 20,
+    "atrPeriod": 14,
+    "stopAtr": 2,
+    "targetAtr": 2,
+    "holdBars": 10,
+    "maxRetrace": 0.618,
+    "touchPct": 0.015,
+    "legMult": 1.15
+  },
+  "rules": {
+    "trend": "close > SMA20 and SMA20 is higher than 5 bars ago; 20-bar high >= prior-leg low * 1.15",
+    "entry": "chart 눌림 on SMA20: touch within 1.5%, at least 2 lower closes after the swing high, lower volume, bullish candle or lower wick >= body, retrace of the rise no more than 61.8%. Fill assumption is the next bar open.",
+    "stop": "entry - 2 * ATR14",
+    "takeProfit": "entry + 2 * ATR14",
+    "exit": "stop, target, or 10 trading days from the entry bar, whichever comes first"
+  },
+  "fill": {
+    "signalTiming": "afterClose",
+    "entryPrice": "nextOpen",
+    "exitPrice": "stopOrTargetOrTime",
+    "feeRate": 0.0015,
+    "btNote": "1-year reference was measured with no fees, no tax, and no slippage. Re-validate with the v40 cost model before trusting the numbers."
+  },
+  "settings": {
+    "stratLive.ATR01.enabled": false,
+    "stratLive.ATR01.paperOnly": true,
+    "chartLabel": "ATR01",
+    "orders": "none"
+  },
+  "notes": "스펙과 등록만 있다. 실전·모의 주문 코드는 없다. 차트 눌림 ATR 선의 오른쪽 글자와 ATR선 체크 설명은 ATR01 로 시작한다. SMA20 눌림의 손절·익절은 2×ATR14, 보유는 10거래일이다. 1년 비용 없는 참고: 거래당 +2.79%, PF 1.52, 153건. 이 수치는 수수료·매도세·슬리피지 없이 잰 것이므로 v40 비용 모델로 다시 확인해야 한다."
+}

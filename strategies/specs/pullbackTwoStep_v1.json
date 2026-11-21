@@ -1,0 +1,57 @@
+{
+  "stratId": "pullbackTwoStep_v1",
+  "algCd": "PBK01",
+  "name": "실적 장대양봉 눌림목",
+  "englishName": "Earnings Pullback Two Step",
+  "status": "test",
+  "version": 3,
+  "enabled": false,
+  "timeframe": "D",
+  "docPath": "strategies/docs/pullbackTwoStep_v1.md",
+  "universe": {
+    "type": "dartEarningsCandle",
+    "candleWindow": 10,
+    "note": "실적 공시 후 10거래일 안 첫 장대양봉. 관심·보유 종목의 확정 일봉만 본다."
+  },
+  "params": {
+    "paperOnly": true,
+    "enabled": false,
+    "capitalKrw": 30000000,
+    "slotCount": 5,
+    "slotKrw": 6000000,
+    "leg1Pct": 60,
+    "leg2Pct": 40,
+    "candleWindow": 10,
+    "buyWindowDays": 40,
+    "holdDays": 10,
+    "minDayPct": 10,
+    "volMult": 3,
+    "minAmt20": 300000000,
+    "stopRatio": 0.8,
+    "stopHm": "151500",
+    "scanHm": "08:40",
+    "universeLoad": true,
+    "dartLookbackDays": 120,
+    "feeRate": 0.0015
+  },
+  "rules": {
+    "scope": "PAPER ONLY. paperOnly 가 아니면 주문 함수가 예외를 던지고 로그만 남긴다. 실전 주문 경로는 없다.",
+    "entry": "실적 공시 접수일을 거래일로 맞춘 뒤 10거래일 안의 첫 장대양봉. 등락률 10% 이상, 종가>시가, 거래량 3×직전 20일, 거래대금은 장대양봉 당일을 뺀 직전 20거래일 평균 3억. 신호 당일은 사지 않고 다음 거래일부터 t+40까지. 1차는 전일 5이평 터치에 슬롯의 60%, 2차는 전일 20이평 터치에 40%. 백테스트 체결가는 min(시가, 이평). 모의 지정가는 min(매도 1호가, 해당 이평을 호가 단위로 올린 값). pbkChaseMaxPct 기본 0. 양수면 이평×(1+비율)까지. 호가를 못 받으면 미주문. 대금 필터를 못 넘는 보유 종목은 청산만 하고 추가 매수는 하지 않는다.",
+    "slots": "운용금 3000만, 5슬롯, 슬롯 600만. 첫 매수에 슬롯을 잡고 청산 때 반납. 슬롯이 차면 신규 1차를 사지 않는다. 이미 1차 산 종목의 2차는 허용. 같은 날이면 장대양봉이 오래된 순, 같으면 코드순.",
+    "exit": "첫 매수일 f를 0번째로 세어 f+10 거래일 시가에 전량 매도. f+11이 아니다. 익절은 없다.",
+    "stop": "장중 손절 없음. 15:15에 현재가가 평단×0.80 이하일 때만 전량 매도. 그 시각이 아니면 저가가 더 낮아도 팔지 않는다.",
+    "exclude": "하락장 절반 비중, 급락 다음날 매수 휴식, KODEX 주차는 넣지 않는다."
+  },
+  "fill": {
+    "entryPrice": "min(open, priorMa)",
+    "exitPrice": "fPlus10Open",
+    "feeRate": 0.0015,
+    "orderType": "paperAskLimit",
+    "liveOrder": "매도 1호가 지정가. 백테스트 가정과 다르다."
+  },
+  "settings": {
+    "stratLive.PBK01.enabled": false,
+    "stratLive.PBK01.paperOnly": true
+  },
+  "notes": "v3 모의 전용. 기본 비활성. v2(16c807b)는 배포하지 않음. 백테스트는 min(시가, 이평). 모의 지정가는 min(매도 1호가, 이평 호가올림). sql/pbk01_alg_ver_hist.sql 은 배포 때 적용한다."
+}

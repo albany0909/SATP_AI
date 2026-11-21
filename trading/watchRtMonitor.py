@@ -709,6 +709,24 @@ def _monCodes():
     except Exception as err:
         termLog(f"[watchRt] 관리종목 병합 실패: {err}")
     try:
+        from utils.chartBarPlan import collectSurgeChartCds
+
+        for cd in collectSurgeChartCds() or []:
+            if cd and cd not in seen and len(codes) < _MAX_STK:
+                seen.add(cd)
+                codes.append(cd)
+    except Exception as err:
+        termLog(f"[watchRt] 급등주 구독 병합 실패: {err}")
+    try:
+        from trading.surgeTradeInputs import srgQuoteCodes
+
+        for cd in srgQuoteCodes():
+            if cd and cd not in seen and len(codes) < _MAX_STK:
+                seen.add(cd)
+                codes.append(cd)
+    except Exception:
+        pass
+    try:
         from utils.stratOrdLedgerStore import listOpenLedgerStkCds
 
         for cd in listOpenLedgerStkCds():
@@ -786,15 +804,40 @@ def _flatItems(regMap, codes=None):
     return items
 
 
+def _codesWithPbk(codes):
+    """관심 목록에 PBK 보유·후보 구독을 다시 붙인다."""
+    out = []
+    seen = set()
+    for raw in list(codes or []):
+        cd = normStkCd(raw)
+        if cd and cd not in seen:
+            seen.add(cd)
+            out.append(cd)
+    with _lock:
+        extra = list(_pbkTouch)
+    for cd in extra:
+        if cd and cd not in seen:
+            seen.add(cd)
+            out.append(cd)
+    return out
+
+
 def reregWatchForExch(reason="거래소변경"):
-    """매매 거래소 변경 시 시세 구간이면 0B 를 다시 등록한다."""
+    """매매 거래소 변경 시 시세 구간이면 0B 를 다시 등록한다.
+
+    계좌 동기화는 기존 구독을 지우지 않고 없는 종목만 더한다.
+    """
     if not _isQuoteSessionNow():
         termLog(f"[watchRt] {reason} — 시세구간 외, 다음 구독에 반영")
         return
+    if reason == "실계좌동기화":
+        addWatchRtCodes(_monCodes(), reason)
+        return
     ws = getWsClient()
+    codes = _codesWithPbk(_monCodes())
     _unregWatch(ws, reason)
     if ws is not None and getattr(ws, "isLoggedIn", False):
-        _regWatch(ws, _monCodes(), reason)
+        _regWatch(ws, codes, reason)
     else:
         termLog(f"[watchRt] {reason} — WS 미로그인, LOGIN 후 구독")
 
@@ -826,9 +869,10 @@ def _regWatch(ws, codes, reason):
     itemMap = _buildRegMap(codes)
     cds = list(itemMap.keys())
     allItems = _flatItems(itemMap, cds)
-    for i in range(0, len(allItems), _CHUNK):
-        chunk = allItems[i : i + _CHUNK]
-        ws.sendReg(["0B"], chunk, grpNo=_GRP_NO, refresh="1")
+    from trading.pbkQuotePlan import regChunks
+
+    for part in regChunks(allItems, _CHUNK, replace=True):
+        ws.sendReg(["0B"], part["items"], grpNo=_GRP_NO, refresh=part["refresh"])
     nxtSet = {cd for cd, its in itemMap.items() if any(str(x).upper().endswith("_NX") for x in its)}
     with _lock:
         _monActive = True
@@ -888,10 +932,11 @@ def addWatchRtCodes(codes, reason="장중편입"):
     if ws is None or not getattr(ws, "isLoggedIn", False):
         termLog(f"[watchRt] WS 미로그인 — 편입 REG 보류 {len(cds)}종")
         return 0
-    for i in range(0, len(cds), _CHUNK):
-        chunk = cds[i : i + _CHUNK]
-        items = _flatItems({cd: _rtItemsOf(cd) for cd in chunk}, chunk)
-        ws.sendReg(["0B"], items, grpNo=_GRP_NO, refresh="1")
+    from trading.pbkQuotePlan import regChunks
+
+    addItems = _flatItems({cd: _rtItemsOf(cd) for cd in cds}, cds)
+    for part in regChunks(addItems, _CHUNK, replace=False):
+        ws.sendReg(["0B"], part["items"], grpNo=_GRP_NO, refresh=part["refresh"])
     with _lock:
         _regCodes.extend(cds)
         for cd in cds:
@@ -910,6 +955,61 @@ def addWatchRtCodes(codes, reason="장중편입"):
         termLog(f"[watchRt] 편입 SMA 준비 실패: {err}")
     termLog(f"[watchRt] 0B 편입 {len(cds)}종 ({reason}) grp={_GRP_NO}")
     return len(cds)
+
+
+_pbkTouch = set()
+_unmatchedTicks = 0
+
+
+def unmatchedTickCount():
+    """등록 목록에 없는 코드로 도착한 0B 수. 형식 불일치 확인용."""
+    return int(_unmatchedTicks)
+
+
+def pbkQuoteBudget():
+    """관심·차트 등 PBK 가 아닌 구독이 이미 쓰고 있는 칸."""
+    with _lock:
+        registered = list(_regCodes)
+        prev = set(_pbkTouch)
+        items = {cd: list(_regItems.get(cd) or [cd]) for cd in registered}
+    try:
+        base = set(_monCodes())
+    except Exception:
+        base = set()
+    kept = [cd for cd in registered if cd in base or cd not in prev]
+    usedItems = 0
+    for cd in kept:
+        usedItems += len(items.get(cd) or [cd])
+    return {"kept": kept, "usedItems": usedItems, "usedStocks": len(kept), "registered": registered}
+
+
+def syncPbkTouch(codes, reason="PBK화면"):
+    """PBK 로 고른 종목만 0B 에 넣고 뺀다. 관심·차트 구독은 REMOVE 하지 않는다."""
+    global _pbkTouch
+    from utils.pbkWatchScreen import touchDelta
+
+    with _lock:
+        registered = list(_regCodes)
+        prev = set(_pbkTouch)
+    try:
+        base = set(_monCodes())
+    except Exception:
+        base = set()
+    keep = [code for code in registered if code in base or code not in prev]
+    delta = touchDelta(list(prev), codes, keep)
+    _pbkTouch = set(delta["screen"])
+    for code in delta["removed"]:
+        unregWatchStk(code, reason)
+    addedN = 0
+    if delta["added"]:
+        addedN = addWatchRtCodes(delta["added"], reason)
+    return {
+        "ok": True,
+        "added": list(delta["added"]),
+        "removed": list(delta["removed"]),
+        "addedN": addedN,
+        "screen": list(delta["screen"]),
+    }
 
 
 def unregWatchStk(stkCd, reason=""):
@@ -965,12 +1065,55 @@ def _unregWatch(ws, reason):
     termLog(f"[watchRt] 0B 해지 ({reason}) {len(codes)}종")
 
 
+def notePolledPx(stkCd, price, tm="", low=None):
+    """REST 현재가. 더 새로운 오늘 0B 가 있으면 덮지 않는다."""
+    from trading.pbkQuotePlan import applyPollPrice
+
+    cd = normStkCd(stkCd)
+    if not cd:
+        return False
+    with _lock:
+        info, changed = applyPollPrice(_lastPx.get(cd), price, tm, low=low)
+        if not changed:
+            return False
+        _lastPx[cd] = info
+    return True
+
+
 def _onLogin(ws):
     """WS LOGIN 후, 시세 구간이면 0B 재등록 (장전 NXT 포함)."""
     if not _isQuoteSessionNow():
         return
     codes = _monCodes()
+    with _lock:
+        for cd in _pbkTouch:
+            if cd not in codes:
+                codes.append(cd)
     _regWatch(ws, codes, "LOGIN(시세구간)")
+
+
+def _clockSec(raw):
+    digits = "".join(ch for ch in str(raw or "") if ch.isdigit())
+    if len(digits) < 4:
+        return None
+    digits = digits.zfill(6)[:6]
+    hour, minute, sec = int(digits[:2]), int(digits[2:4]), int(digits[4:6])
+    if hour > 23 or minute > 59 or sec > 59:
+        return None
+    return hour * 3600 + minute * 60 + sec
+
+
+def cachedQuoteIsNewer(info, newYmd, newTm):
+    """캐시가 들어온 0B 보다 나중이면 True. 날짜가 다르면 날짜가 이긴다."""
+    oldYmd = str((info or {}).get("tickYmd") or "")
+    oldSec = _clockSec((info or {}).get("tm"))
+    newSec = _clockSec(newTm)
+    today = str(newYmd or "")
+    if len(oldYmd) != 8 or len(today) != 8 or oldSec is None or newSec is None:
+        return False
+    if oldYmd != today:
+        return oldYmd > today
+    return oldSec > newSec
 
 
 def _onWsMessage(msg):
@@ -987,14 +1130,25 @@ def _onWsMessage(msg):
             continue
         vals = row.get("values") or {}
         fireTick = False
+        today = datetime.now().strftime("%Y%m%d")
         with _lock:
             if stkCd not in _regCodes:
+                global _unmatchedTicks
+                _unmatchedTicks += 1
                 continue
             info = dict(_lastPx.get(stkCd) or {})
+            tmRaw = _nzQuote(vals.get("20"))
+            if cachedQuoteIsNewer(info, today, tmRaw):
+                continue
             # 0B 는 변동 FID 만 올 수 있다. 가격만 온 틱이 등락률을 지우지 않게 한다.
             prcRaw = _nzQuote(vals.get("10"))
             fluRaw = _nzQuote(vals.get("12"))
-            tmRaw = _nzQuote(vals.get("20"))
+            openRaw = _nzQuote(vals.get("16"))
+            lowRaw = _nzQuote(vals.get("18"))
+            if openRaw is not None:
+                info["openPrc"] = openRaw
+            if lowRaw is not None:
+                info["lowPrc"] = lowRaw
             if venue == "NXT":
                 if prcRaw is not None:
                     info["nxtPrc"] = prcRaw
@@ -1031,7 +1185,7 @@ def _onWsMessage(msg):
                 info["tm"] = info.get("krxTm") or info.get("nxtTm")
                 info["exch"] = "KRX"
             info["src"] = "0B"
-            info["tickYmd"] = datetime.now().strftime("%Y%m%d")
+            info["tickYmd"] = today
             info.pop("dayCloseDt", None)
             _lastPx[stkCd] = info
             _dayCloseSeeded.discard(stkCd)
@@ -1124,6 +1278,24 @@ def startWatchRtMonitor():
                     startMaSupportEodLive()
                 except Exception as err:
                     termLog(f"[watchRt] maSupportEod 기동 실패: {err}")
+                try:
+                    from trading.surgeTradeLive import startSurgeRankCollector
+
+                    startSurgeRankCollector()
+                except Exception as err:
+                    termLog(f"[watchRt] 급등주 조회 수집 실패: {err}")
+                try:
+                    from trading.surgeTradeLive import startSurgeTradeLive
+
+                    startSurgeTradeLive()
+                except Exception as err:
+                    termLog(f"[watchRt] SRG01 기동 실패: {err}")
+                try:
+                    from trading.pbk01Live import startPbk01Live
+
+                    startPbk01Live()
+                except Exception as err:
+                    termLog(f"[watchRt] PBK01 기동 실패: {err}")
         except Exception as err:
             termLog(f"[watchRt] deskRole 확인 실패 — 전략 기동 스킵: {err}")
         termLog(

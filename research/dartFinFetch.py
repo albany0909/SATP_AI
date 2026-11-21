@@ -77,9 +77,12 @@ def fetchFnlttSinglAcnt(corpCode, bsnsYear, reprtCode="11011"):
                 "sjDiv": r.get("sj_div") or "",
                 "sjNm": r.get("sj_nm") or "",
                 "thstrmNm": r.get("thstrm_nm") or "",
+                "accountId": r.get("account_id") or "",
                 "thstrmAmount": r.get("thstrm_amount") or "",
+                "thstrmAddAmount": r.get("thstrm_add_amount") or "",
                 "frmtrmNm": r.get("frmtrm_nm") or "",
                 "frmtrmAmount": r.get("frmtrm_amount") or "",
+                "frmtrmAddAmount": r.get("frmtrm_add_amount") or "",
                 "bfefrmtrmAmount": r.get("bfefrmtrm_amount") or "",
                 "currency": r.get("currency") or "",
             }

@@ -646,7 +646,7 @@ def _buildStratLiveView(ref):
         "name": spec.get("name") or got.get("name") or alg,
         "status": spec.get("status") or "",
         "enabled": bool(spec.get("enabled", True)),
-        "paperOnly": bool(liveMeta.get("paperOnly", params.get("paperOnly", False))),
+        "paperOnly": bool(liveMeta.get("paperOnly", params.get("paperOnly", True))),
         "timeframe": spec.get("timeframe") or "",
         "ruleRows": ruleRows,
         "amtKind": amts.get("amtKind") or "none",
