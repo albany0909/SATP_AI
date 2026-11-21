@@ -5749,6 +5749,7 @@ class TradeDeskWin(QMainWindow):
         self.tradeWatchTitle.setText(self._titleText(title))
         if not view:
             view = [{"role": "", "stkNm": "후보·보유 없음", "stkCd": ""}]
+        view = self._sortPbkView(view, quotes, inSession)
         self._pbkToneMeta = {}
         frz.setUpdatesEnabled(False)
         try:
@@ -5846,6 +5847,70 @@ class TradeDeskWin(QMainWindow):
         frz.setSortingEnabled(False)
         self._bindPbkSortHeader(frz)
 
+    def _sortPbkView(self, view, quotes, inSession):
+        """보유는 위에 두고, 관심종목은 색 그룹 안에서 현재 정렬을 유지한다."""
+        from utils.pbkWatchScreen import pbkNearPct, pbkRowTone, screenPrice, sortRoleGroups
+
+        col = getattr(self, "_pbkSortCol", None)
+        desc = bool(getattr(self, "_pbkSortDesc", False))
+        pct = pbkNearPct()
+
+        def valueOf(row):
+            if col == 2:
+                return row.get("stkNm")
+            if col == 3:
+                return row.get("ma5")
+            if col == 4:
+                return row.get("ma20")
+            if col == 5:
+                code = str(row.get("stkCd") or "")
+                return screenPrice((quotes or {}).get(code) or {}, inSession=inSession)
+            if col == 6:
+                return row.get("expireDt")
+            return row.get("stkCd")
+
+        def toneOf(row):
+            if str(row.get("role") or "") == "보유" or row.get("holding"):
+                return "hold"
+            code = str(row.get("stkCd") or "")
+            quote = (quotes or {}).get(code) or {}
+            px = screenPrice(quote, inSession=inSession)
+            return pbkRowTone(row, px, quote.get("lowPrc"), pct)["tone"]
+
+        return sortRoleGroups(view, valueOf, descending=desc, toneOf=toneOf)
+
+    def _schedulePbkToneSort(self):
+        """색이 바뀐 관심종목만, 몇 초 뒤에 한 번 옮긴다."""
+        from utils.pbkWatchScreen import PBK_TONE_SORT_MS
+
+        self._pbkToneDirty = True
+        timer = getattr(self, "_pbkToneSortTimer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._resortPbkByTone)
+            self._pbkToneSortTimer = timer
+        timer.setInterval(PBK_TONE_SORT_MS)
+        if timer.isActive():
+            return
+        timer.start()
+
+    def _resortPbkByTone(self):
+        if not getattr(self, "_pbkToneDirty", False):
+            return
+        self._pbkToneDirty = False
+        if getattr(self, "_pbkSortBusy", False) or getattr(self, "_watchRefreshBusy", False):
+            self._schedulePbkToneSort()
+            return
+        frz = getattr(self, "tradeWatchFrozen", None)
+        if frz is None or str(getattr(self, "_watchAlgCd", "") or "") != "pbk":
+            return
+        col = getattr(self, "_pbkSortCol", None)
+        if col is None:
+            self._reorderPbkRows(frz, 1, False, moveIndicator=False)
+            return
+        self._reorderPbkRows(frz, int(col), bool(getattr(self, "_pbkSortDesc", False)))
+
     def _onPbkHeaderClicked(self, col):
         if getattr(self, "_pbkSortBusy", False) or getattr(self, "_watchRefreshBusy", False):
             self._watchRefreshPending = True
@@ -5861,44 +5926,76 @@ class TradeDeskWin(QMainWindow):
             return
         self._reorderPbkRows(frz, col, self._pbkSortDesc)
 
-    def _reorderPbkRows(self, frz, col, descending):
-        """보유 행을 위에 고정하고 그룹 안에서만 순서를 바꾼다."""
+    def _reorderPbkRows(self, frz, col, descending, moveIndicator=True):
+        """보유는 위에 두고, 관심종목은 색이 같은 행끼리 정렬한다."""
         if getattr(self, "_pbkSortBusy", False):
             self._watchRefreshPending = True
             return
+        from utils.pbkWatchScreen import sortRoleGroups, toneFromBg
+
+        cols = frz.columnCount()
+        packed = []
+        selected = ""
+        current = frz.currentRow()
+        for row in range(frz.rowCount()):
+            roleItem = frz.item(row, 0)
+            codeItem = frz.item(row, 1)
+            role = str(roleItem.text() if roleItem is not None else "")
+            code = str(codeItem.text() if codeItem is not None else "")
+            if row == current and code:
+                selected = code
+            keyItem = frz.item(row, col) if 0 <= col < cols else None
+            value = None
+            if keyItem is not None:
+                value = keyItem.data(Qt.ItemDataRole.UserRole + 1)
+                if value is None:
+                    value = keyItem.text()
+            bg = roleItem.data(Qt.ItemDataRole.UserRole + 4) if roleItem is not None else ""
+            packed.append({
+                "role": role,
+                "code": code,
+                "value": value,
+                "tone": toneFromBg(bg),
+                "row": row,
+            })
+        ordered = sortRoleGroups(
+            packed,
+            lambda item: item.get("value"),
+            descending=descending,
+            toneOf=lambda item: item.get("tone"),
+        )
+        if [row.get("code") for row in packed] == [row.get("code") for row in ordered]:
+            if moveIndicator:
+                header = frz.horizontalHeader()
+                order = Qt.SortOrder.DescendingOrder if descending else Qt.SortOrder.AscendingOrder
+                header.setSortIndicator(col, order)
+            return
         self._pbkSortBusy = True
+        self._chartSelBusy = True
         frz.setSortingEnabled(False)
         frz.setUpdatesEnabled(False)
         try:
-            cols = frz.columnCount()
-            packed = []
-            for row in range(frz.rowCount()):
-                items = [frz.takeItem(row, c) for c in range(cols)]
-                roleItem = items[0] if items else None
-                role = str(roleItem.text() if roleItem is not None else "")
-                keyItem = items[col] if 0 <= col < len(items) else None
-                value = None
-                if keyItem is not None:
-                    value = keyItem.data(Qt.ItemDataRole.UserRole + 1)
-                    if value is None:
-                        value = keyItem.text()
-                packed.append({"role": role, "value": value, "index": row, "items": items})
-            from utils.pbkWatchScreen import sortRoleGroups
-
-            ordered = sortRoleGroups(packed, lambda item: item.get("value"), descending=descending)
+            stored = [[frz.takeItem(row, c) for c in range(cols)] for row in range(frz.rowCount())]
             for row, entry in enumerate(ordered):
-                for c, item in enumerate(entry["items"]):
+                for c, item in enumerate(stored[entry["row"]]):
                     if item is not None:
                         frz.setItem(row, c, item)
-            header = frz.horizontalHeader()
-            order = (
-                Qt.SortOrder.DescendingOrder if descending else Qt.SortOrder.AscendingOrder
-            )
-            header.setSortIndicator(col, order)
+            self._watchPaintCds = [str(entry.get("code") or "") for entry in ordered]
+            if moveIndicator:
+                header = frz.horizontalHeader()
+                order = Qt.SortOrder.DescendingOrder if descending else Qt.SortOrder.AscendingOrder
+                header.setSortIndicator(col, order)
+            if selected:
+                for row in range(frz.rowCount()):
+                    codeItem = frz.item(row, 1)
+                    if codeItem is not None and codeItem.text() == selected:
+                        frz.selectRow(row)
+                        break
         finally:
             frz.setUpdatesEnabled(True)
             frz.setSortingEnabled(False)
             self._pbkSortBusy = False
+            self._chartSelBusy = False
             if getattr(self, "_watchRefreshPending", False):
                 self._watchRefreshPending = False
                 QTimer.singleShot(0, self, self.refreshTradeWatch)
@@ -5942,8 +6039,8 @@ class TradeDeskWin(QMainWindow):
                 if px is not None:
                     item.setData(Qt.ItemDataRole.UserRole + 1, float(px))
                 meta = (getattr(self, "_pbkToneMeta", None) or {}).get(code)
-                if meta is not None:
-                    self._paintPbkRowTone(frz, i, meta, px, quote.get("lowPrc"))
+                if meta is not None and self._paintPbkRowTone(frz, i, meta, px, quote.get("lowPrc")):
+                    self._schedulePbkToneSort()
         finally:
             frz.setSortingEnabled(sorting)
 
@@ -5955,7 +6052,7 @@ class TradeDeskWin(QMainWindow):
         key = tone["bg"] or ""
         mark = frz.item(row, 0)
         if mark is not None and mark.data(Qt.ItemDataRole.UserRole + 4) == key:
-            return
+            return False
         bg = QBrush(QColor(tone["bg"])) if tone["bg"] else QBrush()
         fg = QBrush(QColor(tone["fg"])) if tone["fg"] else QBrush()
         for col in range(frz.columnCount()):
@@ -5965,6 +6062,7 @@ class TradeDeskWin(QMainWindow):
             cell.setBackground(bg)
             cell.setForeground(fg)
             cell.setData(Qt.ItemDataRole.UserRole + 4, key)
+        return str((meta or {}).get("role") or "") != "보유"
 
     def _savePbkNearPct(self):
         """인접 퍼센트만 저장한다. 다른 설정 키는 건드리지 않는다."""

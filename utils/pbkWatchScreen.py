@@ -44,6 +44,7 @@ PBK_NEAR_PCT = 3.0
 HOLD_BG = "#E8F5E9"
 NEAR_BG = "#FFF59D"
 TOUCH_BG = "#FFE0B2"
+PBK_TONE_SORT_MS = 3000
 TONE_FG = "#212121"
 
 
@@ -333,13 +334,37 @@ def _sortValue(value):
         return (1, 0.0, text)
 
 
-def sortRoleGroups(rows, valueOf, descending=False):
-    """보유를 항상 위에 두고, 그 안에서만 정렬한다."""
+def toneFromBg(bg):
+    """칸 배경색을 터치·인접·보유·없음으로 되돌린다."""
+    key = str(bg or "").lower()
+    if key == TOUCH_BG.lower():
+        return "touch"
+    if key == NEAR_BG.lower():
+        return "near"
+    if key == HOLD_BG.lower():
+        return "hold"
+    return "none"
+
+
+def _toneRank(tone):
+    return {"touch": 0, "near": 1, "none": 2}.get(str(tone or "none"), 2)
+
+
+def sortRoleGroups(rows, valueOf, descending=False, toneOf=None):
+    """보유는 위에 둔다. 관심종목은 연주황, 연노랑, 색 없음 순이다.
+
+    같은 색 안에서는 valueOf 정렬을 그대로 쓴다.
+    """
     holds = []
-    cands = []
+    bands = {0: [], 1: [], 2: []}
     for index, row in enumerate(rows or []):
-        bucket = holds if str((row or {}).get("role") or "") == "보유" else cands
-        bucket.append((index, row))
+        if str((row or {}).get("role") or "") == "보유":
+            holds.append((index, row))
+            continue
+        tone = "none"
+        if toneOf is not None:
+            tone = toneOf(row) or "none"
+        bands[_toneRank(tone)].append((index, row))
 
     def key(pair):
         kind, num, text = _sortValue(valueOf(pair[1]))
@@ -349,8 +374,12 @@ def sortRoleGroups(rows, valueOf, descending=False):
         return (kind, num, text, pair[0])
 
     holds.sort(key=key)
-    cands.sort(key=key)
-    return [row for _index, row in holds + cands]
+    ordered = list(holds)
+    for rank in (0, 1, 2):
+        group = bands[rank]
+        group.sort(key=key)
+        ordered.extend(group)
+    return [row for _index, row in ordered]
 
 
 _nameCache = {}

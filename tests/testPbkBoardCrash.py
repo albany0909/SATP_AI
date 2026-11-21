@@ -189,6 +189,88 @@ class PbkBoardCrashTest(unittest.TestCase):
         app.processEvents()
         win.close()
 
+    def test_candidate_rows_group_by_tone_without_jumping(self):
+        from PySide6.QtCore import QTimer
+        from utils.pbkWatchScreen import PBK_TONE_SORT_MS, sortRoleGroups
+
+        ordered = sortRoleGroups(
+            [
+                {"role": "보유", "code": "H", "v": 1},
+                {"role": "후보", "code": "N", "v": 1, "tone": "none"},
+                {"role": "후보", "code": "T", "v": 9, "tone": "touch"},
+                {"role": "후보", "code": "Y2", "v": 8, "tone": "near"},
+                {"role": "후보", "code": "Y1", "v": 3, "tone": "near"},
+            ],
+            lambda row: row["v"],
+            toneOf=lambda row: row.get("tone"),
+        )
+        self.assertEqual([row["code"] for row in ordered], ["H", "T", "Y1", "Y2", "N"])
+        desc = sortRoleGroups(
+            [row for row in ordered],
+            lambda row: row["v"],
+            descending=True,
+            toneOf=lambda row: row.get("tone"),
+        )
+        self.assertEqual([row["code"] for row in desc], ["H", "T", "Y2", "Y1", "N"])
+
+        app = QApplication.instance() or QApplication([])
+        from ui.tradeDeskWin import TradeDeskWin
+
+        win = TradeDeskWin()
+        rows = [
+            {"role": "보유", "holding": True, "stkCd": "000001", "stkNm": "보유", "ma5": 100, "ma20": 90, "expireDt": "20261231"},
+            {"role": "후보", "candidate": True, "stkCd": "000003", "stkNm": "멀리", "ma5": 100, "ma20": 90, "expireDt": "20261231"},
+            {"role": "후보", "candidate": True, "stkCd": "000002", "stkNm": "근처", "ma5": 100, "ma20": 90, "expireDt": "20261231"},
+            {"role": "후보", "candidate": True, "stkCd": "000004", "stkNm": "터치", "ma5": 100, "ma20": 90, "expireDt": "20261231"},
+        ]
+        quotes = {
+            "000001": {"curPrc": 50},
+            "000002": {"curPrc": 102},
+            "000003": {"curPrc": 130},
+            "000004": {"curPrc": 90},
+        }
+        with patch("utils.pbkWatchScreen.loadScreenRows", return_value=rows), patch(
+            "utils.pbkWatchScreen.watchScreenOn", return_value=True,
+        ), patch("utils.pbkWatchScreen.noteScreenRefresh", return_value={}), patch(
+            "utils.pbkWatchScreen.ensureWatchBackup", return_value={"ok": True},
+        ), patch("trading.watchRtMonitor.getWatchLastPxMap", return_value=quotes), patch(
+            "trading.watchRtMonitor._isQuoteSessionNow", return_value=False,
+        ):
+            win._watchAlgCd = "pbk"
+            win._fillPbkWatch()
+        win.show()
+        app.processEvents()
+        frz = win.tradeWatchFrozen
+        self.assertEqual([frz.item(i, 1).text() for i in range(4)], ["000001", "000004", "000002", "000003"])
+        self.assertEqual(frz.item(0, 0).background().color().name().lower(), "#e8f5e9")
+        self.assertEqual(frz.item(1, 0).background().color().name().lower(), "#ffe0b2")
+        self.assertEqual(frz.item(2, 0).background().color().name().lower(), "#fff59d")
+        frz.selectRow(3)
+        self.assertEqual(frz.item(frz.currentRow(), 1).text(), "000003")
+        moved = {"000003": {"curPrc": 90}, "000004": {"curPrc": 90}, "000002": {"curPrc": 102}, "000001": {"curPrc": 50}}
+
+        def _peek(code):
+            return moved.get(code) or {}
+
+        with patch("trading.watchRtMonitor.peekWatchLastPx", side_effect=_peek), patch(
+            "trading.watchRtMonitor._isQuoteSessionNow", return_value=False,
+        ):
+            win._tickPbkWatchPx()
+        self.assertEqual(frz.item(3, 1).text(), "000003")
+        self.assertEqual(frz.item(frz.currentRow(), 1).text(), "000003")
+        timer = win._pbkToneSortTimer
+        self.assertTrue(timer.isActive())
+        self.assertEqual(timer.interval(), PBK_TONE_SORT_MS)
+        self.assertIsInstance(timer, QTimer)
+        win._resortPbkByTone()
+        self.assertEqual([frz.item(i, 1).text() for i in range(4)], ["000001", "000003", "000004", "000002"])
+        self.assertEqual(frz.item(frz.currentRow(), 1).text(), "000003")
+        before = [frz.item(i, 1).text() for i in range(4)]
+        win._resortPbkByTone()
+        self.assertEqual([frz.item(i, 1).text() for i in range(4)], before)
+        app.processEvents()
+        win.close()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
