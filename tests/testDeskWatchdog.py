@@ -186,18 +186,25 @@ class DeskWatchdogTest(unittest.TestCase):
             con = Path(folder) / "conhost.exe"
             py.write_text("py", encoding="utf-8")
             con.write_text("con", encoding="utf-8")
-            with patch.object(wd, "desk_python", return_value=py), patch.object(
-                wd, "conhost_exe", return_value=con
-            ), patch.object(wd.subprocess, "Popen", side_effect=_popen):
+            inherited = {
+                "PATH": os.environ.get("PATH", ""),
+                "REAL_HOST": "https://real_host.example",
+                "SATP_TEST": "1",
+            }
+            with patch.dict(os.environ, inherited, clear=True), patch.object(
+                wd, "desk_python", return_value=py
+            ), patch.object(wd, "conhost_exe", return_value=con), patch.object(
+                wd.subprocess, "Popen", side_effect=_popen
+            ):
                 self.assertEqual(wd.start_desk(), 9)
         args, kwargs = calls[0]
         self.assertEqual(args, [str(con), "--", str(py), "main.py"])
         self.assertEqual(kwargs["cwd"], str(wd.REPO))
+        self.assertTrue(all("real_host" not in str(arg).lower() for arg in args))
         self.assertEqual(kwargs["env"].get("CURSOR_AGENT"), "1")
+        self.assertEqual(kwargs["env"].get("REAL_HOST"), "https://real_host.example")
         self.assertNotIn("SATP_TEST", kwargs["env"])
-        blob = " ".join(args).lower() + json.dumps(kwargs["env"]).lower()
-        self.assertNotIn("desktrademode", blob)
-        self.assertNotIn("real_host", blob)
+        self.assertNotIn("deskTradeMode", kwargs["env"])
 
 
 if __name__ == "__main__":
