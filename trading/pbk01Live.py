@@ -1271,15 +1271,27 @@ def fetchPaperBook(session=None, accountFetch=None, openFetch=None, cntrFetch=No
     try:
         acct = accountFetch() or {}
     except Exception as err:
-        return {"ok": False, "reason": type(err).__name__, "account": [], "orders": []}
+        return {"ok": False, "reason": type(err).__name__, "errMsg": str(err), "account": [], "orders": []}
     if not acct.get("ok"):
-        return {"ok": False, "reason": "ACCOUNT", "account": [], "orders": []}
+        return {
+            "ok": False,
+            "reason": "ACCOUNT",
+            "errMsg": str(acct.get("errMsg") or ""),
+            "account": [],
+            "orders": [],
+        }
     try:
         opened = openFetch() or {}
     except Exception as err:
-        return {"ok": False, "reason": type(err).__name__, "account": [], "orders": []}
+        return {"ok": False, "reason": type(err).__name__, "errMsg": str(err), "account": [], "orders": []}
     if not opened.get("ok"):
-        return {"ok": False, "reason": "OPEN", "account": [], "orders": []}
+        return {
+            "ok": False,
+            "reason": "OPEN",
+            "errMsg": str(opened.get("errMsg") or ""),
+            "account": [],
+            "orders": [],
+        }
     fills = {}
     if cntrFetch is not None:
         try:
@@ -1298,14 +1310,73 @@ def fetchPaperBook(session=None, accountFetch=None, openFetch=None, cntrFetch=No
     }
 
 
-def bootPaperBook(path=None, session=None, accountFetch=None, openFetch=None, now=None):
-    """재기동 직후 한 번. 조회가 되면 실제 수량을 적고, 아니면 구 상태만 유지한다."""
-    snap = fetchPaperBook(session=session, accountFetch=accountFetch, openFetch=openFetch)
+def _bookAuthRetry(snap):
+    """토큰이 아직 없거나 8005면 잠시 뒤 같은 조회를 다시 한다."""
+    from utils.tokenAuth import isTokenAuthFailText
+
+    reason = str((snap or {}).get("reason") or "")
+    err = str((snap or {}).get("errMsg") or "")
+    if reason == "NO_TOKEN":
+        return True
+    if reason in ("ACCOUNT", "OPEN") and isTokenAuthFailText(err):
+        return True
+    return False
+
+
+def _logBookDone(priorPositions, accountRows):
+    """대조 전 상태 수량과 계좌 수량. 아직 없던 수량은 불일치로 세지 않는다."""
+    acct = {}
+    for row in accountRows or []:
+        code = str((row or {}).get("stkCd") or "")
+        if not code:
+            continue
+        try:
+            acct[code] = int(row.get("qtyNum") or 0)
+        except (TypeError, ValueError):
+            acct[code] = 0
+    bad = []
+    for pos in priorPositions or []:
+        if not isinstance(pos, dict) or pos.get("brokerQty") is None:
+            continue
+        code = str(pos.get("stkCd") or "")
+        try:
+            stateQty = int(pos.get("brokerQty") or 0)
+        except (TypeError, ValueError):
+            stateQty = 0
+        acctQty = int(acct.get(code) or 0)
+        if code and stateQty != acctQty and (stateQty > 0 or acctQty > 0):
+            bad.append((code, stateQty, acctQty))
+    if bad:
+        bits = " ".join(f"{code} 상태{state} 계좌{held}" for code, state, held in bad)
+        _safeLog(None, f"[PBK01] 잔고 대조 완료 불일치 {len(bad)}종 {bits}")
+        return
+    bits = " ".join(f"{code} {qty}" for code, qty in sorted(acct.items()))
+    _safeLog(None, f"[PBK01] 잔고 대조 완료 일치 {len(acct)}종 {bits}".rstrip())
+
+
+def bootPaperBook(path=None, session=None, accountFetch=None, openFetch=None, now=None, retryPause=1.05, maxAttempts=8):
+    """재기동 직후. 토큰 8005면 준비될 때까지 다시 읽고, 끝나면 수량을 남긴다."""
+    import time
+
+    tries = max(1, int(maxAttempts or 1))
+    snap = {"ok": False, "reason": "NO_TOKEN", "errMsg": ""}
+    for attempt in range(tries):
+        snap = fetchPaperBook(session=session, accountFetch=accountFetch, openFetch=openFetch)
+        if snap.get("ok") or not _bookAuthRetry(snap) or attempt + 1 >= tries:
+            break
+        _safeLog(None, f"[PBK01] 잔고 대조 재시도 {attempt + 1} {snap.get('reason') or ''}")
+        if retryPause:
+            time.sleep(float(retryPause))
     if not snap.get("ok"):
-        _safeLog(None, f"[PBK01] 잔고 대조 보류 {snap.get('reason') or ''}")
+        err = str(snap.get("errMsg") or "").strip()
+        detail = f" {err}" if err else ""
+        _safeLog(None, f"[PBK01] 잔고 대조 보류 {snap.get('reason') or ''}{detail}".rstrip())
         restored = restorePaperBook(path=path, accountKnown=False, now=now)
         restored["reconciled"] = False
         return restored
+    from utils.pbk01Store import latestByKind, pbkPath
+
+    prior = (latestByKind(path or pbkPath("pbk01_state.jsonl"), "state") or {}).get("positions") or []
     restored = restorePaperBook(
         path=path,
         accountRows=snap.get("account") or [],
@@ -1315,6 +1386,7 @@ def bootPaperBook(path=None, session=None, accountFetch=None, openFetch=None, no
         orderFills=snap.get("fills") or None,
     )
     restored["reconciled"] = True
+    _logBookDone(prior, snap.get("account") or [])
     for row in restored.get("mismatches") or []:
         text = (
             f"[PBK01] 잔고 불일치 {row['stkCd']} 상태 {row['stateQty']} "

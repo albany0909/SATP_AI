@@ -896,6 +896,48 @@ class PbkOrderPlanTest(unittest.TestCase):
             )
             self.assertEqual([row["reason"] for row in sold["actions"] if row["side"] == "SELL"], ["f+10"])
 
+    def test_boot_retries_token_race_then_logs_quantities(self):
+        import trading.pbk01Live as live
+        from config.config import paper_host_url
+
+        logs = []
+        calls = {"n": 0}
+
+        def account():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {"ok": False, "errMsg": "[8005] Token이 유효하지 않습니다"}
+            return {"ok": True, "body": {"stk_acnt_evlt_prst": [
+                {"stk_cd": "094840", "stk_nm": "슈프리마", "rmnd_qty": "300", "avg_prc": "1000"},
+            ]}}
+
+        def opened():
+            return {"ok": True, "body": {"oso": []}}
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "pbk01_state.jsonl"
+            path.write_text(json.dumps({
+                "kind": "state",
+                "positions": [{
+                    "stkCd": "094840", "qty": 300, "brokerQty": 300,
+                    "leg1": {"qty": 300, "ymd": "20261120"},
+                }],
+            }, ensure_ascii=False) + "\n", encoding="utf-8")
+            with patch("utils.termLog.termLog", logs.append):
+                restored = live.bootPaperBook(
+                    path=path,
+                    session={"mode": "paper", "host": paper_host_url},
+                    accountFetch=account,
+                    openFetch=opened,
+                    now=datetime(2026, 11, 21, 8, 30, 0),
+                    retryPause=0,
+                    maxAttempts=3,
+                )
+        self.assertEqual(calls["n"], 2)
+        self.assertTrue(restored["reconciled"])
+        self.assertTrue(any("잔고 대조 완료 일치" in line and "094840 300" in line for line in logs))
+        self.assertFalse(any("잔고 대조 보류" in line for line in logs))
+
     def test_live_log_guard(self):
         from tests.liveGuard import LiveGuardError
         from utils.deskFileLog import appendDeskFileLog
