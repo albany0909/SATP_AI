@@ -1,5 +1,6 @@
 """PBK01 시세 구독 계획. 실주문·실 WS 는 열지 않는다."""
 
+import json
 import sys
 import tempfile
 import unittest
@@ -321,6 +322,80 @@ class PbkQuotePlanTest(unittest.TestCase):
         stop = datetime(2026, 11, 20, 15, 14, 0)
         forced = pollBatch(rows, ticks, stop, registered={"300080"}, limit=2)
         self.assertEqual(forced, ["900290", "300080"])
+
+    def test_off_session_ignores_live_quotes_for_touches(self):
+        from datetime import datetime
+
+        import trading.pbk01Live as live
+        from trading.pbkOrderPlan import buildLiveActions
+
+        sunday = datetime(2026, 11, 22, 9, 38, 58)
+        monday = datetime(2026, 11, 23, 10, 0, 0)
+        rows = [{"stkCd": "005930", "ma5": 100, "ma20": 90, "signalDt": "20261101"}]
+        sunday_px = {"src": "0B", "curPrc": "90", "tm": "093858", "tickYmd": "20261122", "lowPrc": "90"}
+        logs = []
+        fetched = {"n": 0}
+
+        def _fetch(_code):
+            fetched["n"] += 1
+            return {"price": "90", "tm": "093900", "low": "90"}
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "pbk01_state.jsonl"
+            path.write_text(
+                json.dumps({"kind": "state", "candidates": rows, "positions": []}, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            with patch("trading.watchRtMonitor.peekWatchLastPx", return_value=sunday_px), patch(
+                "trading.watchRtMonitor.syncPbkTouch",
+            ) as sync, patch("trading.pbk01Live._fetchKa10001", side_effect=_fetch):
+                got = live.runPbkCycle(
+                    now=sunday, path=path, log=logs.append, enabled=True, force=False,
+                )
+            self.assertEqual(got["touches"], [])
+            self.assertEqual(got["quotes"], {})
+            self.assertEqual(sync.call_count, 0)
+            self.assertEqual(fetched["n"], 0)
+            self.assertTrue(any("장외 시세 무시" in line for line in logs))
+            forced = live.runPbkCycle(
+                now=sunday,
+                path=path,
+                log=logs.append,
+                enabled=True,
+                quotes={"005930": {"price": 90, "src": "0B", "fresh": True, "curPrc": "90"}},
+            )
+            self.assertEqual(forced["touches"], [])
+            self.assertEqual(forced["quotes"], {})
+            plain = live.runPbkCycle(
+                now=sunday,
+                path=path,
+                log=logs.append,
+                enabled=True,
+                quotes={"005930": {"price": 90}},
+            )
+            self.assertEqual([row["stkCd"] for row in plain["touches"]], ["005930"])
+            skipped = live.refreshPbkQuotes(rows, [], now=sunday, fetch=_fetch)
+            self.assertEqual(skipped.get("skipped"), "offsession")
+            self.assertEqual(fetched["n"], 0)
+            monday_px = {"src": "0B", "curPrc": "90", "tm": "100000", "tickYmd": "20261123", "lowPrc": "90"}
+            saved_scan = live._scanYmd
+            live._scanYmd = "20261123"
+            try:
+                with patch("trading.watchRtMonitor.peekWatchLastPx", return_value=monday_px), patch(
+                    "trading.pbk01Live.refreshPbkQuotes",
+                    return_value={"plan": {"subscribe": []}, "stale": []},
+                ) as refresh:
+                    opened = live.runPbkCycle(now=monday, path=path, log=lambda _t: None, enabled=True)
+            finally:
+                live._scanYmd = saved_scan
+            self.assertEqual([row["stkCd"] for row in opened["touches"]], ["005930"])
+            self.assertEqual(refresh.call_count, 1)
+            stale = {"price": 90, "fresh": False, "src": "0B", "ask": 90, "curPrc": "90", "tickYmd": "20261122"}
+            held = buildLiveActions(rows, {"005930": stale}, [], "100000", "20261123", now=monday)
+            self.assertEqual(held["actions"], [])
+            fresh = {"price": 95, "fresh": True, "src": "0B", "ask": 95, "curPrc": "95", "tickYmd": "20261123"}
+            deal = buildLiveActions(rows, {"005930": fresh}, [], "100000", "20261123", now=monday)
+            self.assertEqual([(row["side"], row["leg"]) for row in deal["actions"]], [("BUY", 1)])
 
 
 if __name__ == "__main__":

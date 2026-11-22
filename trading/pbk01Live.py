@@ -299,6 +299,20 @@ def touchesForQuotes(candidates, quotes, owned=None):
     return touchesFromCandidates(candidates, quotes, owned=owned)
 
 
+def _regularSession(now):
+    """터치·폴링·0B 판정은 정규장에서만 한다."""
+    try:
+        from utils.pbkWatchScreen import screenUsesLiveQuote
+
+        return bool(screenUsesLiveQuote(now))
+    except Exception:
+        return False
+
+
+def _liveQuoteSrc(quote):
+    return str((quote or {}).get("src") or "") in ("0B", "poll")
+
+
 def _safeLog(log, text):
     if log is not None:
         log(text)
@@ -485,12 +499,33 @@ def runPbkCycle(now=None, loader=None, sender=None, log=None, path=None, quotes=
             owned.append(pos.get("stkCd"))
     touches = []
     if enabled:
-        if quotes is None:
+        if not _regularSession(now):
+            if quotes is None:
+                seen = quotesFromCache([row.get("stkCd") for row in rows] + list(owned), now=now)
+            else:
+                seen = quotes
+            ignored = [code for code, quote in (seen or {}).items() if _liveQuoteSrc(quote)]
+            if ignored:
+                _safeLog(log, f"[PBK01] 장외 시세 무시 {len(ignored)}종")
+            else:
+                _safeLog(log, "[PBK01] 장외 시세 무시 터치·폴링 안 함")
             try:
-                refreshPbkQuotes(rows, positions, reason="PBK시세", now=now)
-            except Exception as err:
-                _safeLog(log, f"[PBK01] 시세 구독 실패 {type(err).__name__}")
-            quotes = quotesFromCache([row.get("stkCd") for row in rows] + list(owned), now=now)
+                noteTouchWait([])
+            except Exception:
+                pass
+            kept = {}
+            for code, quote in (quotes or {}).items():
+                if quotes is None or _liveQuoteSrc(quote):
+                    continue
+                kept[code] = quote
+            quotes = kept
+        else:
+            if quotes is None:
+                try:
+                    refreshPbkQuotes(rows, positions, reason="PBK시세", now=now)
+                except Exception as err:
+                    _safeLog(log, f"[PBK01] 시세 구독 실패 {type(err).__name__}")
+                quotes = quotesFromCache([row.get("stkCd") for row in rows] + list(owned), now=now)
         usable = {}
         for code, quote in (quotes or {}).items():
             if isinstance(quote, dict) and quote.get("fresh") is False:
@@ -837,6 +872,19 @@ def refreshPbkQuotes(rows, positions, reason="PBK시세", fetch=None, pollLimit=
     )
 
     moment = now or datetime.now()
+    if not _regularSession(moment):
+        try:
+            noteTouchWait([])
+        except Exception:
+            pass
+        _safeLog(None, "[PBK01] 장외 시세 무시 폴링 안 함")
+        return {
+            "plan": {"subscribe": []},
+            "rows": list(rows or []),
+            "summary": {},
+            "stale": [],
+            "skipped": "offsession",
+        }
     built = _attachPrices(_universeRows(rows, positions))
     budget = pbkQuoteBudget()
     registered = set(budget.get("registered") or [])
