@@ -1,7 +1,7 @@
 """PBK01 실적 장대양봉 눌림 2분할. 주문은 하지 않는 순수 함수.
 
 장대양봉 당일에는 사지 않는다. 청산은 첫 매수일 f 를 0번째로 세어 f+10 거래일 시가다.
-하락장 비중, 급락 다음날 휴식, KODEX 주차는 넣지 않는다.
+하락장 비중과 급락 다음날 휴식은 넣지 않는다. KODEX200 병행은 REG01 상승장만 하고 하락장은 현금이다.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import re
 
 ALG_CD = "PBK01"
 STRAT_ID = "pullbackTwoStep_v1"
-ALG_VER = 4
+ALG_VER = 5
 NAME_KR = "실적 장대양봉 눌림목"
 ENGLISH_NAME = "Earnings Pullback Two Step"
 
@@ -965,7 +965,7 @@ def algVerHistPayload(gitHash="", ymd="2026-11-22"):
         "stratId": STRAT_ID,
         "algVer": ALG_VER,
         "ymd": ymd,
-        "note": "v4 코스닥이면서 1차 시점의 전일 5이평<20이평이면 슬롯 600만의 1.5배(900만, 1차 540만·2차 360만). 배율은 1차에 고정. 규칙 이전 보유와 그 2차는 600만. 현금이 부족하면 가능한 수량만. v3 지정가·대금 필터는 유지.",
+        "note": "v5 REG01 상승장만 KODEX200(069500) 100%, 하락장은 전량 현금. 전환·최초는 시가. PBK 매수 부족분은 지정가 체결 직후 KODEX 시가매도, 매도대금은 상승장 종가 재매수. 전일까지 60일 +3%면 신규 1차만 쉬고 재진입 없음. v4 코스닥 역배열 1.5배는 현금+KODEX에서 미체결 2차를 뺀 한도. 기존 보유는 600만.",
         "gitHash": str(gitHash or "")[:16],
         "src": "manual",
     }

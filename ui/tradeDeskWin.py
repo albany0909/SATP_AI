@@ -1583,6 +1583,13 @@ class TradeDeskWin(QMainWindow):
         )
         self.regimeSettLbl.setStyleSheet("font-size: 12px; color: #212121;")
         regimeBoxLay.addWidget(self.regimeSettLbl)
+        self.pbkParkLbl = QLabel("REG01 미정\nKODEX 60일 - · 매수\nKODEX 0주 · 0원")
+        self.pbkParkLbl.setWordWrap(True)
+        self.pbkParkLbl.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.pbkParkLbl.setStyleSheet("font-size: 12px; color: #212121;")
+        regimeBoxLay.addWidget(self.pbkParkLbl)
         settLay.addWidget(regimeBox)
         nearRow = QHBoxLayout()
         nearRow.addWidget(QLabel("인접 범위"))
@@ -3571,6 +3578,28 @@ class TradeDeskWin(QMainWindow):
 
             recordJudgment(view, sender=_send, useDb=True)
         self._applyRegimeBadge(view)
+        self._paintPbkPark(bars, kospiBars, today)
+
+    def _paintPbkPark(self, kodexBars, kospiBars, today):
+        """REG01·KODEX 60일·보유. 주문은 내지 않는다."""
+        label = getattr(self, "pbkParkLbl", None)
+        if label is None:
+            return
+        from trading.pbkKodexPark import describePark
+
+        park = {}
+        try:
+            from utils.pbk01Store import latestByKind, pbkPath
+
+            park = (latestByKind(pbkPath("pbk01_state.jsonl"), "state") or {}).get("park") or {}
+        except Exception:
+            park = {}
+        try:
+            text = describePark(kodexBars, kospiBars, today, park=park)
+        except Exception:
+            text = "REG01 미정\nKODEX 60일 - · 매수\nKODEX 0주 · 0원"
+        if label.text() != text:
+            label.setText(text)
 
     def _rebuildStratAlgTabs(self):
         """전략 설명 탭 — 유효 가동 알고리즘만. 보유로 켜짐 여부를 판단하지 않는다."""

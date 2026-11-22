@@ -4,7 +4,7 @@
   "name": "실적 장대양봉 눌림목",
   "englishName": "Earnings Pullback Two Step",
   "status": "test",
-  "version": 4,
+  "version": 5,
   "enabled": false,
   "timeframe": "D",
   "docPath": "strategies/docs/pullbackTwoStep_v1.md",
@@ -40,7 +40,7 @@
     "slots": "운용금 3000만, 5슬롯, 기본 슬롯 600만. 코스닥 역배열 신규만 900만. 첫 매수에 슬롯을 잡고 청산 때 반납. 슬롯이 차면 신규 1차를 사지 않는다. 이미 1차 산 종목의 2차는 허용. 같은 날이면 장대양봉이 오래된 순, 같으면 코드순.",
     "exit": "첫 매수일 f를 0번째로 세어 f+10 거래일 시가에 전량 매도. f+11이 아니다. 익절은 없다.",
     "stop": "장중 손절 없음. 15:15에 현재가가 평단×0.80 이하일 때만 전량 매도. 그 시각이 아니면 저가가 더 낮아도 팔지 않는다.",
-    "exclude": "하락장 절반 비중, 급락 다음날 매수 휴식, KODEX 주차는 넣지 않는다."
+    "exclude": "하락장 절반 비중과 급락 다음날 매수 휴식은 넣지 않는다. KODEX 병행은 REG01이다. 하락장은 전량 현금이며 CD금리 ETF를 사지 않는다."
   },
   "fill": {
     "entryPrice": "min(open, priorMa)",
@@ -53,5 +53,5 @@
     "stratLive.PBK01.enabled": false,
     "stratLive.PBK01.paperOnly": true
   },
-  "notes": "v4 모의 전용. 코스닥 역배열 신규 슬롯 900만, 배율은 1차에 고정, 기존 보유는 600만, 현금 부족 시 수량만 줄인다. v3 지정가·대금 필터 유지. 기본 비활성. AI_ALG_VER_HIST 는 배포 때 recordAlgVerBump 로 넣는다."
+  "notes": "v5 모의 전용. REG01 상승장 KODEX200 100%, 하락장 전량 현금. 60일 +3%면 신규만 쉬기. v4 1.5배는 유지하고 미체결 2차를 뺀 평가액 안. 기본 비활성. AI_ALG_VER_HIST 는 배포 때 recordAlgVerBump 로 넣는다."
 }

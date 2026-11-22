@@ -74,7 +74,7 @@ class PbkOrderPlanTest(unittest.TestCase):
         from trading.pbkOrderPlan import applyPaperResult
         from utils.pbkWatchScreen import unionRows
 
-        self.assertEqual(ALG_VER, 4)
+        self.assertEqual(ALG_VER, 5)
         self.assertEqual(scaledSlot(6_000_000, 1.5), 9_000_000)
         self.assertEqual(slotScale("코스닥", 90, 100), 1.5)
         self.assertEqual(slotScale("거래소", 90, 100), 1.0)

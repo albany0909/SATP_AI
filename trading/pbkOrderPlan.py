@@ -210,6 +210,9 @@ def buildLiveActions(
     now=None,
     requireBroker=False,
     cash=None,
+    pauseNew=False,
+    blockedNew=None,
+    parkRoom=None,
 ):
     """주문·놓침·건너뜀. 브로커는 호출하지 않고, 과거 가격으로 체결을 만들지 않는다."""
     from strategies.impl.pullbackTwoStep import (
@@ -232,6 +235,8 @@ def buildLiveActions(
     actions = []
     missed = []
     skips = []
+    paused = []
+    blocked = {str(code) for code in (blockedNew or []) if str(code or "")}
     used = {code for code, pos in byPos.items() if _slotUsed(pos)}
 
     def _skip(code, reason, leg=None):
@@ -305,7 +310,7 @@ def buildLiveActions(
             code = str((row or {}).get("stkCd") or "")
             if code:
                 _skip(code, "시간외")
-        return {"actions": actions, "missed": missed, "skips": skips, "exitHint": ""}
+        return {"actions": actions, "missed": missed, "skips": skips, "paused": paused, "exitHint": ""}
 
     for row in candidates or []:
         if not isinstance(row, dict):
@@ -337,6 +342,11 @@ def buildLiveActions(
             _skip(code, "창종료")
             continue
         owns = code in used
+        if (code in blocked or pauseNew) and not owns:
+            _skip(code, "상승장쉬기")
+            if code not in paused:
+                paused.append(code)
+            continue
         legacy = pos.get("slotBoost") in (None, "") and (
             bool(pos.get("leg1")) or int(pos.get("qty") or 0) > 0 or int(pos.get("brokerQty") or 0) > 0
         )
@@ -347,6 +357,8 @@ def buildLiveActions(
             market, row.get("ma5"), row.get("ma20"), locked=pos.get("slotBoost"), legacy=legacy,
         )
         budget = scaledSlot(slotKrw, scale)
+        if abs(scale - 1.5) < 1e-9 and parkRoom is not None:
+            budget = min(budget, max(0, int(parkRoom)))
         want = []
         if not _legBlocked(pos, 1):
             hit, basis = _hit(price, low, row.get("ma5"))
@@ -407,7 +419,7 @@ def buildLiveActions(
                 "expireDt": row.get("expireDt") or pos.get("expireDt") or "",
                 "hm": textHm,
             })
-    return {"actions": actions, "missed": missed, "skips": skips}
+    return {"actions": actions, "missed": missed, "skips": skips, "paused": paused}
 
 
 def _knownName(name, code):

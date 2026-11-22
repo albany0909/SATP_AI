@@ -944,18 +944,27 @@ def _paperSession():
     return {"mode": mode, "host": paper_host_url}
 
 
-def _saveBook(path, ymd, candidates, positions):
+def _saveBook(path, ymd, candidates, positions, park=None):
     from trading.pbkOrderPlan import fillBookNames
-    from utils.pbk01Store import appendRow
+    from utils.pbk01Store import appendRow, latestByKind
 
     positions = fillBookNames(positions, candidates)
-    appendRow(path, {
+    row = {
         "kind": "state",
         "announcedYmd": str(ymd or ""),
         "scannedAt": datetime.now().strftime("%H:%M"),
         "candidates": list(candidates or []),
         "positions": list(positions or []),
-    })
+    }
+    if park is None:
+        try:
+            prev = latestByKind(path, "state") or {}
+            park = prev.get("park")
+        except Exception:
+            park = None
+    if isinstance(park, dict):
+        row["park"] = park
+    appendRow(path, row)
 
 
 def _missedFile(ymd):
@@ -978,7 +987,7 @@ def touchWaitCodes():
     return list(_touchWaitCds)
 
 
-def placePaperCycle(result, broker=None, session=None, log=None, sender=None, path=None, now=None, chaseMaxPct=None, requireBroker=False, askFetch=None, cash=None):
+def placePaperCycle(result, broker=None, session=None, log=None, sender=None, path=None, now=None, chaseMaxPct=None, requireBroker=False, askFetch=None, cash=None, pauseNew=False, blockedNew=None, parkRoom=None):
     """신선한 터치만 모의 주문. 놓친 터치는 파일에만 남긴다."""
     from strategies.impl.pullbackTwoStep import PaperOnlyError
     from trading.pbkOrderPlan import applyPaperResult, buildLiveActions, pbkChaseMaxPct
@@ -1020,6 +1029,9 @@ def placePaperCycle(result, broker=None, session=None, log=None, sender=None, pa
         now=now,
         requireBroker=requireBroker,
         cash=cash,
+        pauseNew=pauseNew,
+        blockedNew=blockedNew,
+        parkRoom=parkRoom,
     )
     for row in plan["missed"]:
         _safeLog(log, f"[PBK01] 당일 터치 놓침 {row.get('stkCd')} {row.get('lineName')} 괴리 {row.get('gapPct')}%")
@@ -1521,11 +1533,33 @@ def _loop():
                 sendTelegramMsg(text)
 
             result = runPbkCycle(force=first, sender=_send) or {}
+            from trading.pbkKodexPark import prepareParkContext
             from trading.pbkOrderPlan import paperCash
 
+            ctx = {}
+            try:
+                ctx = prepareParkContext(
+                    datetime.now(),
+                    park=None,
+                    positions=(result or {}).get("positions"),
+                    cash=paperCash(),
+                )
+            except Exception:
+                ctx = {}
             placed = placePaperCycle(
-                result, sender=_send, requireBroker=True, askFetch=fetchPaperAsk, cash=paperCash(),
+                result,
+                sender=_send,
+                requireBroker=True,
+                askFetch=fetchPaperAsk,
+                cash=paperCash(),
+                pauseNew=bool(ctx.get("pause")),
+                blockedNew=ctx.get("skipped"),
+                parkRoom=ctx.get("room"),
             ) or {}
+            try:
+                _followKodexPark(ctx, placed, result)
+            except Exception as err:
+                _safeLog(None, f"[PBK01] KODEX 병행 실패 {type(err).__name__}")
         except Exception as err:
             _safeLog(None, f"[PBK01] 루프 오류 {type(err).__name__}")
             placed = {}
@@ -1548,6 +1582,81 @@ def _loop():
             pass
         first = False
         time.sleep(30)
+
+
+def _followKodexPark(ctx, placed, result):
+    """PBK 체결 뒤 KODEX를 모의로만 맞춘다. 실전 호스트로는 나가지 않는다."""
+    from trading.pbkKodexPark import planParkOrders
+
+    regime = str((ctx or {}).get("regime") or "")
+    if not regime:
+        return {"orders": []}
+    buys = []
+    sells = []
+    for action in (placed or {}).get("actions") or []:
+        if str(action.get("side") or "") != "BUY":
+            if str(action.get("side") or "") == "SELL":
+                px = action.get("fillPx") or action.get("limitPx") or 0
+                sells.append({"proceeds": int(float(px) * int(action.get("qty") or 0))})
+            continue
+        px = action.get("limitPx") or action.get("fillPx") or 0
+        buys.append({"spend": int(float(px) * int(action.get("qty") or 0)), "stkCd": action.get("stkCd")})
+    from trading.pbkOrderPlan import paperCash
+
+    plan = planParkOrders(
+        (ctx or {}).get("park"),
+        regime,
+        paperCash() or 0,
+        (ctx or {}).get("open"),
+        (ctx or {}).get("close"),
+        buys,
+        sells,
+    )
+    paused = list((placed or {}).get("paused") or [])
+    park = dict(plan.get("park") or {})
+    skipped = list(park.get("skipped") or [])
+    for code in paused:
+        if code and code not in skipped:
+            skipped.append(code)
+    if skipped:
+        park["skipped"] = skipped
+    orders = list(plan.get("orders") or [])
+    if orders:
+        from strategies.impl.pullbackTwoStep import PaperOnlyError
+
+        session = _paperSession()
+        for order in orders:
+            try:
+                got = paperBroker(order, session) or {}
+            except PaperOnlyError:
+                _safeLog(None, f"[PBK01] KODEX 거절 {order.get('reason')} 실전가드")
+                continue
+            except Exception as err:
+                _safeLog(None, f"[PBK01] KODEX 거절 {order.get('reason')} {type(err).__name__}")
+                continue
+            _safeLog(
+                None,
+                f"[PBK01] KODEX {order.get('side')} {order.get('qty')}주 {order.get('when')} "
+                f"{order.get('method')} {order.get('reason')}",
+            )
+            if not got.get("ok") and not got.get("sent"):
+                _safeLog(None, f"[PBK01] KODEX 미전송 {order.get('reason')} {got.get('reason') or ''}")
+    try:
+        path = None
+        from utils.pbk01Store import latestByKind, pbkPath
+
+        path = pbkPath("pbk01_state.jsonl")
+        saved = latestByKind(path, "state") or {}
+        _saveBook(
+            path,
+            saved.get("announcedYmd") or "",
+            (result or {}).get("candidates") or saved.get("candidates") or [],
+            (result or {}).get("positions") or saved.get("positions") or [],
+            park=park,
+        )
+    except Exception as err:
+        _safeLog(None, f"[PBK01] KODEX 상태 기록 실패 {type(err).__name__}")
+    return plan
 
 
 def paperBroker(action, session):
