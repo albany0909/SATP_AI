@@ -613,23 +613,122 @@ def pbkVisibleWidths(widths, codeCol=1):
     return tuple(cols)
 
 
+def screenUsesLiveQuote(now=None):
+    """화면 계산에 실시간 틱·폴링·0B를 쓰는 때는 정규장뿐이다."""
+    from datetime import datetime
+
+    from config.krHoliday import isTradingDay
+    from config.settingsStore import isWithinMktHours
+
+    day = now or datetime.now()
+    if not isTradingDay(day):
+        return False
+    return bool(isWithinMktHours(day.strftime("%H:%M")))
+
+
+def isLiveScreenQuote(quote):
+    """장외에 무시할 실시간 틱·폴링·0B. 공식 종가 시드는 틱이 아니다."""
+    quote = quote or {}
+    src = str(quote.get("src") or "")
+    if src == "dayClose":
+        return False
+    if src:
+        return True
+    return _px(quote.get("curPrc") or quote.get("krxPrc") or quote.get("nxtPrc")) is not None
+
+
 def screenPrice(quote, closePx=None, inSession=False):
-    """장중에는 0B 현재가, 장외에는 최근 종가."""
+    """정규장에는 0B 현재가. 그 밖에는 공식 종가만 쓰고 실시간 틱은 버린다."""
     quote = quote or {}
     live = _px(quote.get("curPrc") or quote.get("krxPrc") or quote.get("nxtPrc"))
     close = _px(closePx)
     src = str(quote.get("src") or "")
     if close is None and src == "dayClose":
         close = live
-    if inSession and src != "dayClose" and live:
+    if not inSession:
+        return close
+    if src != "dayClose" and live:
         return live
     if close:
         return close
     return live
 
 
+def maGapText(ma, price):
+    """현재가가 이평보다 낮을 때만 '(-3.2%)'. 그 외에는 빈 문자열."""
+    line = _px(ma)
+    px = _px(price)
+    if line is None or px is None or px >= line:
+        return ""
+    return f"({(px / line - 1.0) * 100.0:.1f}%)"
+
+
+def masAndClose(bars, asOf=None):
+    """직전 확정일까지의 5·20이평과 그 날 종가. 이평이 부족하면 None."""
+    from strategies.impl.pullbackTwoStep import _barDt, _f, _sortBars, _ymd, normalizeDayBars, priorMean
+
+    limit = _ymd(asOf)
+    kept = []
+    for bar in _sortBars(normalizeDayBars(bars)):
+        day = _barDt(bar)
+        if not day or (limit and day > limit):
+            continue
+        kept.append(bar)
+    if not kept:
+        return None, None, None
+    return (
+        priorMean(kept, len(kept), 5, "close"),
+        priorMean(kept, len(kept), 20, "close"),
+        _f(kept[-1], "close", "CLOSE_PRC"),
+    )
+
+
+def annotateScreenBars(rows, barsByCode, asOf=None):
+    """비어 있는 이평과 공식 종가를 일봉으로 채운다. 있는 이평은 유지한다."""
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("stkCd") or "")
+        ma5, ma20, close = masAndClose((barsByCode or {}).get(code), asOf)
+        if row.get("ma5") is None and ma5 is not None:
+            row["ma5"] = ma5
+        if row.get("ma20") is None and ma20 is not None:
+            row["ma20"] = ma20
+        if close is not None:
+            row["closePx"] = close
+    return rows
+
+
+def scrollBarWanted(overflow, hover):
+    """넘칠 때만 칸을 두고, 손잡이는 마우스가 그리드 위에 있을 때만."""
+    over = bool(overflow)
+    return {"showBar": over, "showHandle": over and bool(hover)}
+
+
 def screenCodes(rows):
     return [row["stkCd"] for row in rows or [] if row.get("stkCd")]
+
+
+def pbkStateCodes(path=None):
+    """상태 파일의 후보·보유 코드. 시세 시드가 화면 종목을 빠뜨리지 않게."""
+    from utils.stkCdUtil import normStkCd
+
+    try:
+        from utils.pbk01Store import latestByKind, pbkPath
+
+        row = latestByKind(path or pbkPath("pbk01_state.jsonl"), "state") or {}
+    except Exception:
+        return []
+    out = []
+    seen = set()
+    for item in list(row.get("candidates") or []) + list(row.get("positions") or []):
+        if not isinstance(item, dict):
+            continue
+        code = normStkCd(item.get("stkCd"))
+        if code and code not in seen:
+            seen.add(code)
+            out.append(code)
+    return out
 
 
 def backupWatchOnce(rows, folder, now=None):

@@ -604,6 +604,14 @@ def getWatchLastPxMap():
     # 시세구간(08~20시)에도 보강한다. 예전에는 구간 안에서 시드를 건너뛰어 빈칸이 남았다.
     try:
         codes = _monCodes()
+        try:
+            from utils.pbkWatchScreen import pbkStateCodes
+
+            for cd in pbkStateCodes():
+                if cd and cd not in codes:
+                    codes.append(cd)
+        except Exception:
+            pass
         missPx = []
         missFlu = []
         with _lock:

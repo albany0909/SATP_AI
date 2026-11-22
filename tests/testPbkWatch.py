@@ -25,14 +25,20 @@ from utils.pbkWatchScreen import (
     collectionCodes,
     ensurePbkTab,
     ensureWatchBackup,
+    annotateScreenBars,
     formatPx,
     loadScreenRows,
+    maGapText,
+    masAndClose,
+    scrollBarWanted,
     lookupStkNames,
     mergeScreenFills,
     readWatchBackup,
     resetScreenFills,
     restoreLegacyWatch,
+    isLiveScreenQuote,
     screenPrice,
+    screenUsesLiveQuote,
     sortRoleGroups,
     touchDelta,
     unionRows,
@@ -143,6 +149,24 @@ class PbkWatchScreenTest(unittest.TestCase):
         self.assertEqual(closed, 25800)
         seeded = screenPrice({"src": "dayClose", "curPrc": "25800"}, inSession=False)
         self.assertEqual(seeded, 25800)
+        self.assertIsNone(screenPrice({"src": "0B", "curPrc": "33300"}, inSession=False))
+        self.assertFalse(isLiveScreenQuote({"src": "dayClose", "curPrc": "25800"}))
+        self.assertTrue(isLiveScreenQuote({"src": "0B", "curPrc": "33300"}))
+        self.assertTrue(isLiveScreenQuote({"curPrc": "33300"}))
+        from datetime import datetime
+        sunday = datetime(2026, 11, 22, 9, 4)
+        holiday = datetime(2026, 12, 25, 10, 0)
+        monday = datetime(2026, 11, 23, 10, 0)
+        self.assertFalse(screenUsesLiveQuote(sunday))
+        self.assertFalse(screenUsesLiveQuote(holiday))
+        with patch("config.settingsStore.isWithinMktHours", return_value=False):
+            self.assertFalse(screenUsesLiveQuote(monday))
+        with patch("config.settingsStore.isWithinMktHours", return_value=True):
+            self.assertTrue(screenUsesLiveQuote(monday))
+            self.assertFalse(screenUsesLiveQuote(sunday))
+        self.assertEqual(maGapText(12340, 11945), "(-3.2%)")
+        self.assertEqual(maGapText(12340, 12340), "")
+        self.assertEqual(maGapText(12340, None), "")
         rows = unionRows(
             [{"stkCd": "263860", "ma5": 32000, "ma20": 30000, "expireDt": "20261231"}],
             [],
@@ -150,6 +174,25 @@ class PbkWatchScreenTest(unittest.TestCase):
         )
         self.assertEqual(rows[0]["ma5"], 32000)
         self.assertEqual(rows[0]["ma20"], 30000)
+        self.assertEqual(scrollBarWanted(False, True), {"showBar": False, "showHandle": False})
+        self.assertEqual(scrollBarWanted(True, False), {"showBar": True, "showHandle": False})
+        self.assertEqual(scrollBarWanted(True, True), {"showBar": True, "showHandle": True})
+        bars = [{"tradeDt": f"202611{day:02d}", "close": 1000 + day} for day in range(1, 26)]
+        ma5, ma20, close = masAndClose(bars, "20261125")
+        self.assertEqual(close, 1025)
+        self.assertIsNotNone(ma5)
+        self.assertIsNotNone(ma20)
+        held = [
+            {"stkCd": "300120", "role": "보유", "ma5": None, "ma20": None},
+            {"stkCd": "005930", "role": "후보", "ma5": 1, "ma20": 2},
+        ]
+        annotateScreenBars(held, {"300120": bars, "005930": bars}, "20261125")
+        self.assertEqual(held[0]["closePx"], 1025)
+        self.assertEqual(held[0]["ma5"], 1023)
+        self.assertEqual(held[1]["ma5"], 1)
+        self.assertEqual(held[1]["ma20"], 2)
+        self.assertEqual(maGapText(1023, 1025), "")
+        self.assertEqual(maGapText(1023, 1000), "(-2.2%)")
 
     def test_name_falls_through_master_watch_then_kiwoom(self):
         calls = []

@@ -234,7 +234,7 @@ class PbkBoardCrashTest(unittest.TestCase):
         ), patch("utils.pbkWatchScreen.noteScreenRefresh", return_value={}), patch(
             "utils.pbkWatchScreen.ensureWatchBackup", return_value={"ok": True},
         ), patch("trading.watchRtMonitor.getWatchLastPxMap", return_value=quotes), patch(
-            "trading.watchRtMonitor._isQuoteSessionNow", return_value=False,
+            "utils.pbkWatchScreen.screenUsesLiveQuote", return_value=True,
         ):
             win._watchAlgCd = "pbk"
             win._fillPbkWatch()
@@ -253,21 +253,21 @@ class PbkBoardCrashTest(unittest.TestCase):
             return moved.get(code) or {}
 
         with patch("trading.watchRtMonitor.peekWatchLastPx", side_effect=_peek), patch(
-            "trading.watchRtMonitor._isQuoteSessionNow", return_value=False,
+            "utils.pbkWatchScreen.screenUsesLiveQuote", return_value=True,
         ):
             win._tickPbkWatchPx()
-        self.assertEqual(frz.item(3, 1).text(), "000003")
-        self.assertEqual(frz.item(frz.currentRow(), 1).text(), "000003")
-        timer = win._pbkToneSortTimer
-        self.assertTrue(timer.isActive())
-        self.assertEqual(timer.interval(), PBK_TONE_SORT_MS)
-        self.assertIsInstance(timer, QTimer)
-        win._resortPbkByTone()
-        self.assertEqual([frz.item(i, 1).text() for i in range(4)], ["000001", "000003", "000004", "000002"])
-        self.assertEqual(frz.item(frz.currentRow(), 1).text(), "000003")
-        before = [frz.item(i, 1).text() for i in range(4)]
-        win._resortPbkByTone()
-        self.assertEqual([frz.item(i, 1).text() for i in range(4)], before)
+            self.assertEqual(frz.item(3, 1).text(), "000003")
+            self.assertEqual(frz.item(frz.currentRow(), 1).text(), "000003")
+            timer = win._pbkToneSortTimer
+            self.assertTrue(timer.isActive())
+            self.assertEqual(timer.interval(), PBK_TONE_SORT_MS)
+            self.assertIsInstance(timer, QTimer)
+            win._resortPbkByTone()
+            self.assertEqual([frz.item(i, 1).text() for i in range(4)], ["000001", "000003", "000004", "000002"])
+            self.assertEqual(frz.item(frz.currentRow(), 1).text(), "000003")
+            before = [frz.item(i, 1).text() for i in range(4)]
+            win._resortPbkByTone()
+            self.assertEqual([frz.item(i, 1).text() for i in range(4)], before)
         app.processEvents()
         win.close()
 
@@ -327,6 +327,84 @@ class PbkBoardCrashTest(unittest.TestCase):
         win._applyWatchChartPick("300120", "라온피플")
         self.assertEqual(win._sideKey, "acct")
         self.assertFalse(win.chartTab.isChecked())
+        app.processEvents()
+        win.close()
+
+    def test_off_session_refresh_keeps_close_color_and_order(self):
+        from PySide6.QtCore import Qt
+
+        touch = [{"tradeDt": f"202611{day:02d}", "close": 10000} for day in range(1, 26)]
+        far = [{"tradeDt": f"202611{day:02d}", "close": 10000 if day < 25 else 13000} for day in range(1, 26)]
+        held_bars = [
+            {"tradeDt": f"202611{day:02d}", "close": 12000 if day < 21 else 10000}
+            for day in range(1, 26)
+        ]
+        bars = {"300120": held_bars, "005930": touch, "000660": far}
+        rows = [
+            {"role": "보유", "holding": True, "stkCd": "300120", "stkNm": "라온피플"},
+            {"role": "후보", "candidate": True, "stkCd": "005930", "stkNm": "삼성전자"},
+            {"role": "후보", "candidate": True, "stkCd": "000660", "stkNm": "SK하이닉스"},
+        ]
+        live = {
+            "300120": {"src": "0B", "curPrc": 50000, "lowPrc": 1},
+            "005930": {"src": "0B", "curPrc": 50000, "lowPrc": 1},
+            "000660": {"src": "0B", "curPrc": 9000, "lowPrc": 9000},
+        }
+        app = QApplication.instance() or QApplication([])
+        from ui.tradeDeskWin import TradeDeskWin
+
+        win = TradeDeskWin()
+        logs = []
+        fetched = {"n": 0}
+
+        def _map():
+            fetched["n"] += 1
+            return live
+
+        with patch("utils.pbkWatchScreen.loadScreenRows", return_value=rows), patch(
+            "utils.pbkWatchScreen.watchScreenOn", return_value=True,
+        ), patch("utils.pbkWatchScreen.noteScreenRefresh", return_value={}), patch(
+            "utils.pbkWatchScreen.ensureWatchBackup", return_value={"ok": True},
+        ), patch("utils.pbkWatchScreen.screenUsesLiveQuote", return_value=False), patch(
+            "trading.watchRtMonitor.getWatchLastPxMap", side_effect=_map,
+        ), patch.object(win, "_screenBars", return_value=bars), patch.object(
+            win, "_screenBarAsOf", return_value="20261125",
+        ), patch(
+            "trading.watchRtMonitor.peekWatchLastPx", side_effect=lambda code: live.get(code) or {},
+        ), patch("utils.termLog.termLog", side_effect=lambda msg: logs.append(str(msg))):
+            win._watchAlgCd = "pbk"
+            win._pbkOffFrozen = False
+            win._fillPbkWatch()
+            frz = win.tradeWatchFrozen
+            codes = [frz.item(i, 1).text() for i in range(3)]
+            colors = [frz.item(i, 0).background().color().name().lower() for i in range(3)]
+            prices = [frz.item(i, 5).text() for i in range(3)]
+            self.assertEqual(codes, ["300120", "005930", "000660"])
+            self.assertEqual(prices, ["10,000", "10,000", "13,000"])
+            self.assertEqual(colors[0], "#e8f5e9")
+            self.assertEqual(colors[1], "#ffe0b2")
+            self.assertNotEqual(colors[2], "#ffe0b2")
+            self.assertEqual(frz.item(0, 3).text(), "10,000")
+            self.assertEqual(frz.item(0, 4).text(), "11,500")
+            self.assertEqual(frz.item(0, 4).data(Qt.ItemDataRole.UserRole + 5), "(-13.0%)")
+            self.assertEqual(frz.item(0, 3).data(Qt.ItemDataRole.UserRole + 5), "")
+            self.assertEqual(fetched["n"], 0)
+            width = frz.columnWidth(2)
+            win._watchVScrollHover = True
+            win._syncPbkGridScroll(frz)
+            self.assertEqual(frz.columnWidth(2), width)
+            if frz.verticalScrollBar().maximum() <= 0:
+                self.assertEqual(frz.verticalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            win._fillPbkWatch()
+            win._tickPbkWatchPx()
+            self.assertEqual([frz.item(i, 1).text() for i in range(3)], codes)
+            self.assertEqual([frz.item(i, 5).text() for i in range(3)], prices)
+            self.assertEqual(
+                [frz.item(i, 0).background().color().name().lower() for i in range(3)],
+                colors,
+            )
+            self.assertEqual(fetched["n"], 0)
+            self.assertTrue(any("장외 시세 무시" in line for line in logs))
         app.processEvents()
         win.close()
 
