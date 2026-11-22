@@ -33,14 +33,14 @@ from PySide6.QtWidgets import (
 
 _MA_PERIODS = (5, 10, 20, 60, 120)
 _MA_COLOR = {
-    5: "#F5C518",
+    5: "#C47B00",
     10: "#FB8C00",
-    20: "#E53935",
+    20: "#8E1414",
     60: "#43A047",
     120: "#9E9E9E",
 }
-# 20·60은 매매 기준선이라 조금 더 굵게
-_MA_WIDTH = {5: 2, 10: 2, 20: 3, 60: 3, 120: 2}
+# 5·20이평은 글자 없이 진한 색과 굵기로 구분한다.
+_MA_WIDTH = {5: 4, 10: 2, 20: 5, 60: 3, 120: 2}
 _LOOKBACK_DAYS = 365 * 20
 _SHOW_MIN = 20
 _SHOW_STEP = 20
@@ -683,15 +683,23 @@ class CandleChartView(QChartView):
                 painter.drawText(int(x + 7), int(y - 10), "N52")
             elif kind in ("algSignal", "algTouch", "algBuy", "algSell"):
                 color = str(row.get("color") or "#33691E")
+                label = str(row.get("label") or "")
+                if kind == "algTouch" or label in ("5이평", "20이평"):
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.setBrush(QColor(color))
+                    painter.drawEllipse(int(x - 3), int(y - 3), 6, 6)
+                    continue
                 if kind == "algBuy":
                     self._fillTri(painter, x, y + 14, True, color)
                 elif kind == "algSell":
                     self._fillTri(painter, x, y - 14, False, color)
                 elif kind == "algSignal":
                     self._drawStar(painter, x, y - 12, color)
+                if not label:
+                    continue
                 painter.setPen(QColor(color))
                 painter.setFont(QFont(self.font().family(), 7))
-                painter.drawText(int(x + 8), int(y - 8 if kind != "algBuy" else y + 18), str(row.get("label") or ""))
+                painter.drawText(int(x + 8), int(y - 8 if kind != "algBuy" else y + 18), label)
 
     def _drawStar(self, painter, x, y, color):
         """봉 위 금색 별. 차트 표시만."""

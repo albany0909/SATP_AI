@@ -497,8 +497,8 @@ def chartMarks(events, bars, visStart=0, visCount=None):
             if idx is None or idx < start or idx >= end:
                 continue
             line = touch["line"]
-            color = "#00897B" if line == 5 else "#1565C0"
-            out.append(_mark(idx - start, "algTouch", touch["px"], f"{line}이평", color, row.get("algCd")))
+            color = "#C47B00" if line == 5 else "#8E1414"
+            out.append(_mark(idx - start, "algTouch", touch["px"], "", color, row.get("algCd")))
     for row in events or []:
         kind = row.get("kind")
         if kind not in ("signal", "buy", "sell"):

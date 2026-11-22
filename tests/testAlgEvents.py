@@ -158,6 +158,13 @@ class AlgEventLogTest(unittest.TestCase):
         self.assertTrue(any("기준" in label for label in labels))
         self.assertTrue(any(label.startswith("매수1") for label in labels))
         self.assertTrue(any(label.startswith("매도 +4.3%") for label in labels))
+        self.assertFalse(any("이평" in label for label in labels))
+        touchMarks = chartMarks(
+            [{"algCd": "PBK01", "stkCd": "005930", "kind": "signal", "dt": "20261120"}],
+            bars,
+        )
+        self.assertTrue(any(row["kind"] == "algTouch" for row in touchMarks))
+        self.assertFalse(any("이평" in str(row.get("label") or "") for row in touchMarks))
         paper = {"deskTradeMode": "paper", "stratLive": {"PBK01": {"watchScreen": True}}}
         tabs = ensureClosedTab([{"key": "pbk", "name": "PBK"}], paper)
         self.assertEqual([row["key"] for row in tabs], ["pbk", "closed"])
@@ -191,6 +198,29 @@ class AlgEventLogTest(unittest.TestCase):
         self.assertFalse(pane.algLegend.isHidden())
         self.assertIn("PBK01", pane.algLegend.text())
         self.assertIn("pull", pane._sigBoxes)
+        from ui.deskStkChart import _MA_COLOR, _MA_WIDTH
+
+        self.assertGreaterEqual(_MA_WIDTH[5], 4)
+        self.assertGreaterEqual(_MA_WIDTH[20], 4)
+        self.assertNotEqual(_MA_COLOR[5].lower(), _MA_COLOR[20].lower())
+        day = []
+        for i in range(1, 31):
+            px = 10000 + i
+            day.append({
+                "tradeDt": f"202610{i:02d}",
+                "open": px, "high": px + 50, "low": px - 50, "close": px,
+            })
+        linePane = DeskStkChartPane()
+        linePane.setChartBundle("005930", "삼성전자", {"day": day})
+        pens = {}
+        for ser in linePane.candleChart.series():
+            if ser.name() in ("5", "20"):
+                pens[ser.name()] = ser.pen()
+        self.assertEqual(pens["5"].color().name().lower(), _MA_COLOR[5].lower())
+        self.assertEqual(pens["20"].color().name().lower(), _MA_COLOR[20].lower())
+        self.assertGreaterEqual(pens["5"].width(), 4)
+        self.assertGreaterEqual(pens["20"].width(), 4)
+        self.assertNotEqual(pens["5"].color().name().lower(), pens["20"].color().name().lower())
 
         win = TradeDeskWin()
         calls = []
