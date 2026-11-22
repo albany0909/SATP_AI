@@ -248,6 +248,61 @@ class AlgEventLogTest(unittest.TestCase):
         app.processEvents()
         win.close()
 
+    def test_candle_hover_tip_has_ohlc_change_and_rsi(self):
+        from utils.chartBarPlan import candleHoverHtml, candleHoverTip
+
+        bars = []
+        for i in range(1, 21):
+            px = 1000 + i * 10
+            bars.append({
+                "tradeDt": f"202611{i:02d}",
+                "open": px - 5, "high": px + 5, "low": px - 8, "close": px,
+            })
+        last = candleHoverTip(bars, len(bars) - 1)
+        prev = bars[-2]["close"]
+        self.assertAlmostEqual(last["chgPct"], (bars[-1]["close"] / prev - 1.0) * 100.0, places=4)
+        self.assertEqual(last["open"], bars[-1]["open"])
+        self.assertEqual(last["high"], bars[-1]["high"])
+        self.assertEqual(last["low"], bars[-1]["low"])
+        self.assertEqual(last["close"], bars[-1]["close"])
+        self.assertIsNotNone(last["rsi"])
+        up = candleHoverHtml(last)
+        self.assertIn("시가", up)
+        self.assertIn("고가", up)
+        self.assertIn("저가", up)
+        self.assertIn("종가", up)
+        self.assertIn("RSI(14)", up)
+        self.assertIn("#C62828", up)
+        downBars = list(bars) + [{
+            "tradeDt": "20261121", "open": 1100, "high": 1100, "low": 1000, "close": 1000,
+        }]
+        down = candleHoverTip(downBars, len(downBars) - 1)
+        self.assertLess(down["chgPct"], 0)
+        self.assertIn("#1565C0", candleHoverHtml(down))
+        first = candleHoverTip(bars, 0)
+        self.assertIsNone(first["chgPct"])
+        self.assertIn("등락", candleHoverHtml(first))
+        self.assertNotIn("#C62828", candleHoverHtml(first))
+        from PySide6.QtWidgets import QApplication
+        from ui.deskStkChart import DeskStkChartPane
+
+        QApplication.instance() or QApplication([])
+        pane = DeskStkChartPane()
+        pane.setChartBundle("005930", "삼성전자", {"day": bars})
+        shown = pane.candleView.hoverTipAt(len(bars) - 1)
+        self.assertEqual(shown["close"], bars[-1]["close"])
+        self.assertIsNotNone(shown["rsi"])
+        self.assertGreater(pane.rsiView.minimumHeight(), 0)
+        pane._barTp = "week"
+        pane._rebuildBars()
+        pane._redraw()
+        self.assertGreater(len(pane._bars), 1)
+        week = pane.candleView.hoverTipAt(len(pane._bars) - 1)
+        self.assertIsNotNone(week["chgPct"])
+        self.assertIn("종가", candleHoverHtml(week))
+        pane.rsiView.setHover(3)
+        self.assertEqual(pane.rsiView._hover, 3)
+
 
 if __name__ == "__main__":
     unittest.main()

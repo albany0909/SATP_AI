@@ -340,6 +340,9 @@ class CandleChartView(QChartView):
         self._plotReady = False
         self._timingMarks = []
         self._atrPlans = []
+        self._hoverBars = []
+        self._hoverOrigin = 0
+        self._hoverIndex = None
         self._atrVisStart = 0
         self._atrVisCount = 0
         self.setMouseTracking(True)
@@ -359,6 +362,59 @@ class CandleChartView(QChartView):
         self._atrVisStart = int(visStart or 0)
         self._atrVisCount = int(visCount or 0)
         self.viewport().update()
+
+    def setHoverBars(self, bars, origin=0):
+        """툴팁은 전체 봉 기준. origin 은 화면에 보이는 첫 봉의 위치."""
+        self._hoverBars = list(bars or [])
+        self._hoverOrigin = int(origin or 0)
+
+    def hoverTipAt(self, visibleIndex):
+        from utils.chartBarPlan import candleHoverTip
+
+        try:
+            idx = int(visibleIndex)
+        except (TypeError, ValueError):
+            return None
+        return candleHoverTip(self._hoverBars, self._hoverOrigin + idx)
+
+    def _barIndexAt(self, ev):
+        ch = self.chart()
+        n = int(self._xBarN or 0)
+        if ch is None or n <= 0:
+            return None
+        chartPt = ch.mapFromScene(self.mapToScene(ev.position().toPoint()))
+        area = ch.plotArea()
+        if area.width() <= 1:
+            return None
+        if chartPt.x() < area.left() or chartPt.x() > area.right():
+            return None
+        idx = int((chartPt.x() - area.left()) / area.width() * n)
+        if idx < 0 or idx >= n:
+            return None
+        return idx
+
+    def _showBarTip(self, ev, index):
+        from PySide6.QtWidgets import QToolTip
+
+        from utils.chartBarPlan import candleHoverHtml
+
+        tip = self.hoverTipAt(index)
+        html = candleHoverHtml(tip)
+        if not html:
+            QToolTip.hideText()
+            return
+        QToolTip.showText(ev.globalPosition().toPoint(), html, self)
+
+    def _clearBarTip(self):
+        from PySide6.QtWidgets import QToolTip
+
+        if self._hoverIndex is not None:
+            self._hoverIndex = None
+            self.viewport().update()
+        hook = getattr(self, "hoverMoved", None)
+        if hook is not None:
+            hook(None)
+        QToolTip.hideText()
 
     def setXTicks(self, barN, ticks):
         """월 눈금. Qt 카테고리 라벨은 폭이 줄어 안 보이므로 직접 그린다."""
@@ -433,6 +489,7 @@ class CandleChartView(QChartView):
             self.viewport().update()
         if not self.pickSr:
             self.setCursor(Qt.CursorShape.ArrowCursor)
+        self._clearBarTip()
         super().leaveEvent(ev)
 
     def mousePressEvent(self, ev):
@@ -480,6 +537,17 @@ class CandleChartView(QChartView):
             self.setCursor(Qt.CursorShape.SizeVerCursor)
         else:
             self.setCursor(Qt.CursorShape.ArrowCursor)
+        idx = self._barIndexAt(ev)
+        if idx is None:
+            self._clearBarTip()
+        else:
+            if idx != self._hoverIndex:
+                self._hoverIndex = idx
+                self.viewport().update()
+                hook = getattr(self, "hoverMoved", None)
+                if hook is not None:
+                    hook(idx)
+            self._showBarTip(ev, idx)
         super().mouseMoveEvent(ev)
 
     def mouseReleaseEvent(self, ev):
@@ -546,6 +614,7 @@ class CandleChartView(QChartView):
             self._drawMonthLabels(painter)
         self._drawTimingMarks(painter)
         self._drawAtrPlans(painter)
+        self._drawHoverLine(painter)
         if self._draftPx is None or self._yAxis is None:
             return
         ch = self.chart()
@@ -572,6 +641,24 @@ class CandleChartView(QChartView):
             painter.drawText(int(p1.x()) + 6, int(y) - 4, _fmtWon(self._draftPx))
         else:
             painter.drawText(int(p0.x()) + 4, int(y) - 4, _fmtWon(self._draftPx))
+
+    def _drawHoverLine(self, painter):
+        """커서가 있는 봉에 세로선을 그린다."""
+        idx = self._hoverIndex
+        n = int(self._xBarN or 0)
+        ch = self.chart()
+        if idx is None or ch is None or n <= 0:
+            return
+        area = ch.plotArea()
+        if area.width() <= 1:
+            return
+        p0 = ch.mapToScene(area.topLeft())
+        p1 = ch.mapToScene(area.bottomRight())
+        x = p0.x() + (int(idx) + 0.5) * (p1.x() - p0.x()) / float(n)
+        pen = QPen(QColor("#9E9E9E"))
+        pen.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        painter.drawLine(int(x), int(p0.y()), int(x), int(p1.y()))
 
     def _drawPriceLabels(self, painter):
         """기본 축 숫자(콤마 없음) 대신 금액 콤마 라벨을 같은 자리에 그린다."""
@@ -852,6 +939,7 @@ class RsiPane(QWidget):
         self._vals = []
         self._signal = []
         self._marks = []
+        self._hover = None
         self._label = ""
         self._sigLabel = ""
         self._left = 52
@@ -863,6 +951,10 @@ class RsiPane(QWidget):
     def setPad(self, left, right):
         self._left = max(8, int(left))
         self._right = max(4, int(right))
+        self.update()
+
+    def setHover(self, index):
+        self._hover = None if index is None else int(index)
         self.update()
 
     def setSeries(self, vals, label="", signal=None, marks=None, signalLabel=""):
@@ -916,6 +1008,10 @@ class RsiPane(QWidget):
             return left + (i + 0.5) * w / float(n)
 
         p.setPen(QColor("#EEEEEE"))
+        hover = self._hover
+        if hover is not None and 0 <= int(hover) < n:
+            x = x_of(int(hover))
+            p.drawLine(int(x), int(top), int(x), int(top + h))
         for level in (30, 70):
             y = y_of(level)
             p.drawLine(int(left), int(y), int(left + w), int(y))
@@ -1326,6 +1422,7 @@ class DeskStkChartPane(QWidget):
         self.rsiView = RsiPane()
         self.rsiView.zoomWheel = self._onZoomWheel
         lay.addWidget(self.rsiView, 0)
+        self.candleView.hoverMoved = self.rsiView.setHover
 
         self.macdView = MacdPane()
         self.macdView.zoomWheel = self._onZoomWheel
@@ -2005,6 +2102,7 @@ class DeskStkChartPane(QWidget):
         # 이평은 전체 봉으로 계산한 뒤 화면에 보이는 구간만 그린다
         allClose = [float(b.get("close") or 0) for b in allBars]
         visStart = len(allBars) - len(vis)
+        self.candleView.setHoverBars(allBars, visStart)
         xTicks = _evenYmTickRows(vis)
         # 카테고리는 빈 유일키만 — 날짜 글자를 넣으면 Qt 축과 커스텀 라벨이 겹친다
         labels = ["\u200b" * (i + 1) for i in range(len(vis))]

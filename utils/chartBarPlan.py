@@ -789,6 +789,97 @@ def poleFetchDecision(stat, today, barTp, refetch=False):
     return "fetch"
 
 
+def _tipPx(bar, *keys):
+    for key in keys:
+        try:
+            num = float((bar or {}).get(key))
+        except (TypeError, ValueError):
+            continue
+        if num > 0:
+            return num
+    return None
+
+
+def _tipDay(bar):
+    text = "".join(ch for ch in str((bar or {}).get("tradeDt") or (bar or {}).get("dt") or "") if ch.isdigit())
+    if len(text) >= 8:
+        text = text[:8]
+        return f"{text[:4]}-{text[4:6]}-{text[6:8]}"
+    return str((bar or {}).get("tradeDt") or "")
+
+
+def candleHoverTip(bars, index):
+    """봉 툴팁. 등락률은 직전 봉 종가 대비, RSI는 그 봉까지의 14."""
+    rows = list(bars or [])
+    try:
+        i = int(index)
+    except (TypeError, ValueError):
+        return None
+    if i < 0 or i >= len(rows):
+        return None
+    bar = rows[i] or {}
+    close = _tipPx(bar, "close")
+    if close is None:
+        return None
+    prev = _tipPx(rows[i - 1], "close") if i > 0 else None
+    chg = None
+    if prev:
+        chg = (close / prev - 1.0) * 100.0
+    from strategies.indicators import calcRsiSeries
+
+    closes = []
+    for row in rows:
+        px = _tipPx(row, "close")
+        closes.append(0.0 if px is None else px)
+    rsiSeries = calcRsiSeries(closes, 14)
+    rsi = rsiSeries[i] if i < len(rsiSeries) else None
+    return {
+        "dt": _tipDay(bar),
+        "open": _tipPx(bar, "open", "close"),
+        "high": _tipPx(bar, "high", "close"),
+        "low": _tipPx(bar, "low", "close"),
+        "close": close,
+        "chgPct": chg,
+        "rsi": rsi,
+    }
+
+
+def _tipWon(px):
+    if px is None:
+        return "-"
+    return f"{int(round(float(px))):,}"
+
+
+def candleHoverHtml(tip):
+    """등락은 상승 빨강, 하락 파랑. 보합은 검정."""
+    if not tip:
+        return ""
+    chg = tip.get("chgPct")
+    if chg is None:
+        chgText = "-"
+        color = "#212121"
+    else:
+        chgText = f"{chg:+.2f}%"
+        if chg > 0:
+            color = "#C62828"
+        elif chg < 0:
+            color = "#1565C0"
+        else:
+            color = "#212121"
+    rsi = tip.get("rsi")
+    rsiText = "-" if rsi is None else f"{float(rsi):.2f}"
+    day = tip.get("dt") or ""
+    return (
+        f"{day}<br>"
+        f"시가 {_tipWon(tip.get('open'))}<br>"
+        f"고가 {_tipWon(tip.get('high'))}<br>"
+        f"저가 {_tipWon(tip.get('low'))}<br>"
+        f"종가 {_tipWon(tip.get('close'))}<br>"
+        f"등락 <span style=\"color:{color}\">{chgText}</span><br>"
+        f"RSI(14) {rsiText}"
+    )
+
+
 def collectSurgeChartCds(now=None, directory=None):
     """급등주 탭에 보이는 종목. 장 시작 전에는 전일 목록. 폴더가 없으면 빈 목록."""
     from pathlib import Path
