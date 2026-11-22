@@ -4349,6 +4349,14 @@ class TradeDeskWin(QMainWindow):
             cashNum = max(int(buyAbleNum or 0), 0)
             totAsetNum = cashNum + max(int(stkEvltNum), 0)
             cashRtTxt = f"{cashNum / totAsetNum * 100:.1f}%" if totAsetNum > 0 else "-"
+            try:
+                from trading.pbkOrderPlan import notePaperCash
+                from utils.tradeSession import getDeskTradeMode
+
+                if str(getDeskTradeMode() or "").lower() == "paper":
+                    notePaperCash(buyAbleNum)
+            except Exception:
+                pass
         except Exception as err:
             termLog(f"[매매창] 매수가능/현금비율 계산 실패: {err}")
         dbgSig = (buyAbleKey, buyAbleNum, cashRtTxt)
@@ -5981,7 +5989,9 @@ class TradeDeskWin(QMainWindow):
                     expireTxt = f"{expire[:4]}-{expire[4:6]}-{expire[6:8]}"
                 else:
                     expireTxt = expire or "-"
-                held = str(row.get("role") or "") == "보유"
+                role = str(row.get("role") or "")
+                held = role == "보유"
+                roleShown = "후보 1.5x" if role == "후보" and row.get("boost") == "1.5x" else role
                 if held:
                     sellDay = holdingExitDay(row)
                     if len(sellDay) == 8:
@@ -6001,7 +6011,7 @@ class TradeDeskWin(QMainWindow):
                 prevCode = str(prevCodeItem.text() if prevCodeItem is not None else "")
                 same = bool(code) and prevCode == code
                 vals = [
-                    (str(row.get("role") or ""), None),
+                    (roleShown, None),
                     (code, code),
                     (str(row.get("stkNm") or code or ""), None),
                     (formatPx(row.get("ma5")), row.get("ma5")),

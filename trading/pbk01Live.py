@@ -978,7 +978,7 @@ def touchWaitCodes():
     return list(_touchWaitCds)
 
 
-def placePaperCycle(result, broker=None, session=None, log=None, sender=None, path=None, now=None, chaseMaxPct=None, requireBroker=False, askFetch=None):
+def placePaperCycle(result, broker=None, session=None, log=None, sender=None, path=None, now=None, chaseMaxPct=None, requireBroker=False, askFetch=None, cash=None):
     """신선한 터치만 모의 주문. 놓친 터치는 파일에만 남긴다."""
     from strategies.impl.pullbackTwoStep import PaperOnlyError
     from trading.pbkOrderPlan import applyPaperResult, buildLiveActions, pbkChaseMaxPct
@@ -1019,6 +1019,7 @@ def placePaperCycle(result, broker=None, session=None, log=None, sender=None, pa
         chaseMaxPct=pct,
         now=now,
         requireBroker=requireBroker,
+        cash=cash,
     )
     for row in plan["missed"]:
         _safeLog(log, f"[PBK01] 당일 터치 놓침 {row.get('stkCd')} {row.get('lineName')} 괴리 {row.get('gapPct')}%")
@@ -1520,8 +1521,10 @@ def _loop():
                 sendTelegramMsg(text)
 
             result = runPbkCycle(force=first, sender=_send) or {}
+            from trading.pbkOrderPlan import paperCash
+
             placed = placePaperCycle(
-                result, sender=_send, requireBroker=True, askFetch=fetchPaperAsk,
+                result, sender=_send, requireBroker=True, askFetch=fetchPaperAsk, cash=paperCash(),
             ) or {}
         except Exception as err:
             _safeLog(None, f"[PBK01] 루프 오류 {type(err).__name__}")

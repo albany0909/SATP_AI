@@ -179,6 +179,25 @@ def _slotUsed(pos):
         return False
 
 
+_paperCash = None
+
+
+def notePaperCash(amount):
+    """모의 매수가능 금액. 모르면 None 이라 슬롯 한도만 쓴다."""
+    global _paperCash
+    if amount is None:
+        _paperCash = None
+        return
+    try:
+        _paperCash = max(0, int(float(amount)))
+    except (TypeError, ValueError):
+        _paperCash = None
+
+
+def paperCash():
+    return _paperCash
+
+
 def buildLiveActions(
     candidates,
     quotes,
@@ -190,19 +209,25 @@ def buildLiveActions(
     slotLimit=5,
     now=None,
     requireBroker=False,
+    cash=None,
 ):
     """주문·놓침·건너뜀. 브로커는 호출하지 않고, 과거 가격으로 체결을 만들지 않는다."""
     from strategies.impl.pullbackTwoStep import (
         LEG1_PCT,
         LEG2_PCT,
+        cashCappedQty,
         floorPx,
         floorQty,
         legMoney,
+        marketName,
+        scaledSlot,
+        slotScale,
         stopTriggered,
     )
 
     chase = PBK_CHASE_MAX_PCT if chaseMaxPct is None else float(chaseMaxPct)
     textHm = _hm(hm)
+    leftCash = None if cash is None else max(0, int(float(cash)))
     byPos = _posByCode(positions)
     actions = []
     missed = []
@@ -312,6 +337,16 @@ def buildLiveActions(
             _skip(code, "창종료")
             continue
         owns = code in used
+        legacy = pos.get("slotBoost") in (None, "") and (
+            bool(pos.get("leg1")) or int(pos.get("qty") or 0) > 0 or int(pos.get("brokerQty") or 0) > 0
+        )
+        market = str(row.get("market") or row.get("marketName") or pos.get("market") or "")
+        if not market:
+            market = marketName(code)
+        scale = slotScale(
+            market, row.get("ma5"), row.get("ma20"), locked=pos.get("slotBoost"), legacy=legacy,
+        )
+        budget = scaledSlot(slotKrw, scale)
         want = []
         if not _legBlocked(pos, 1):
             hit, basis = _hit(price, low, row.get("ma5"))
@@ -338,7 +373,8 @@ def buildLiveActions(
             if limit is None or limit <= 0:
                 _miss(code, name, leg, lineName, absPx(line), basis, ask, ask, "호가없음")
                 continue
-            qty = floorQty(legMoney(int(slotKrw), pct), limit)
+            qty = floorQty(legMoney(budget, pct), limit)
+            qty = cashCappedQty(qty, limit, leftCash)
             legRow = pos.get(f"leg{leg}") if isinstance(pos.get(f"leg{leg}"), dict) else {}
             if legRow.get("settled"):
                 try:
@@ -348,8 +384,11 @@ def buildLiveActions(
                 if int(legRow.get("filledQty") or 0) > 0:
                     qty = min(qty, cap)
             if qty < 1 or limit <= 0:
-                _skip(code, "수량0", leg)
+                _skip(code, "현금부족" if leftCash is not None else "수량0", leg)
                 continue
+            if leftCash is not None:
+                spend = int(qty) * int(limit)
+                leftCash = max(0, leftCash - spend - spend * 15 // 10000)
             actions.append({
                 "side": "BUY",
                 "stkCd": code,
@@ -363,6 +402,7 @@ def buildLiveActions(
                 "orderGapPct": None if gapPct(limit, line) is None else round(gapPct(limit, line), 4),
                 "trdeTp": "0",
                 "reason": lineName,
+                "slotBoost": 1.5 if abs(scale - 1.5) < 1e-9 else 1.0,
                 "signalDt": row.get("signalDt") or pos.get("signalDt") or "",
                 "expireDt": row.get("expireDt") or pos.get("expireDt") or "",
                 "hm": textHm,
@@ -586,6 +626,9 @@ def applyPaperResult(positions, action, status, ordNo="", ymd="", calendar=None)
         "settled": False,
     }
     found[f"leg{legKey}"] = leg
+    if str(action.get("leg") or "") == "1" and found.get("slotBoost") in (None, ""):
+        if action.get("slotBoost") not in (None, ""):
+            found["slotBoost"] = action.get("slotBoost")
     if action.get("signalDt") and not found.get("signalDt"):
         found["signalDt"] = action.get("signalDt")
     if action.get("expireDt") and not found.get("expireDt"):

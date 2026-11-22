@@ -189,6 +189,9 @@ def unionRows(candidates, positions, accountHolds):
             row["ma5"] = item.get("ma5")
         if item.get("ma20") is not None:
             row["ma20"] = item.get("ma20")
+        market = str(item.get("market") or item.get("marketName") or "")
+        if market:
+            row["market"] = market
         row["grpCd"] = row["grpCd"] or "PBK01"
     for item in list(positions or []) + list(accountHolds or []):
         if not _held(item):
@@ -217,6 +220,13 @@ def unionRows(candidates, positions, accountHolds):
             row["role"] = "후보"
         else:
             continue
+        row["boost"] = ""
+        if row["role"] == "후보":
+            from strategies.impl.pullbackTwoStep import marketName, slotScale
+
+            market = row.get("market") or marketName(row.get("stkCd"))
+            if slotScale(market, row.get("ma5"), row.get("ma20")) == 1.5:
+                row["boost"] = "1.5x"
         out.append(row)
     order = {"보유": 0, "후보": 1}
     out.sort(key=lambda row: (order.get(row["role"], 9), row["stkCd"]))

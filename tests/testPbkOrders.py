@@ -69,6 +69,76 @@ class PbkOrderPlanTest(unittest.TestCase):
         self.assertLessEqual(capped[0]["limitPx"], 10000)
         self.assertEqual(far["missed"], [])
 
+    def test_kosdaq_reverse_uses_one_and_half_and_cash_cap(self):
+        from strategies.impl.pullbackTwoStep import ALG_VER, scaledSlot, slotScale
+        from trading.pbkOrderPlan import applyPaperResult
+        from utils.pbkWatchScreen import unionRows
+
+        self.assertEqual(ALG_VER, 4)
+        self.assertEqual(scaledSlot(6_000_000, 1.5), 9_000_000)
+        self.assertEqual(slotScale("코스닥", 90, 100), 1.5)
+        self.assertEqual(slotScale("거래소", 90, 100), 1.0)
+        self.assertEqual(slotScale("코스닥", 100, 100), 1.0)
+        fresh = {"300120": _fresh(80, low=80)}
+        boosted = buildLiveActions(
+            [{"stkCd": "300120", "stkNm": "라온피플", "market": "코스닥", "ma5": 90, "ma20": 100}],
+            fresh, [], "100000", "20261123",
+        )
+        buys = [row for row in boosted["actions"] if row["side"] == "BUY"]
+        self.assertEqual([row["leg"] for row in buys], [1, 2])
+        self.assertEqual(buys[0]["qty"], floorQty(legMoney(9_000_000, 60), buys[0]["limitPx"]))
+        self.assertEqual(buys[1]["qty"], floorQty(legMoney(9_000_000, 40), buys[1]["limitPx"]))
+        self.assertEqual(buys[0]["slotBoost"], 1.5)
+        saved = applyPaperResult([], buys[0], "filled", ymd="20261123")
+        self.assertEqual(saved[0]["slotBoost"], 1.5)
+        flipped = buildLiveActions(
+            [{"stkCd": "300120", "market": "코스닥", "ma5": 200, "ma20": 100}],
+            {"300120": _fresh(90, low=90)},
+            saved,
+            "100000",
+            "20261124",
+        )
+        second = [row for row in flipped["actions"] if row["side"] == "BUY"]
+        self.assertEqual([row["leg"] for row in second], [2])
+        self.assertEqual(second[0]["qty"], floorQty(legMoney(9_000_000, 40), second[0]["limitPx"]))
+        legacy = buildLiveActions(
+            [{"stkCd": "300080", "market": "코스닥", "ma5": 80, "ma20": 100}],
+            {"300080": _fresh(70, low=70)},
+            [{
+                "stkCd": "300080", "qty": 10, "brokerQty": 10,
+                "leg1": {"qty": 10, "filledQty": 10, "settled": True, "remainQty": 0},
+            }],
+            "100000",
+            "20261124",
+        )
+        old = [row for row in legacy["actions"] if row["side"] == "BUY" and row["leg"] == 2]
+        self.assertEqual(len(old), 1)
+        self.assertEqual(old[0]["qty"], floorQty(legMoney(6_000_000, 40), old[0]["limitPx"]))
+        poor = buildLiveActions(
+            [{"stkCd": "000001", "market": "거래소", "ma5": 12000, "ma20": 8000}],
+            {"000001": _fresh(10000, low=10000)},
+            [],
+            "100000",
+            "20261123",
+            cash=150_000,
+        )
+        one = [row for row in poor["actions"] if row["side"] == "BUY"]
+        self.assertEqual([row["leg"] for row in one], [1])
+        self.assertGreater(one[0]["qty"], 0)
+        self.assertLess(one[0]["qty"], floorQty(legMoney(6_000_000, 60), one[0]["limitPx"]))
+        spend = one[0]["qty"] * one[0]["limitPx"]
+        self.assertLessEqual(spend + spend * 15 // 10000, 150_000)
+        rows = unionRows(
+            [{"stkCd": "300120", "market": "코스닥", "ma5": 90, "ma20": 100, "stkNm": "라온"}],
+            [{"stkCd": "300080", "market": "코스닥", "ma5": 80, "ma20": 100, "qty": 10, "leg1": {"qty": 1}, "stkNm": "보유"}],
+            [],
+        )
+        by = {row["stkCd"]: row for row in rows}
+        self.assertEqual(by["300120"]["boost"], "1.5x")
+        self.assertEqual(by["300120"]["role"], "후보")
+        self.assertEqual(by["300080"]["boost"], "")
+        self.assertEqual(by["300080"]["role"], "보유")
+
     def test_low_rebound_is_miss_not_backfill(self):
         cand = [{"stkCd": "489790", "stkNm": "한화비전", "ma5": 10000, "ma20": 8000}]
         got = buildLiveActions(

@@ -11,7 +11,7 @@ import re
 
 ALG_CD = "PBK01"
 STRAT_ID = "pullbackTwoStep_v1"
-ALG_VER = 3
+ALG_VER = 4
 NAME_KR = "실적 장대양봉 눌림목"
 ENGLISH_NAME = "Earnings Pullback Two Step"
 
@@ -137,6 +137,107 @@ def slotBudget(capital=CAPITAL_KRW, slots=SLOT_COUNT):
 
 def legMoney(budget, pct):
     return int(int(budget) * int(pct) // 100)
+
+
+def kosdaqMarket(text):
+    """코스닥이면 True. 코스피·거래소·빈 값은 아니다."""
+    raw = str(text or "")
+    upper = raw.upper()
+    if "KOSPI" in upper or "코스피" in raw or "거래소" in raw:
+        return False
+    return "KOSDAQ" in upper or "코스닥" in raw
+
+
+def reverseAlign(ma5, ma20):
+    """전일 확정 5이평이 20이평보다 작으면 역배열."""
+    try:
+        short = float(ma5)
+        long = float(ma20)
+    except (TypeError, ValueError):
+        return False
+    if short <= 0 or long <= 0:
+        return False
+    return short < long
+
+
+def slotScale(market, ma5, ma20, locked=None, legacy=False):
+    """1차 때 정한 배율. 없으면 코스닥 역배열만 1.5. 기존 보유는 1."""
+    if locked not in (None, ""):
+        try:
+            num = float(locked)
+        except (TypeError, ValueError):
+            num = 1.0
+        return 1.5 if abs(num - 1.5) < 1e-9 else 1.0
+    if legacy:
+        return 1.0
+    if kosdaqMarket(market) and reverseAlign(ma5, ma20):
+        return 1.5
+    return 1.0
+
+
+def scaledSlot(slotKrw, scale):
+    base = int(slotKrw or 0)
+    if base <= 0:
+        return 0
+    if abs(float(scale) - 1.5) < 1e-9:
+        return base * 3 // 2
+    return base
+
+
+def cashCappedQty(qty, price, cash, feeBps=15):
+    """수수료를 포함한 대금이 현금을 넘지 않는 수량. cash 가 None 이면 그대로."""
+    if cash is None:
+        return int(qty or 0)
+    try:
+        room = int(cash)
+        px = int(price)
+        want = int(qty or 0)
+    except (TypeError, ValueError):
+        return 0
+    if want <= 0 or px <= 0 or room <= 0:
+        return 0
+    best = 0
+    lo = 0
+    hi = want
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        spend = mid * px
+        fee = spend * int(feeBps) // 10000
+        if spend + fee <= room:
+            best = mid
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best
+
+
+_marketCache = {}
+
+
+def marketName(code, hint=""):
+    """힌트가 있으면 그것. 테스트에서는 DB 를 열지 않는다."""
+    if str(hint or "").strip():
+        return str(hint).strip()
+    cd = str(code or "").strip()
+    if not cd:
+        return ""
+    if cd in _marketCache:
+        return _marketCache[cd]
+    import os
+
+    if os.environ.get("SATP_TEST") == "1":
+        _marketCache[cd] = ""
+        return ""
+    name = ""
+    try:
+        from utils.stkInfoStore import findStkByCd
+
+        row = findStkByCd(cd) or {}
+        name = str(row.get("MARKET_NAME") or "")
+    except Exception:
+        name = ""
+    _marketCache[cd] = name
+    return name
 
 
 def _closeOf(bar):
@@ -857,14 +958,14 @@ def submitPbkOrder(action, session, broker, paperOnly=True, log=None):
     return broker(action, session)
 
 
-def algVerHistPayload(gitHash="", ymd="2026-11-20"):
+def algVerHistPayload(gitHash="", ymd="2026-11-22"):
     """AI_ALG_VER_HIST 에 넣을 값. 이 함수는 DB 를 열지 않는다."""
     return {
         "algCd": ALG_CD,
         "stratId": STRAT_ID,
         "algVer": ALG_VER,
         "ymd": ymd,
-        "note": "v3 지정가 min(매도1호가, 이평 호가올림). 거래대금·거래량은 당일 제외 직전 20일이 모두 종가>0일 때만 평균하고 부족하면 탈락. 탈락 보유는 추가매수만 차단. v2는 미배포. 백테스트 체결은 min(시가, 이평).",
+        "note": "v4 코스닥이면서 1차 시점의 전일 5이평<20이평이면 슬롯 600만의 1.5배(900만, 1차 540만·2차 360만). 배율은 1차에 고정. 규칙 이전 보유와 그 2차는 600만. 현금이 부족하면 가능한 수량만. v3 지정가·대금 필터는 유지.",
         "gitHash": str(gitHash or "")[:16],
         "src": "manual",
     }
