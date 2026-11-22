@@ -229,7 +229,7 @@ def read_paper_guard():
 
 
 def read_app_version():
-    """v1.064 처럼 v{major}.{minor:03d}. 파일을 못 읽으면 빈 문자열."""
+    """v1.065 처럼 v{major}.{minor:03d}. 파일을 못 읽으면 빈 문자열."""
     try:
         data = json.loads(VERSION.read_text(encoding="utf-8"))
         major = int(data.get("major"))

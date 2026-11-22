@@ -823,6 +823,7 @@ def touchDelta(previous, screen, keep):
 
 
 PBK_TAB = {"key": "pbk", "name": "PBK", "bg": "#C5E1A5", "kind": "monitor", "algCd": "PBK01"}
+CLOSED_TAB = {"key": "closed", "name": "청산종목", "bg": "#EEEEEE", "kind": "history", "algCd": ""}
 
 
 def ensurePbkTab(tabs, settings=None):
@@ -838,6 +839,16 @@ def ensurePbkTab(tabs, settings=None):
     if any(str(row.get("key") or "") == "pbk" for row in rows):
         return rows
     return [dict(PBK_TAB)] + rows
+
+
+def ensureClosedTab(tabs, settings=None):
+    """청산 이력 탭. 시세 구독 탭이 아니므로 관심종목 뒤에 붙인다."""
+    rows = [dict(row) for row in (tabs or []) if isinstance(row, dict)]
+    if not watchScreenOn(settings):
+        return rows
+    if any(str(row.get("key") or "") == "closed" for row in rows):
+        return rows
+    return rows + [dict(CLOSED_TAB)]
 
 
 def bootWatchSelection(current, visibleKeys, settings=None):

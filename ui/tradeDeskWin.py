@@ -2055,6 +2055,17 @@ class TradeDeskWin(QMainWindow):
             cd = normStkCd(codeCell.text() if codeCell is not None else "") or ""
             nm = str(nameCell.text() or "").strip() if nameCell is not None else ""
             return cd, nm
+        if head0 == "알고리즘":
+            nameCell = frz.item(row, 1)
+            cd = ""
+            if nameCell is not None:
+                cd = normStkCd(nameCell.data(Qt.ItemDataRole.UserRole) or "") or ""
+            if not cd:
+                cds = list(getattr(self, "_watchPaintCds", None) or [])
+                if 0 <= row < len(cds):
+                    cd = normStkCd(cds[row]) or ""
+            nm = str(nameCell.text() or "").strip() if nameCell is not None else ""
+            return cd, nm
         cds = list(getattr(self, "_watchPaintCds", None) or [])
         if row >= len(cds):
             return "", ""
@@ -2132,8 +2143,14 @@ class TradeDeskWin(QMainWindow):
         self._chartStkCd = cd
         self._chartStkNm = nm
         self._chartFetchTried = set()
+        if str(getattr(self, "_watchAlgCd", "") or "") == "closed":
+            self._showHistoryChart()
+            return
         self._subscribeChartQuote(cd)
         self._reloadDeskChart()
+        timer = getattr(self, "_chartLiveTimer", None)
+        if timer is not None and not timer.isActive():
+            timer.start(1000)
 
     def _subscribeChartQuote(self, code):
         """차트로 연 종목은 0B 구독에 넣는다. 주문은 내지 않는다."""
@@ -2148,8 +2165,25 @@ class TradeDeskWin(QMainWindow):
 
             termLog(f"[deskChart] 시세 구독 실패 {code}: {err}")
 
+    def _showHistoryChart(self):
+        """청산 이력은 저장된 봉만 그린다. 실시간 구독과 1초 시세는 켜지 않는다."""
+        timer = getattr(self, "_chartLiveTimer", None)
+        if timer is not None and timer.isActive():
+            timer.stop()
+        self._reloadDeskChart(allowFetch=False)
+
     def _openDeskChart(self):
         """차트 탭을 열 때: 선택 종목 일·주·월봉 로드 + 1초 라이브만."""
+        if str(getattr(self, "_watchAlgCd", "") or "") == "closed":
+            cd, nm = self._selectedWatchStk()
+            self._chartStkCd = cd
+            self._chartStkNm = nm
+            self._chartFetchTried = set()
+            if not cd:
+                self.deskChart.clearChart("청산종목에서 종목을 선택하세요")
+                return
+            self._showHistoryChart()
+            return
         if self._isSurgeWatchTab():
             cd, nm = self._selectedSurgeStk()
         else:
@@ -2341,6 +2375,12 @@ class TradeDeskWin(QMainWindow):
             return
         ymd = datetime.now().strftime("%Y%m%d")
         bundle = bars if isinstance(bars, dict) else {"day": bars or []}
+        try:
+            from utils.algEventLog import eventsForChart
+
+            self.deskChart.setAlgEvents(eventsForChart(stkCd))
+        except Exception:
+            self.deskChart.setAlgEvents([])
         self.deskChart.setChartBundle(stkCd, stkNm, bundle, liveYmd=ymd)
         self._tickDeskChart()
 
@@ -3627,7 +3667,9 @@ class TradeDeskWin(QMainWindow):
                     ensureWatchBackup(configDataDir())
                 except Exception:
                     pass
-            tabRows = ensurePbkTab(visibleMonitorTabs(settings), settings)
+            from utils.pbkWatchScreen import ensureClosedTab
+
+            tabRows = ensureClosedTab(ensurePbkTab(visibleMonitorTabs(settings), settings), settings)
             tabs = tuple((row["key"], row["name"], row.get("bg") or "") for row in tabRows)
         except Exception:
             tabs = (("surge", "급등주", "#80DEEA"),)
@@ -5716,6 +5758,8 @@ class TradeDeskWin(QMainWindow):
             self._fillSurgeWatch()
         elif kind == "pbk":
             self._fillPbkWatch()
+        elif kind == "closed":
+            self._fillClosedWatch()
         elif kind in ("leader", "rank20"):
             self._restoreWatchGrid()
             self._fillRiseRankWatch()
@@ -5758,6 +5802,57 @@ class TradeDeskWin(QMainWindow):
             frz.setVisible(True)
         if tbl is not None:
             tbl.setVisible(True)
+
+    def _fillClosedWatch(self):
+        """청산 이력만 보여 준다. 현재가 조회와 0B 구독은 하지 않는다."""
+        from utils.algEventLog import closedRows, loadDeskEvents
+
+        frz = self.tradeWatchFrozen
+        tbl = self.tradeWatchTbl
+        headers = ["알고리즘", "종목명", "기준봉일", "매수일·평단", "매도일·매도가", "보유일", "수익률/손익", "청산사유"]
+        frz.setSortingEnabled(False)
+        if tbl is not None:
+            tbl.setVisible(False)
+        if frz.columnCount() != len(headers):
+            frz.setColumnCount(len(headers))
+        for col in range(frz.columnCount()):
+            frz.setColumnHidden(col, False)
+        frz.setHorizontalHeaderLabels(headers)
+        try:
+            rows = closedRows(loadDeskEvents())
+        except Exception:
+            rows = []
+        if not rows:
+            rows = [{"stkNm": "청산 종목 없음", "stkCd": ""}]
+        self._watchPaintCds = [str(row.get("stkCd") or "") for row in rows]
+        frz.setRowCount(len(rows))
+        for i, row in enumerate(rows):
+            vals = [
+                str(row.get("algCd") or ""),
+                str(row.get("stkNm") or ""),
+                str(row.get("signalText") or "-"),
+                str(row.get("buyText") or "-"),
+                str(row.get("sellText") or "-"),
+                str(row.get("holdDays") or "-"),
+                str(row.get("pnlText") or "-"),
+                str(row.get("reason") or "-"),
+            ]
+            for col, text in enumerate(vals):
+                item = frz.item(i, col)
+                if item is None:
+                    item = SurgeSortItem(text)
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    frz.setItem(i, col, item)
+                elif item.text() != text:
+                    item.setText(text)
+                if col == 1 and row.get("stkCd"):
+                    item.setData(Qt.ItemDataRole.UserRole, row.get("stkCd"))
+        frz.setMinimumWidth(0)
+        frz.setMaximumWidth(16777215)
+        frz.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        shown = sum(1 for row in rows if row.get("stkCd"))
+        self.tradeWatchTitle.setText(self._titleText(f"청산종목 · {shown}종"))
+        self._syncWatchScrollBars()
 
     def _fillPbkWatch(self):
         """PBK 후보와 모의 보유. 가격 칸은 정렬용 숫자를 따로 둔다."""

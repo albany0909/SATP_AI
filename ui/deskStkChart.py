@@ -681,6 +681,17 @@ class CandleChartView(QChartView):
                 painter.setPen(QColor("#F9A825"))
                 painter.setFont(QFont(self.font().family(), 8, QFont.Weight.Bold))
                 painter.drawText(int(x + 7), int(y - 10), "N52")
+            elif kind in ("algSignal", "algTouch", "algBuy", "algSell"):
+                color = str(row.get("color") or "#33691E")
+                if kind == "algBuy":
+                    self._fillTri(painter, x, y + 14, True, color)
+                elif kind == "algSell":
+                    self._fillTri(painter, x, y - 14, False, color)
+                elif kind == "algSignal":
+                    self._drawStar(painter, x, y - 12, color)
+                painter.setPen(QColor(color))
+                painter.setFont(QFont(self.font().family(), 7))
+                painter.drawText(int(x + 8), int(y - 8 if kind != "algBuy" else y + 18), str(row.get("label") or ""))
 
     def _drawStar(self, painter, x, y, color):
         """봉 위 금색 별. 차트 표시만."""
@@ -1244,6 +1255,10 @@ class DeskStkChartPane(QWidget):
         nameRow = QHBoxLayout()
         nameRow.setSpacing(6)
         nameRow.addWidget(self.headLbl, 0, Qt.AlignmentFlag.AlignTop)
+        self.algLegend = QLabel("")
+        self.algLegend.setStyleSheet("color: #33691E; font-size: 11px;")
+        self.algLegend.setVisible(False)
+        nameRow.addWidget(self.algLegend, 0, Qt.AlignmentFlag.AlignTop)
         self._sigOn = chartSignalDefaults()
         self._sigBusy = False
         self._sigBoxes = {}
@@ -1625,6 +1640,17 @@ class DeskStkChartPane(QWidget):
             liveYmd=liveYmd,
         )
 
+    def setAlgEvents(self, events):
+        """알고리즘 시그널·체결. 체크박스와 별개로 해당 종목이면 기본으로 그린다."""
+        from utils.algEventLog import legendLine
+
+        self._algEvents = list(events or [])
+        label = getattr(self, "algLegend", None)
+        text = legendLine(self._algEvents)
+        if label is not None:
+            label.setText(text)
+            label.setVisible(bool(text))
+
     def setChartBundle(self, stkCd, stkNm, bundle, liveYmd=None):
         """일·주·월 저장 봉. 없는 주기는 빈 목록이라 일봉으로 대신 그리지 않는다."""
         data = bundle or {}
@@ -1818,6 +1844,15 @@ class DeskStkChartPane(QWidget):
                 if top <= 0:
                     continue
                 rows.append({"i": idx - start, "kind": "n52", "px": top})
+        if str(getattr(self, "_barTp", "") or "") == "day":
+            from utils.algEventLog import chartMarks
+
+            rows.extend(chartMarks(
+                getattr(self, "_algEvents", None),
+                allBars,
+                start,
+                max(0, int(visCount)),
+            ))
         return rows
 
     def _addAtrSeries(self, plans, visStart, visCount, axX, axY, lo, hi):
