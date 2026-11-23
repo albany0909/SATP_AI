@@ -9,6 +9,7 @@ from config.config import telegram_chat_id, telegram_token
 from telegram.cmdRouter import routeCommand
 from telegram.commands.offCommand import isShutdownRequested
 from telegram.telSend import sendTelegramMsg
+from utils.logRedact import redactSecrets
 from utils.termLog import termLog
 
 
@@ -51,7 +52,7 @@ def confirmOffset(offset):
     try:
         fetchUpdates(offset, timeoutSec=0)
     except Exception as err:
-        termLog(f"오프셋 확정 실패(무시): {err}")
+        termLog(redactSecrets(f"오프셋 확정 실패(무시): {err}"))
 
 
 def handleMessage(msg):
@@ -114,5 +115,5 @@ def startPolling():
             break
         except Exception as err:
             # 일시적 네트워크 오류 등은 잠시 대기 후 재시도
-            termLog(f"수신 루프 오류: {err}")
+            termLog(redactSecrets(f"수신 루프 오류: {err}"))
             time.sleep(3)

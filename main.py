@@ -312,6 +312,12 @@ def _armFaultHandler():
 
 
 def main():
+    try:
+        from utils.logRedact import installSecretFilters
+
+        installSecretFilters()
+    except Exception:
+        pass
     _armFaultHandler()
     # Cursor/개발: 로그인 없이 main. 로그인 런처 기동은 client.
     if _fromLoginLauncher():

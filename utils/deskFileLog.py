@@ -66,7 +66,9 @@ def appendDeskFileLog(line, tag=""):
     tag 예: TRADE / ERR / TERM / RUN
     """
     global _lastYmd, _lastFp
-    text = str(line or "").rstrip("\n")
+    from utils.logRedact import redactSecrets
+
+    text = redactSecrets(str(line or "")).rstrip("\n")
     if not text.strip():
         return
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
