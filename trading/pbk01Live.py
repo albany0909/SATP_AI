@@ -851,6 +851,26 @@ def _fetchKa10001(code):
     }
 
 
+def _capPbkScreen(rows, limit=100):
+    """보유, 후보 순으로 화면 구독 100종. 넘는 종목은 로그 후 뺀다."""
+    holds = []
+    rest = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        if row.get("holding"):
+            holds.append(row)
+        else:
+            rest.append(row)
+    ordered = holds + rest
+    if len(ordered) <= int(limit):
+        return ordered
+    dropped = ordered[int(limit):]
+    shown = ",".join(str(row.get("stkCd") or "") for row in dropped[:8])
+    _safeLog(None, f"[PBK01] 0B 화면한도 생략 {len(dropped)}종 {shown}")
+    return ordered[: int(limit)]
+
+
 def refreshPbkQuotes(rows, positions, reason="PBK시세", fetch=None, pollLimit=None, now=None):
     """후보·보유를 0B 에 추가하고, 오늘 틱이 없거나 오래된 종목은 ka10001 로 받는다."""
     global _lastQuoteSummary
@@ -885,7 +905,7 @@ def refreshPbkQuotes(rows, positions, reason="PBK시세", fetch=None, pollLimit=
             "stale": [],
             "skipped": "offsession",
         }
-    built = _attachPrices(_universeRows(rows, positions))
+    built = _capPbkScreen(_attachPrices(_universeRows(rows, positions)))
     budget = pbkQuoteBudget()
     registered = set(budget.get("registered") or [])
 
@@ -899,7 +919,11 @@ def refreshPbkQuotes(rows, positions, reason="PBK시세", fetch=None, pollLimit=
         usedItems=budget.get("usedItems") or 0,
         usedStocks=budget.get("usedStocks") or 0,
     )
-    syncPbkTouch(plan["subscribe"], reason)
+    synced = syncPbkTouch(plan["subscribe"], reason) or {}
+    registered = set((pbkQuoteBudget().get("registered") or []))
+    if plan.get("poll"):
+        shown = ",".join(plan["poll"][:8])
+        _safeLog(None, f"[PBK01] 0B 한도 생략 {len(plan['poll'])}종 {shown}")
     ticks = {row["stkCd"]: row for row in built}
     stale = stalePollEntries(built, ticks, moment, registered=registered)
     limit = POLL_PER_CYCLE if pollLimit is None else int(pollLimit)
@@ -1601,8 +1625,21 @@ def _followKodexPark(ctx, placed, result):
             continue
         px = action.get("limitPx") or action.get("fillPx") or 0
         buys.append({"spend": int(float(px) * int(action.get("qty") or 0)), "stkCd": action.get("stkCd")})
+    from datetime import datetime
+
+    from trading.pbkKodexPark import reservedLeg2
     from trading.pbkOrderPlan import paperCash
 
+    now = datetime.now()
+    afterOpen = now.strftime("%H%M%S") >= "090000"
+    ask = None
+    try:
+        from trading.watchRtMonitor import peekWatchLastPx
+
+        info = peekWatchLastPx("069500") or {}
+        ask = info.get("ask1") or info.get("ask") or info.get("curPrc")
+    except Exception:
+        ask = None
     plan = planParkOrders(
         (ctx or {}).get("park"),
         regime,
@@ -1611,6 +1648,11 @@ def _followKodexPark(ctx, placed, result):
         (ctx or {}).get("close"),
         buys,
         sells,
+        today=now.strftime("%Y%m%d"),
+        afterOpen=afterOpen,
+        askPx=ask,
+        reserved=reservedLeg2((result or {}).get("positions")),
+        pending=bool(((ctx or {}).get("park") or {}).get("kodexPending")),
     )
     paused = list((placed or {}).get("paused") or [])
     park = dict(plan.get("park") or {})
@@ -1620,6 +1662,8 @@ def _followKodexPark(ctx, placed, result):
             skipped.append(code)
     if skipped:
         park["skipped"] = skipped
+    if (plan.get("park") or {}).get("bootLog"):
+        _safeLog(None, f"[PBK01] {(plan.get('park') or {}).get('bootLog')}")
     orders = list(plan.get("orders") or [])
     if orders:
         from strategies.impl.pullbackTwoStep import PaperOnlyError

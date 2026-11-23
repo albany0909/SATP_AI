@@ -179,7 +179,10 @@ def _order(side, qty, px, when, method, reason):
     }
 
 
-def planParkOrders(park, regime, cash, openPx, closePx, pbkBuys=None, pbkSells=None):
+def planParkOrders(
+    park, regime, cash, openPx, closePx, pbkBuys=None, pbkSells=None,
+    today="", afterOpen=False, askPx=None, reserved=0, pending=False,
+):
     """하루 KODEX 계획. 하락장이면 보유를 시가에 모두 판다.
 
     PBK 매수는 현금 먼저, 부족분만 시가에 KODEX를 판다.
@@ -193,25 +196,54 @@ def planParkOrders(park, regime, cash, openPx, closePx, pbkBuys=None, pbkSells=N
     bear = regime == "하락"
     label = "상승" if bull else ("하락" if bear else "")
     prev = str(state.get("regime") or "")
-    if not state.get("started"):
-        state["started"] = True
-        if bull and openPx and left > 0:
-            q = sharesForCash(left, openPx, buy=True)
-            if q > 0:
-                orders.append(_order("BUY", q, openPx, "시가", "시작일 시가", "최초KODEX"))
-                left -= tradeValue(q, openPx, buy=True)
-                qty += q
-    elif label and prev and prev != label and openPx:
-        if bear and qty > 0:
-            orders.append(_order("SELL", qty, openPx, "시가", "전환 첫 거래일 시가", "REG01하락"))
-            left += tradeValue(qty, openPx, buy=False)
+    day = str(today or "")
+    bootDone = pending or (day and str(state.get("kodexBootYmd") or "") == day)
+    if not state.get("started") and not bootDone:
+        if afterOpen:
+            if not bull:
+                state["bootLog"] = "KODEX 장중기동 하락장 매수 안 함"
+                if day:
+                    state["kodexBootYmd"] = day
+            elif askPx:
+                room = max(0, left - max(0, int(reserved or 0)))
+                q = sharesForCash(room, askPx, buy=True)
+                if q > 0:
+                    orders.append(_order(
+                        "BUY", q, askPx, "현재가", "KODEX 장중기동 현재가 최초매수", "최초KODEX",
+                    ))
+                    left -= tradeValue(q, askPx, buy=True)
+                    qty += q
+                state["started"] = True
+                if day:
+                    state["kodexBootYmd"] = day
+        else:
+            state["started"] = True
+            if bull and openPx and left > 0:
+                q = sharesForCash(left, openPx, buy=True)
+                if q > 0:
+                    orders.append(_order("BUY", q, openPx, "시가", "시작일 시가", "최초KODEX"))
+                    left -= tradeValue(q, openPx, buy=True)
+                    qty += q
+            if day:
+                state["kodexBootYmd"] = day
+    elif label and prev and prev != label and not bootDone and (openPx or (afterOpen and askPx)):
+        px = askPx if afterOpen and askPx else openPx
+        when = "현재가" if afterOpen and askPx else "시가"
+        method = "KODEX 장중기동 현재가 최초매수" if afterOpen and askPx else "전환 첫 거래일 시가"
+        if bear and qty > 0 and px:
+            orders.append(_order("SELL", qty, px, when, method if afterOpen else "전환 첫 거래일 시가", "REG01하락"))
+            left += tradeValue(qty, px, buy=False)
             qty = 0
-        elif bull and left > 0:
-            q = sharesForCash(left, openPx, buy=True)
+        elif bull and left > 0 and px:
+            room = max(0, left - max(0, int(reserved or 0))) if afterOpen else left
+            q = sharesForCash(room, px, buy=True)
             if q > 0:
-                orders.append(_order("BUY", q, openPx, "시가", "전환 첫 거래일 시가", "REG01상승"))
-                left -= tradeValue(q, openPx, buy=True)
+                useMethod = method if afterOpen else "전환 첫 거래일 시가"
+                orders.append(_order("BUY", q, px, when, useMethod, "REG01상승"))
+                left -= tradeValue(q, px, buy=True)
                 qty += q
+        if day:
+            state["kodexBootYmd"] = day
     if label:
         state["regime"] = label
     for buy in pbkBuys or []:

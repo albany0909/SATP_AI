@@ -815,8 +815,12 @@ def collectionCodes(backupRows, extras=COLLECTION_EXTRAS):
     return out
 
 
-def touchDelta(previous, screen, keep):
-    """화면 목록에 맞춰 넣을 코드와 뺄 코드. keep 은 다른 수집·탭이 쓰는 구독이다."""
+def touchDelta(previous, screen, keep, registered=None):
+    """화면 목록에 맞춰 넣을 코드와 뺄 코드. keep 은 다른 수집·탭이 쓰는 구독이다.
+
+    registered 가 있으면 편입은 그 실제 등록 집합에 없는 종목이다.
+    화면 목록에만 있고 등록이 안 된 후보도 넣는다.
+    """
     prev = {_code(code) for code in (previous or []) if _code(code)}
     want = []
     seen = set()
@@ -827,9 +831,14 @@ def touchDelta(previous, screen, keep):
             want.append(cd)
     wantSet = set(want)
     held = {_code(code) for code in (keep or []) if _code(code)}
-    added = [code for code in want if code not in prev and code not in held]
+    if registered is None:
+        added = [code for code in want if code not in prev and code not in held]
+    else:
+        reg = {_code(code) for code in registered if _code(code)}
+        added = [code for code in want if code not in reg]
     removed = [code for code in prev if code not in wantSet and code not in held]
-    return {"added": added, "removed": removed, "screen": want}
+    missing = [code for code in want if registered is not None and code not in {_code(c) for c in registered if _code(c)}]
+    return {"added": added, "removed": removed, "screen": want, "missing": missing}
 
 
 PBK_TAB = {"key": "pbk", "name": "PBK", "bg": "#C5E1A5", "kind": "monitor", "algCd": "PBK01"}

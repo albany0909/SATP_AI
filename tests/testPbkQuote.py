@@ -397,6 +397,102 @@ class PbkQuotePlanTest(unittest.TestCase):
             deal = buildLiveActions(rows, {"005930": fresh}, [], "100000", "20261123", now=monday)
             self.assertEqual([(row["side"], row["leg"]) for row in deal["actions"]], [("BUY", 1)])
 
+    def test_unregistered_screen_codes_are_added_with_refresh_zero(self):
+        from utils.pbkWatchScreen import touchDelta
+
+        delta = touchDelta(
+            ["333333", "444444"],
+            ["333333", "444444", "111111"],
+            ["111111"],
+            registered=["111111"],
+        )
+        self.assertEqual(delta["added"], ["333333", "444444"])
+        self.assertEqual(delta["missing"], ["333333", "444444"])
+        self.assertEqual(delta["removed"], [])
+        import trading.watchRtMonitor as mon
+
+        savedCodes = list(mon._regCodes)
+        savedItems = dict(mon._regItems)
+        savedPbk = set(mon._pbkTouch)
+        calls = []
+
+        class _Ws:
+            isLoggedIn = True
+
+            def sendReg(self, types, items, grpNo="1", refresh="1"):
+                calls.append((list(items), str(refresh)))
+
+            def sendRemove(self, types, items, grpNo="1"):
+                return None
+
+        try:
+            mon._regCodes[:] = ["111111"]
+            mon._regItems.clear()
+            mon._regItems["111111"] = ["111111"]
+            mon._pbkTouch.clear()
+            mon._pbkTouch.update(["333333", "444444"])
+            with patch.object(mon, "getWsClient", return_value=_Ws()), patch.object(
+                mon, "_isNxtStk", return_value=False,
+            ), patch.object(mon, "_writeState", lambda *_a, **_k: None), patch.object(
+                mon, "_monCodes", return_value=["111111"],
+            ), patch("trading.maTouchLive.prepareMaTouchSession", lambda *_a, **_k: None):
+                got = mon.syncPbkTouch(["111111", "333333", "444444"], "PBK화면")
+            self.assertEqual(got["added"], ["333333", "444444"])
+            self.assertTrue(calls)
+            self.assertTrue(all(row[1] == "0" for row in calls))
+            calls.clear()
+
+            def _reg(ws, codes, reason):
+                calls.append((list(codes), reason))
+
+            with patch.object(mon, "_isQuoteSessionNow", return_value=True), patch.object(
+                mon, "_monCodes", return_value=["005930"],
+            ), patch(
+                "utils.pbkWatchScreen.pbkStateCodes", return_value=["300120"],
+            ), patch.object(mon, "_regWatch", side_effect=_reg):
+                mon._onLogin(_Ws())
+            self.assertIn("300120", calls[0][0])
+            self.assertEqual(calls[0][1], "LOGIN(시세구간)")
+        finally:
+            mon._regCodes[:] = savedCodes
+            mon._regItems.clear()
+            mon._regItems.update(savedItems)
+            mon._pbkTouch.clear()
+            mon._pbkTouch.update(savedPbk)
+
+    def test_session_start_includes_pbk_codes(self):
+        import trading.watchRtMonitor as mon
+
+        calls = []
+
+        def _reg(ws, codes, reason):
+            calls.append((list(codes), reason))
+
+        opens = iter([False, True])
+
+        def _open():
+            return next(opens)
+
+        def _sleep(_sec):
+            if calls:
+                raise RuntimeError("stop")
+
+        with patch.object(mon, "_isQuoteSessionNow", side_effect=_open), patch.object(
+            mon, "_monCodes", return_value=["005930"],
+        ), patch(
+            "utils.pbkWatchScreen.pbkStateCodes", return_value=["300120", "900290"],
+        ), patch.object(mon, "_regWatch", side_effect=_reg), patch.object(
+            mon, "_prepareBeforeOpen", lambda *_a, **_k: None,
+        ), patch.object(mon, "_flushLastPxCache", lambda *_a, **_k: None), patch.object(
+            mon, "getWsClient", return_value=type("W", (), {"isLoggedIn": True})(),
+        ), patch("trading.watchRtMonitor.time.sleep", side_effect=_sleep):
+            with self.assertRaises(RuntimeError):
+                mon._mktLoop()
+        self.assertTrue(calls)
+        self.assertEqual(calls[0][1], "시세시작")
+        self.assertIn("300120", calls[0][0])
+        self.assertIn("900290", calls[0][0])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

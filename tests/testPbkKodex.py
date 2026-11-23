@@ -136,6 +136,36 @@ class PbkKodexParkTest(unittest.TestCase):
         self.assertLess(buy["qty"], full)
         self.assertGreater(buy["qty"], 0)
 
+    def test_intraday_restart_buys_kodex_once_at_ask(self):
+        from trading.pbkKodexPark import planParkOrders, sharesForCash
+
+        first = planParkOrders(
+            {}, "상승", 1_000_000, None, None,
+            today="20261123", afterOpen=True, askPx=10000, reserved=400_000,
+        )
+        orders = first["orders"]
+        self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0]["method"], "KODEX 장중기동 현재가 최초매수")
+        self.assertEqual(orders[0]["limitPx"], 10000)
+        self.assertEqual(orders[0]["qty"], sharesForCash(600_000, 10000, buy=True))
+        self.assertLess(orders[0]["qty"], sharesForCash(1_000_000, 10000, buy=True))
+        again = planParkOrders(
+            first["park"], "상승", 1_000_000, None, None,
+            today="20261123", afterOpen=True, askPx=10000, reserved=400_000,
+        )
+        self.assertEqual(again["orders"], [])
+        bear = planParkOrders(
+            {}, "하락", 1_000_000, None, None,
+            today="20261123", afterOpen=True, askPx=10000,
+        )
+        self.assertEqual(bear["orders"], [])
+        self.assertIn("하락장", bear["park"].get("bootLog") or "")
+        pending = planParkOrders(
+            {}, "상승", 1_000_000, None, None,
+            today="20261123", afterOpen=True, askPx=10000, pending=True,
+        )
+        self.assertEqual(pending["orders"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

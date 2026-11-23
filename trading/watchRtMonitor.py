@@ -821,9 +821,17 @@ def _codesWithPbk(codes):
         if cd and cd not in seen:
             seen.add(cd)
             out.append(cd)
+    extra = []
     with _lock:
-        extra = list(_pbkTouch)
+        extra.extend(list(_pbkTouch))
+    try:
+        from utils.pbkWatchScreen import pbkStateCodes
+
+        extra.extend(pbkStateCodes() or [])
+    except Exception:
+        pass
     for cd in extra:
+        cd = normStkCd(cd)
         if cd and cd not in seen:
             seen.add(cd)
             out.append(cd)
@@ -1004,13 +1012,20 @@ def syncPbkTouch(codes, reason="PBK화면"):
     except Exception:
         base = set()
     keep = [code for code in registered if code in base or code not in prev]
-    delta = touchDelta(list(prev), codes, keep)
+    delta = touchDelta(list(prev), codes, keep, registered=registered)
     _pbkTouch = set(delta["screen"])
     for code in delta["removed"]:
         unregWatchStk(code, reason)
     addedN = 0
     if delta["added"]:
         addedN = addWatchRtCodes(delta["added"], reason)
+    missingN = len(delta.get("missing") or [])
+    termLog(
+        f"[watchRt] 0B 진단 등록 {len(registered)} 계획 {len(delta['screen'])} "
+        f"누락 {missingN} 편입 {addedN} ({reason})"
+    )
+    if addedN == 0 and missingN > 0:
+        termLog(f"[watchRt] 0B 편입 경고 누락 {missingN}종 ({reason})")
     return {
         "ok": True,
         "added": list(delta["added"]),
@@ -1092,12 +1107,7 @@ def _onLogin(ws):
     """WS LOGIN 후, 시세 구간이면 0B 재등록 (장전 NXT 포함)."""
     if not _isQuoteSessionNow():
         return
-    codes = _monCodes()
-    with _lock:
-        for cd in _pbkTouch:
-            if cd not in codes:
-                codes.append(cd)
-    _regWatch(ws, codes, "LOGIN(시세구간)")
+    _regWatch(ws, _codesWithPbk(_monCodes()), "LOGIN(시세구간)")
 
 
 def _clockSec(raw):
@@ -1229,7 +1239,7 @@ def _mktLoop():
                 if nowOpen:
                     ws = getWsClient()
                     if ws is not None and ws.isLoggedIn:
-                        _regWatch(ws, _monCodes(), "기동(시세구간)")
+                        _regWatch(ws, _codesWithPbk(_monCodes()), "기동(시세구간)")
                     else:
                         termLog("[watchRt] 기동 시세구간 — WS LOGIN 후 구독")
                 else:
@@ -1240,7 +1250,7 @@ def _mktLoop():
             elif nowOpen and not wasOpen:
                 ws = getWsClient()
                 if ws is not None and ws.isLoggedIn:
-                    _regWatch(ws, _monCodes(), "시세시작")
+                    _regWatch(ws, _codesWithPbk(_monCodes()), "시세시작")
                 else:
                     termLog("[watchRt] 시세시작 — WS 미연결, LOGIN 훅에서 구독")
             elif (not nowOpen) and wasOpen:
