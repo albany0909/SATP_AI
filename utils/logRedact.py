@@ -9,14 +9,18 @@ import logging
 import re
 import traceback
 
-# api.telegram.org/bot<숫자>:<비밀>  →  bot***
-_TG_URL = re.compile(
-    r"https?://api\.telegram\.org/bot\d{6,}:[A-Za-z0-9_-]{30,}",
+# 콜론, %3A/%3a, 이중 인코딩 %253A/%253a
+_COLON = r"(?::|%253[Aa]|%3[Aa])"
+_SECRET = r"[A-Za-z0-9_-]{30,}"
+# 호스트가 없어도 /bot<숫자>:<비밀> 은 /bot*** . 앞의 공백·따옴표·괄호·url= 은 그대로 둔다.
+_TG_PATH = re.compile(
+    rf"/bot\d{{6,}}{_COLON}{_SECRET}",
     re.IGNORECASE,
 )
-# 숫자 6자리 이상, 콜론, 영숫자·밑줄·하이픈 30자 이상
+# 경로에 붙지 않은 단독 토큰
 _TG_TOKEN = re.compile(
-    r"(?<![A-Za-z0-9_])\d{6,}:[A-Za-z0-9_-]{30,}"
+    rf"(?<![A-Za-z0-9_/])\d{{6,}}{_COLON}{_SECRET}",
+    re.IGNORECASE,
 )
 _BEARER = re.compile(
     r"(?i)\b(bearer|appkey|app_key)\b(\s*[:=]\s*|\s+)([A-Za-z0-9\-._~+/=]{8,})"
@@ -32,7 +36,7 @@ def redactSecrets(text):
         return ""
     if not isinstance(text, str):
         text = str(text)
-    text = _TG_URL.sub("https://api.telegram.org/bot***", text)
+    text = _TG_PATH.sub("/bot***", text)
     text = _TG_TOKEN.sub("***", text)
     text = _BEARER.sub(lambda m: f"{m.group(1)} ***", text)
     return text
