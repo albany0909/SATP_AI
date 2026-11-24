@@ -57,11 +57,11 @@ class PbkQuotePlanTest(unittest.TestCase):
         self.assertEqual(plan["poll"], ["C2"])
         items = [f"{i:06d}" for i in range(45)]
         added = regChunks(items, 40, replace=False)
-        self.assertEqual([part["refresh"] for part in added], ["0", "0"])
+        self.assertEqual([part["refresh"] for part in added], ["1", "1"])
         self.assertEqual(len(added[0]["items"]), 40)
         self.assertEqual(len(added[1]["items"]), 5)
         replaced = regChunks(items, 40, replace=True)
-        self.assertEqual([part["refresh"] for part in replaced], ["1", "0"])
+        self.assertEqual([part["refresh"] for part in replaced], ["0", "1"])
         batch, cursor = takePollBatch(["A", "B", "C"], 0, 2)
         self.assertEqual(batch, ["A", "B"])
         nxt, _cursor = takePollBatch(["A", "B", "C"], cursor, 2)
@@ -213,11 +213,11 @@ class PbkQuotePlanTest(unittest.TestCase):
             ):
                 added = mon.addWatchRtCodes(["005930"], "테스트")
                 self.assertEqual(added, 1)
-                self.assertEqual(calls[0][1], "0")
+                self.assertEqual(calls[0][1], "1")
                 calls.clear()
                 mon._regWatch(_Ws(), [f"{i:06d}" for i in range(45)], "재등록")
                 flags = [row[1] for row in calls if row[0] != "REMOVE"]
-                self.assertEqual(flags, ["1", "0"])
+                self.assertEqual(flags, ["0", "1"])
                 self.assertEqual(len(calls[0][0]), 40)
                 self.assertEqual(len(calls[1][0]), 5)
         finally:
@@ -440,7 +440,7 @@ class PbkQuotePlanTest(unittest.TestCase):
                 got = mon.syncPbkTouch(["111111", "333333", "444444"], "PBK화면")
             self.assertEqual(got["added"], ["333333", "444444"])
             self.assertTrue(calls)
-            self.assertTrue(all(row[1] == "0" for row in calls))
+            self.assertTrue(all(row[1] == "1" for row in calls))
             calls.clear()
 
             def _reg(ws, codes, reason):
@@ -604,6 +604,254 @@ class PbkQuotePlanTest(unittest.TestCase):
             "tickYmd": "20261124",
         }
         self.assertEqual(stopInputPx(session, "20261124"), 7900)
+
+    def test_partial_remove_reregisters_the_rest(self):
+        import trading.watchRtMonitor as mon
+
+        savedCodes = list(mon._regCodes)
+        savedItems = dict(mon._regItems)
+        calls = []
+
+        class _Ws:
+            isLoggedIn = True
+
+            def sendReg(self, types, items, grpNo="1", refresh="1"):
+                calls.append(("REG", list(items), str(refresh), str(grpNo)))
+
+            def sendRemove(self, types, items, grpNo="1"):
+                calls.append(("REMOVE", list(items), None, str(grpNo)))
+
+        try:
+            mon._regCodes[:] = ["111111", "222222", "333333"]
+            mon._regItems.clear()
+            mon._regItems.update({cd: [cd, f"{cd}_NX"] for cd in mon._regCodes})
+            with patch.object(mon, "getWsClient", return_value=_Ws()), patch.object(
+                mon, "_writeState", lambda *_a, **_k: None,
+            ), patch("trading.maTouchLive.prepareMaTouchSession", lambda *_a, **_k: None), patch.object(
+                mon, "_isNxtStk", return_value=False,
+            ):
+                mon.unregWatchStk("222222", "테스트", resub=True)
+            self.assertNotIn("222222", mon._regCodes)
+            self.assertEqual(calls[0][0], "REMOVE")
+            self.assertEqual(calls[0][1], ["222222", "222222_NX"])
+            regs = [row for row in calls if row[0] == "REG"]
+            self.assertTrue(regs)
+            self.assertEqual(regs[0][2], "0")
+            flat = [code for row in regs for code in row[1]]
+            self.assertIn("111111", flat)
+            self.assertIn("333333", flat)
+            self.assertNotIn("222222", flat)
+        finally:
+            mon._regCodes[:] = savedCodes
+            mon._regItems.clear()
+            mon._regItems.update(savedItems)
+
+    def test_login_before_session_regs_at_quote_start_and_regular_open(self):
+        import trading.watchRtMonitor as mon
+
+        calls = []
+        savedPending = mon._loginPendingReg
+        savedRegular = mon._regularRegYmd
+
+        def _reg(ws, codes, reason):
+            calls.append(reason)
+
+        try:
+            with patch.object(mon, "_isQuoteSessionNow", return_value=False), patch.object(
+                mon, "_regWatch", side_effect=_reg,
+            ):
+                mon._onLogin(type("W", (), {"isLoggedIn": True})())
+            self.assertTrue(mon._loginPendingReg)
+            self.assertEqual(calls, [])
+            with patch.object(mon, "_isQuoteSessionNow", return_value=True), patch.object(
+                mon, "isTradingDay", return_value=True,
+            ), patch.object(mon, "isWithinMktHours", return_value=False), patch.object(
+                mon, "_regWatch", side_effect=_reg,
+            ), patch.object(mon, "getWsClient", return_value=type("W", (), {"isLoggedIn": True})()), patch.object(
+                mon, "_flushLastPxCache", lambda *_a, **_k: None,
+            ), patch.object(mon, "_monCodes", return_value=["005930"]):
+                mon._tickSession(True)
+            self.assertIn("LOGIN후시세시작", calls)
+            self.assertFalse(mon._loginPendingReg)
+            calls.clear()
+            mon._regularRegYmd = ""
+            with patch.object(mon, "_isQuoteSessionNow", return_value=True), patch.object(
+                mon, "isTradingDay", return_value=True,
+            ), patch.object(mon, "isWithinMktHours", return_value=True), patch.object(
+                mon, "_regWatch", side_effect=_reg,
+            ), patch.object(mon, "getWsClient", return_value=type("W", (), {"isLoggedIn": True})()), patch.object(
+                mon, "_flushLastPxCache", lambda *_a, **_k: None,
+            ), patch.object(mon, "repairSilentRegs", lambda *_a, **_k: []), patch.object(
+                mon, "_monCodes", return_value=["005930"],
+            ):
+                mon._tickSession(True)
+            self.assertIn("정규장시작", calls)
+        finally:
+            mon._loginPendingReg = savedPending
+            mon._regularRegYmd = savedRegular
+
+    def test_close_seed_accepts_morning_tick(self):
+        import trading.watchRtMonitor as mon
+
+        seeded = {
+            "src": "dayClose",
+            "curPrc": "10000",
+            "krxPrc": "10000",
+            "tm": "153000",
+            "krxTm": "153000",
+            "tickYmd": "20261124",
+            "dayCloseDt": "20261123",
+            "krxYmd": "20261123",
+        }
+        self.assertFalse(mon.cachedQuoteIsNewer(seeded, "20261124", "090118"))
+        savedPx = dict(mon._lastPx)
+        savedCodes = list(mon._regCodes)
+        try:
+            mon._lastPx.clear()
+            mon._regCodes[:] = ["122870"]
+            mon._lastPx["122870"] = dict(seeded)
+            with patch.object(mon, "_flushLastPxCache", lambda *_a, **_k: None), patch(
+                "trading.maTouchLive.onMaTouchTick", lambda *_a, **_k: None,
+            ):
+                mon._onWsMessage({"trnm": "REAL", "data": [{
+                    "type": "0B",
+                    "item": "122870",
+                    "values": {"10": "9580", "20": "090118"},
+                }]})
+            self.assertEqual(str(mon._lastPx["122870"]["curPrc"]), "9580")
+            self.assertEqual(mon._lastPx["122870"]["src"], "0B")
+            self.assertEqual(mon._lastPx["122870"]["krxTm"], "090118")
+        finally:
+            mon._lastPx.clear()
+            mon._lastPx.update(savedPx)
+            mon._regCodes[:] = savedCodes
+
+    def test_silent_reregister_stops_at_the_cap(self):
+        from datetime import datetime
+
+        import trading.watchRtMonitor as mon
+
+        savedCodes = list(mon._regCodes)
+        savedItems = dict(mon._regItems)
+        savedN = dict(mon._reregN)
+        savedChanged = dict(mon._pollChanged)
+        savedAt = dict(mon._regAt)
+        calls = []
+
+        class _Ws:
+            isLoggedIn = True
+
+            def sendReg(self, types, items, grpNo="1", refresh="1"):
+                calls.append((list(items), str(refresh)))
+
+            def sendRemove(self, types, items, grpNo="1"):
+                return None
+
+        moment = datetime(2026, 11, 24, 10, 0, 0)
+        try:
+            mon._regCodes[:] = ["300120"]
+            mon._regItems.clear()
+            mon._regItems["300120"] = ["300120"]
+            mon._lastPx["300120"] = {
+                "src": "poll",
+                "curPrc": 9000,
+                "tm": "095000",
+                "tickYmd": "20261124",
+                "krxPrc": 7900,
+                "krxTm": "153000",
+                "krxYmd": "20261123",
+                "dayCloseDt": "20261123",
+            }
+            mon._pollChanged["300120"] = 9000
+            mon._regAt["300120"] = 0
+            mon._reregYmd = "20261124"
+            mon._reregN["300120"] = mon._REREG_CAP
+            with patch.object(mon, "getWsClient", return_value=_Ws()), patch.object(
+                mon, "isTradingDay", return_value=True,
+            ), patch.object(mon, "isWithinMktHours", return_value=True):
+                blocked = mon.repairSilentRegs(moment)
+            self.assertEqual(blocked, [])
+            self.assertEqual(calls, [])
+            mon._reregN["300120"] = 0
+            mon._reregTold.discard("300120")
+            with patch.object(mon, "getWsClient", return_value=_Ws()), patch.object(
+                mon, "isTradingDay", return_value=True,
+            ), patch.object(mon, "isWithinMktHours", return_value=True):
+                sent = mon.repairSilentRegs(moment)
+            self.assertEqual(sent, ["300120"])
+            self.assertEqual(calls[0][1], "1")
+            self.assertEqual(mon._reregN["300120"], 1)
+        finally:
+            mon._regCodes[:] = savedCodes
+            mon._regItems.clear()
+            mon._regItems.update(savedItems)
+            mon._reregN.clear()
+            mon._reregN.update(savedN)
+            mon._pollChanged.clear()
+            mon._pollChanged.update(savedChanged)
+            mon._regAt.clear()
+            mon._regAt.update(savedAt)
+            mon._lastPx.pop("300120", None)
+
+    def test_poll_after_cycle_start_stays_fresh_and_stop_uses_it(self):
+        from datetime import datetime
+
+        import trading.pbk01Live as live
+        import trading.watchRtMonitor as mon
+        from trading.pbkOrderPlan import buildLiveActions
+        from trading.pbkQuotePlan import holdPollForce, quoteAgeSec, quoteClockAfterPoll, quoteIsFresh
+
+        start = datetime(2026, 11, 24, 9, 30, 50)
+        polled = {"src": "poll", "curPrc": 9580, "tm": "093051", "tickYmd": "20261124"}
+        self.assertEqual(quoteAgeSec(polled, start), 0)
+        self.assertTrue(quoteIsFresh(polled, start))
+        later = datetime(2026, 11, 24, 9, 30, 52)
+        self.assertEqual(quoteClockAfterPoll(start, later), later)
+        self.assertEqual(
+            quoteClockAfterPoll(datetime(2026, 11, 23, 10, 0, 0), later),
+            datetime(2026, 11, 23, 10, 0, 0),
+        )
+        late = {"src": "poll", "curPrc": 9580, "tm": "153000", "tickYmd": "20261124"}
+        self.assertGreater(quoteAgeSec(late, start), 120)
+        self.assertFalse(quoteIsFresh(late, start))
+        saved = dict(mon._lastPx)
+        try:
+            mon._lastPx["005930"] = dict(polled)
+            got = live.quotesFromCache(["005930"], now=datetime(2026, 11, 24, 9, 30, 52))
+            self.assertTrue(got["005930"]["fresh"])
+        finally:
+            mon._lastPx.clear()
+            mon._lastPx.update(saved)
+        captured = {}
+        after = datetime(2026, 11, 24, 9, 30, 52)
+
+        def _cache(codes, now=None):
+            captured["now"] = now
+            return {"005930": {**polled, "price": 9580, "fresh": True}}
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "pbk01_state.jsonl"
+            path.write_text("{}\n", encoding="utf-8")
+            savedScan = live._scanYmd
+            live._scanYmd = "20261124"
+            try:
+                with patch.object(live, "_regularSession", return_value=True), patch.object(
+                    live, "refreshPbkQuotes", return_value={"plan": {"subscribe": []}, "stale": []},
+                ), patch.object(live, "quotesFromCache", side_effect=_cache), patch(
+                    "trading.pbkQuotePlan.quoteClockAfterPoll", return_value=after,
+                ):
+                    live.runPbkCycle(now=start, path=path, enabled=True, log=lambda _t: None)
+            finally:
+                live._scanYmd = savedScan
+        self.assertEqual(captured.get("now"), after)
+        stopAt = datetime(2026, 11, 24, 15, 14, 50)
+        self.assertTrue(holdPollForce(stopAt))
+        freshPoll = {"src": "poll", "curPrc": 7900, "price": 7900, "tm": "151451", "tickYmd": "20261124", "fresh": True}
+        self.assertTrue(quoteIsFresh(freshPoll, stopAt))
+        pos = [{"stkCd": "041830", "qty": 10, "avg": 10000, "leg1": {"qty": 10, "fillPx": 10000}}]
+        stopped = buildLiveActions([], {"041830": freshPoll}, pos, "151500", "20261124", now=stopAt)
+        self.assertEqual(stopped["actions"][0]["reason"], "손절")
+        self.assertEqual(stopped["actions"][0]["fillPx"], 7900)
 
 
 if __name__ == "__main__":

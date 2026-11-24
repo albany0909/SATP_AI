@@ -63,6 +63,16 @@ _dayCloseSeedYmd = ""
 _pxCacheLoaded = False
 _pxSavePending = False
 _lastPxFlushAt = 0.0
+# Bye 이후 시세구간 전에 로그인하면, 시세시작에서 전체를 다시 깐다.
+_loginPendingReg = False
+_regularRegYmd = ""
+_regAt = {}
+_pollChanged = {}
+_reregN = {}
+_reregYmd = ""
+_reregTold = set()
+_REREG_CAP = 3
+_silentCheckedAt = 0.0
 
 
 def _hasLivePx(info):
@@ -113,6 +123,11 @@ def _loadLastPxCache():
                 # 파일에 src 없으면 0B 복원으로 본다
                 if not info.get("src"):
                     info["src"] = "0B"
+                from trading.pbkQuotePlan import quoteStampDay
+
+                stamped = quoteStampDay(info)
+                if stamped:
+                    info["tickYmd"] = stamped
                 _lastPx[cd] = info
                 restored += 1
         if restored:
@@ -148,7 +163,14 @@ def _flushLastPxCache(force=False):
             if not _isLiveQuoteSrc(info):
                 continue
             row = dict(info)
-            if not row.get("tickYmd"):
+            from trading.pbkQuotePlan import quoteStampDay
+
+            stamped = quoteStampDay(row)
+            if stamped:
+                row["tickYmd"] = stamped
+            elif str(row.get("src") or "") == "dayClose" or str(row.get("tm") or "").startswith("1530"):
+                row.pop("tickYmd", None)
+            elif not row.get("tickYmd"):
                 row["tickYmd"] = datetime.now().strftime("%Y%m%d")
             snap[cd] = row
         pending = _pxSavePending
@@ -325,6 +347,7 @@ def _seedDayCloseQuotes(codes):
                             "krxYmd": tradeDt,
                             "tm": "153000",
                             "krxTm": "153000",
+                            "tickYmd": tradeDt,
                             "exch": "KRX",
                             "src": "dayClose",
                             "dayCloseDt": tradeDt,
@@ -410,6 +433,7 @@ def _seedDayCloseFromSmaApi(cds):
                 "krxYmd": tradeDt,
                 "tm": "153000",
                 "krxTm": "153000",
+                "tickYmd": tradeDt,
                 "exch": "KRX",
                 "src": "dayClose",
                 "dayCloseDt": tradeDt,
@@ -878,6 +902,55 @@ def _prepareBeforeOpen(reason):
     termLog(f"[watchRt] {reason} — 원장/관심 {len(codes)}종 준비 (REG는 개장 시)")
 
 
+def _logRt(kind, items, refresh, grp, sent, returnCode=None):
+    """REG/REMOVE 한 줄. 토큰·URL 은 termLog 가 가린다."""
+    rows = [str(x) for x in (items or []) if str(x or "")]
+    head = ",".join(rows[:12])
+    more = f" 외{len(rows) - 12}" if len(rows) > 12 else ""
+    ref = "" if refresh is None else f" refresh={refresh}"
+    rc = "" if returnCode is None else f" return_code={returnCode}"
+    termLog(
+        f"[watchRt] {kind} grp={grp}{ref} item {len(rows)} {head}{more} "
+        f"전송={'ok' if sent else 'fail'}{rc}"
+    )
+
+
+def _sentOk(result):
+    """sendReg 가 None 을 돌려도 호출 자체는 된 것이다. False 만 실패."""
+    if result is False:
+        return False
+    return True
+
+
+def _sendReg(ws, items, refresh, reason):
+    sent = False
+    try:
+        sent = _sentOk(ws.sendReg(["0B"], list(items), grpNo=_GRP_NO, refresh=str(refresh)))
+    except Exception as err:
+        termLog(f"[watchRt] REG 실패 {reason}: {type(err).__name__}")
+        sent = False
+    _logRt("REG", items, refresh, _GRP_NO, sent)
+    return sent
+
+
+def _sendRemove(ws, items, reason):
+    sent = False
+    try:
+        sent = _sentOk(ws.sendRemove(["0B"], list(items), grpNo=_GRP_NO))
+    except Exception as err:
+        termLog(f"[watchRt] REMOVE 실패 {reason}: {type(err).__name__}")
+        sent = False
+    _logRt("REMOVE", items, None, _GRP_NO, sent)
+    return sent
+
+
+def _markRegistered(codes):
+    now = time.time()
+    for cd in codes or []:
+        if cd:
+            _regAt[str(cd)] = now
+
+
 def _regWatch(ws, codes, reason):
     global _monActive, _regCodes, _regItems, _nxtCds
     if not codes:
@@ -890,7 +963,8 @@ def _regWatch(ws, codes, reason):
     from trading.pbkQuotePlan import regChunks
 
     for part in regChunks(allItems, _CHUNK, replace=True):
-        ws.sendReg(["0B"], part["items"], grpNo=_GRP_NO, refresh=part["refresh"])
+        _sendReg(ws, part["items"], part["refresh"], reason)
+    _markRegistered(cds)
     nxtSet = {cd for cd, its in itemMap.items() if any(str(x).upper().endswith("_NX") for x in its)}
     with _lock:
         _monActive = True
@@ -954,7 +1028,8 @@ def addWatchRtCodes(codes, reason="장중편입"):
 
     addItems = _flatItems({cd: _rtItemsOf(cd) for cd in cds}, cds)
     for part in regChunks(addItems, _CHUNK, replace=False):
-        ws.sendReg(["0B"], part["items"], grpNo=_GRP_NO, refresh=part["refresh"])
+        _sendReg(ws, part["items"], part["refresh"], reason)
+    _markRegistered(cds)
     with _lock:
         _regCodes.extend(cds)
         for cd in cds:
@@ -1017,15 +1092,23 @@ def syncPbkTouch(codes, reason="PBK화면"):
     delta = touchDelta(list(prev), codes, keep, registered=registered)
     _pbkTouch = set(delta["screen"])
     for code in delta["removed"]:
-        unregWatchStk(code, reason)
+        unregWatchStk(code, reason, resub=False)
     addedN = 0
     if delta["added"]:
         addedN = addWatchRtCodes(delta["added"], reason)
+    if delta["removed"]:
+        ws = getWsClient()
+        with _lock:
+            left = list(_regCodes)
+        if left and ws is not None and getattr(ws, "isLoggedIn", False):
+            _regWatch(ws, left, f"{reason} 해제후재등록")
     missingN = len(delta.get("missing") or [])
+    rx, total = quoteRxStats()
     termLog(
-        f"[watchRt] 0B 진단 등록 {len(registered)} 계획 {len(delta['screen'])} "
-        f"누락 {missingN} 편입 {addedN} ({reason})"
+        f"[watchRt] 0B 진단 등록 {total} 계획 {len(delta['screen'])} "
+        f"누락 {missingN} 편입 {addedN} 해제 {len(delta['removed'])} ({reason})"
     )
+    termLog(f"[watchRt] 0B 실수신 {rx}/{total}")
     if addedN == 0 and missingN > 0:
         termLog(f"[watchRt] 0B 편입 경고 누락 {missingN}종 ({reason})")
     return {
@@ -1037,8 +1120,12 @@ def syncPbkTouch(codes, reason="PBK화면"):
     }
 
 
-def unregWatchStk(stkCd, reason=""):
-    """전량 청산 등 — 한 종목만 0B 해지하고 구독 목록에서 뺀다."""
+def unregWatchStk(stkCd, reason="", resub=True):
+    """전량 청산 등 — 한 종목만 0B 해지하고, 남은 종목은 그룹을 다시 깐다.
+
+    키움 REMOVE 는 적은 item 만 지우도록 명세돼 있다.
+    서버 구독이 로컬과 어긋난 날이 있어, 해지 뒤 남은 목록을 다시 REG 한다.
+    """
     global _monActive
     cd = normStkCd(stkCd)
     if not cd:
@@ -1057,10 +1144,9 @@ def unregWatchStk(stkCd, reason=""):
     ws = getWsClient()
     dropItems = item if isinstance(item, list) else [item]
     if ws is not None:
-        try:
-            ws.sendRemove(["0B"], dropItems, grpNo=_GRP_NO)
-        except Exception as err:
-            termLog(f"[watchRt] 단건 해지 실패 {cd}: {err}")
+        _sendRemove(ws, dropItems, reason or cd)
+        if resub and codes and getattr(ws, "isLoggedIn", False):
+            _regWatch(ws, codes, f"{reason or '단건해지'} 해제후재등록")
     _writeState(active, codes, reason or f"단건해지 {cd}")
     termLog(f"[watchRt] 0B 해지 1종 {cd} ({reason})")
 
@@ -1077,10 +1163,7 @@ def _unregWatch(ws, reason):
     if ws is not None and items:
         for i in range(0, len(items), _CHUNK):
             chunk = items[i : i + _CHUNK]
-            try:
-                ws.sendRemove(["0B"], chunk, grpNo=_GRP_NO)
-            except Exception:
-                pass
+            _sendRemove(ws, chunk, reason)
     _writeState(False, [], reason)
     # 시세 종료 시 마지막 0B 를 디스크에 남긴다 (재시작·장외 평가용)
     try:
@@ -1088,6 +1171,16 @@ def _unregWatch(ws, reason):
     except Exception as err:
         termLog(f"[watchRt] 시세캐시 강제저장 실패: {err}")
     termLog(f"[watchRt] 0B 해지 ({reason}) {len(codes)}종")
+
+
+def _pxNum(raw):
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        num = abs(float(str(raw).replace(",", "").lstrip("+")))
+    except (TypeError, ValueError):
+        return None
+    return num if num > 0 else None
 
 
 def notePolledPx(stkCd, price, tm="", low=None):
@@ -1098,17 +1191,147 @@ def notePolledPx(stkCd, price, tm="", low=None):
     if not cd:
         return False
     with _lock:
+        prev = _pxNum((_lastPx.get(cd) or {}).get("curPrc"))
         info, changed = applyPollPrice(_lastPx.get(cd), price, tm, low=low)
         if not changed:
             return False
         _lastPx[cd] = info
+    nxt = _pxNum(info.get("curPrc"))
+    if prev is not None and nxt is not None and abs(prev - nxt) >= 1:
+        _pollChanged[cd] = nxt
     return True
 
 
+def _sessionOpenSec():
+    try:
+        openHm, _close = getNotifyHours()
+    except Exception:
+        openHm = "08:00"
+    return _clockSec(str(openHm).replace(":", "") + "00")
+
+
+def _hasSessionTick(info, today, openSec):
+    """당일 시세시작 이후 krxTm·nxtTm. src 만으로는 받은 것으로 보지 않는다."""
+    from trading.pbkQuotePlan import quoteStampDay
+
+    info = info or {}
+    if str(info.get("src") or "") == "dayClose":
+        return False
+    closeDt = "".join(ch for ch in str(info.get("dayCloseDt") or "") if ch.isdigit())[:8]
+    for tmKey, dayKey in (("krxTm", "krxYmd"), ("nxtTm", "nxtYmd")):
+        sec = _clockSec(info.get(tmKey))
+        if sec is None:
+            continue
+        day = str(info.get(dayKey) or "")[:8]
+        if len(day) != 8:
+            day = quoteStampDay(info)
+        if day != today:
+            continue
+        if closeDt and closeDt != today and str(info.get(tmKey) or "").startswith("1530"):
+            continue
+        if openSec is None or sec >= openSec:
+            return True
+    return False
+
+
+def quoteRxStats(now=None):
+    """등록 종목 중 당일 시세시작 이후 실수신 수."""
+    moment = now or datetime.now()
+    today = moment.strftime("%Y%m%d")
+    openSec = _sessionOpenSec()
+    with _lock:
+        codes = list(_regCodes)
+        rows = {cd: dict(_lastPx.get(cd) or {}) for cd in codes}
+    rx = 0
+    for cd in codes:
+        if _hasSessionTick(rows.get(cd), today, openSec):
+            rx += 1
+    return rx, len(codes)
+
+
+def _silentMinutes():
+    """미수신 재등록까지 기다릴 분. 설정이 없으면 3. 파일은 쓰지 않는다."""
+    try:
+        from config.settingsStore import loadSettings
+
+        raw = (loadSettings() or {}).get("watchRtSilentMin")
+        n = int(raw)
+        if 1 <= n <= 30:
+            return n
+    except Exception:
+        pass
+    return 3
+
+
+def repairSilentRegs(now=None):
+    """등록됐는데 당일 0B가 없고 폴링가가 변한 종목만 refresh 1 로 다시 넣는다.
+
+    refresh 1 은 기존 그룹을 유지한다. 0 은 그룹을 비우므로 쓰지 않는다.
+    종목당 하루 3회를 넘기면 멈춘다.
+    """
+    global _reregYmd, _reregN
+    moment = now or datetime.now()
+    try:
+        regular = isTradingDay(moment) and isWithinMktHours(moment.strftime("%H:%M"))
+    except Exception:
+        regular = False
+    if not regular:
+        return []
+    today = moment.strftime("%Y%m%d")
+    if _reregYmd != today:
+        _reregYmd = today
+        _reregN = {}
+        _reregTold.clear()
+    wait = _silentMinutes() * 60
+    openSec = _sessionOpenSec()
+    nowTs = time.time()
+    due = []
+    with _lock:
+        codes = list(_regCodes)
+        itemMap = {cd: list(_regItems.get(cd) or [cd]) for cd in codes}
+        rows = {cd: dict(_lastPx.get(cd) or {}) for cd in codes}
+    for cd in codes:
+        if _hasSessionTick(rows.get(cd), today, openSec):
+            continue
+        if cd not in _pollChanged:
+            continue
+        used = int(_reregN.get(cd) or 0)
+        if used >= _REREG_CAP:
+            if cd not in _reregTold:
+                _reregTold.add(cd)
+                termLog(f"[watchRt] 0B 미수신 재등록 한도 {cd} {used}회")
+            continue
+        since = _regAt.get(cd) or 0
+        if since and nowTs - since < wait:
+            continue
+        due.append(cd)
+    if not due:
+        return []
+    ws = getWsClient()
+    if ws is None or not getattr(ws, "isLoggedIn", False):
+        return []
+    flat = []
+    for cd in due:
+        flat.extend(itemMap.get(cd) or [cd])
+        _reregN[cd] = int(_reregN.get(cd) or 0) + 1
+        _regAt[cd] = nowTs
+    from trading.pbkQuotePlan import regChunks
+
+    for part in regChunks(flat, _CHUNK, replace=False):
+        _sendReg(ws, part["items"], part["refresh"], "미수신재등록")
+    shown = " ".join(f"{cd}:{_reregN[cd]}" for cd in due[:8])
+    termLog(f"[watchRt] 0B 미수신 재등록 {len(due)}종 refresh=1 {shown}")
+    return due
+
+
 def _onLogin(ws):
-    """WS LOGIN 후, 시세 구간이면 0B 재등록 (장전 NXT 포함)."""
+    """WS LOGIN 후 0B 를 다시 건다. 시세구간 전이면 시세시작에 전체를 깐다."""
+    global _loginPendingReg
     if not _isQuoteSessionNow():
+        _loginPendingReg = True
+        termLog("[watchRt] LOGIN — 시세구간 전, 시세시작에 0B 전체 재구독")
         return
+    _loginPendingReg = False
     _regWatch(ws, _codesWithPbk(_monCodes()), "LOGIN(시세구간)")
 
 
@@ -1124,8 +1347,13 @@ def _clockSec(raw):
 
 
 def cachedQuoteIsNewer(info, newYmd, newTm):
-    """캐시가 들어온 0B 보다 나중이면 True. 날짜가 다르면 날짜가 이긴다."""
-    oldYmd = str((info or {}).get("tickYmd") or "")
+    """캐시가 들어온 0B 보다 나중이면 True.
+
+    날짜가 다르면 더 나중 날짜가 이긴다. 전일 종가일은 오늘 오전 틱을 막지 않는다.
+    """
+    from trading.pbkQuotePlan import quoteStampDay
+
+    oldYmd = quoteStampDay(info)
     oldSec = _clockSec((info or {}).get("tm"))
     newSec = _clockSec(newTm)
     today = str(newYmd or "")
@@ -1233,38 +1461,70 @@ def _onWsMessage(msg):
             termLog(f"[watchRt] maTouch 틱 오류 {stkCd}: {err}")
 
 
+def _tickSession(wasOpen):
+    """시세구간·정규장·재로그인을 한 번 본다. 반환은 이번 시세구간 여부."""
+    global _loginPendingReg, _regularRegYmd, _silentCheckedAt
+    nowOpen = _isQuoteSessionNow()
+    moment = datetime.now()
+    try:
+        regular = isTradingDay(moment) and isWithinMktHours(moment.strftime("%H:%M"))
+    except Exception:
+        regular = False
+    ymd = moment.strftime("%Y%m%d")
+    ws = getWsClient()
+    logged = ws is not None and getattr(ws, "isLoggedIn", False)
+
+    def _reg(reason):
+        if logged:
+            _regWatch(ws, _codesWithPbk(_monCodes()), reason)
+        else:
+            termLog(f"[watchRt] {reason} — WS 미로그인, LOGIN 후 구독")
+
+    if wasOpen is None:
+        if nowOpen:
+            _reg("기동(시세구간)")
+            if regular:
+                _regularRegYmd = ymd
+        else:
+            _prepareBeforeOpen("기동(시세구간 외)")
+            termLog(
+                f"[watchRt] 시세구간 외 — 다음 개장 {nextMktOpenLabel()} 에 0B 구독"
+            )
+    elif nowOpen and not wasOpen:
+        _reg("시세시작")
+        _loginPendingReg = False
+        if regular:
+            _regularRegYmd = ymd
+    elif (not nowOpen) and wasOpen:
+        _unregWatch(ws, "시세종료")
+    elif nowOpen and _loginPendingReg:
+        _reg("LOGIN후시세시작")
+        _loginPendingReg = False
+        if regular:
+            _regularRegYmd = ymd
+    if nowOpen and regular and _regularRegYmd != ymd:
+        _regularRegYmd = ymd
+        _reg("정규장시작")
+    if nowOpen and regular and time.time() - _silentCheckedAt >= 30:
+        _silentCheckedAt = time.time()
+        try:
+            repairSilentRegs(moment)
+        except Exception as err:
+            termLog(f"[watchRt] 미수신 재등록 실패: {type(err).__name__}")
+    try:
+        _flushLastPxCache(force=False)
+    except Exception:
+        pass
+    return nowOpen
+
+
 def _mktLoop():
     wasOpen = None
     while True:
         try:
-            nowOpen = _isQuoteSessionNow()
-            if wasOpen is None:
-                if nowOpen:
-                    ws = getWsClient()
-                    if ws is not None and ws.isLoggedIn:
-                        _regWatch(ws, _codesWithPbk(_monCodes()), "기동(시세구간)")
-                    else:
-                        termLog("[watchRt] 기동 시세구간 — WS LOGIN 후 구독")
-                else:
-                    _prepareBeforeOpen("기동(시세구간 외)")
-                    termLog(
-                        f"[watchRt] 시세구간 외 — 다음 개장 {nextMktOpenLabel()} 에 0B 구독"
-                    )
-            elif nowOpen and not wasOpen:
-                ws = getWsClient()
-                if ws is not None and ws.isLoggedIn:
-                    _regWatch(ws, _codesWithPbk(_monCodes()), "시세시작")
-                else:
-                    termLog("[watchRt] 시세시작 — WS 미연결, LOGIN 훅에서 구독")
-            elif (not nowOpen) and wasOpen:
-                _unregWatch(getWsClient(), "시세종료")
-            wasOpen = nowOpen
+            wasOpen = _tickSession(wasOpen)
         except Exception as err:
             termLog(f"[watchRt] 장시간 감시 오류: {err}")
-        try:
-            _flushLastPxCache(force=False)
-        except Exception:
-            pass
         time.sleep(1)
 
 

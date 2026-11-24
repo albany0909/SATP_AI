@@ -1,11 +1,12 @@
 """PBK01 장중 시세 구독 계획. 주문과 매매 조건은 바꾸지 않는다.
 
-키움 REST 실시간 REG (realtime/wsClient.py, trading/watchRtMonitor.py):
+키움 REST 실시간 REG (공식 명세, realtime/wsClient.py):
 - 이 프로세스의 0B 그룹은 grp_no=2, 종목 180, item 200.
 - 한 번에 보내는 묶음은 40 item.
-- refresh "1" 은 그 그룹의 기존 등록을 지우고 이번 목록만 남긴다.
-- refresh "0" 은 기존 등록을 유지한 채 더한다.
-추가 종목은 항상 refresh "0" 이다. 그룹 전체를 다시 깔 때만 첫 묶음이 "1" 이고 나머지는 "0" 이다.
+- refresh "0" 은 그 그룹의 기존 등록을 지우고 이번 목록만 남긴다.
+- refresh "1" 은 기존 등록을 유지한 채 더한다. 추가 종목은 이 값이다.
+그룹 전체를 다시 깔 때 첫 묶음만 "0" 이고 나머지는 "1" 이다.
+REMOVE 는 적은 item 만 해지한다. 해지 뒤에는 남은 목록을 위 규칙으로 다시 넣는다.
 """
 
 from __future__ import annotations
@@ -16,6 +17,8 @@ REG_CHUNK = 40
 POLL_PER_CYCLE = 4
 STALE_MIN = 3
 HOLD_POLL_SEC = 60
+# 폴링 시각이 사이클 시작보다 조금 뒤여도 같은 수신으로 본다.
+FUTURE_SKEW_SEC = 120
 
 
 def maDistancePct(price, ma):
@@ -107,14 +110,18 @@ def planPbkQuotes(
 
 
 def regChunks(items, chunk=REG_CHUNK, replace=False):
-    """REG 묶음. replace 가 아니면 전부 refresh 0 이라 기존 구독이 남지 않고 지워지지 않는다."""
+    """REG 묶음.
+
+    키움 명세: refresh 0 은 그룹을 비운 뒤 이번 목록만 남기고, 1 은 기존을 유지한 채 더한다.
+    전체를 다시 깔 때 첫 묶음만 0, 나머지는 1. 추가만 할 때는 전부 1.
+    """
     out = []
     size = int(chunk or REG_CHUNK)
     if size < 1:
         size = REG_CHUNK
     flat = [item for item in (items or []) if item]
     for index in range(0, len(flat), size):
-        refresh = "1" if replace and index == 0 else "0"
+        refresh = "0" if replace and index == 0 else "1"
         out.append({"items": flat[index : index + size], "refresh": refresh})
     return out
 
@@ -153,20 +160,60 @@ def _hhmmss(raw):
     return hour * 3600 + minute * 60 + sec
 
 
+def quoteStampDay(info):
+    """시세가 어느 날 값인지. 전일 15:30 종가를 오늘로 올리지 않는다."""
+    info = info or {}
+    closeDt = _ymd(info.get("dayCloseDt"))
+    krxDay = _ymd(info.get("krxYmd"))
+    tick = _ymd(info.get("tickYmd"))
+    src = str(info.get("src") or "")
+    tm = "".join(ch for ch in str(info.get("tm") or "") if ch.isdigit())
+    tm = tm.zfill(6)[:6] if len(tm) >= 4 else ""
+    if src == "dayClose":
+        return closeDt or krxDay or tick
+    if closeDt and tm == "153000" and closeDt != tick:
+        return closeDt
+    return tick
+
+
+def quoteClockAfterPoll(cycleNow, wall=None):
+    """폴링이 끝난 뒤의 시각.
+
+    같은 날 벽시계가 사이클 시작보다 뒤면 그 시각을 쓴다.
+    테스트가 다른 날을 넣으면 주입한 시각을 유지한다.
+    """
+    from datetime import datetime
+
+    moment = wall or datetime.now()
+    if cycleNow is None:
+        return moment
+    if moment.strftime("%Y%m%d") != cycleNow.strftime("%Y%m%d"):
+        return cycleNow
+    return moment if moment >= cycleNow else cycleNow
+
+
 def quoteAgeSec(info, now):
-    """마지막 틱이 얼마나 오래됐는지. 전일은 오늘 틱보다 크게, 시각이 없으면 None."""
+    """마지막 틱이 얼마나 오래됐는지.
+
+    전일 종가는 오늘 틱보다 항상 오래된다.
+    지금보다 120초 안쪽의 미래 시각은 시계 오차로 보고 나이 0.
+    그보다 큰 미래(전일 15:30을 오늘로 찍은 값)는 낡은 시세다.
+    """
     if now is None:
         return None
     tick = _hhmmss((info or {}).get("tm"))
     today = now.strftime("%Y%m%d")
-    ymd = str((info or {}).get("tickYmd") or "")
+    ymd = quoteStampDay(info)
     if ymd and ymd != today:
         return 200000 + (86400 - (tick or 0))
     if tick is None:
         return None
     nowSec = now.hour * 3600 + now.minute * 60 + now.second
     if tick > nowSec:
-        return 200000 + (86400 - tick)
+        ahead = tick - nowSec
+        if ahead <= FUTURE_SKEW_SEC:
+            return 0
+        return 200000 + ahead
     return nowSec - tick
 
 

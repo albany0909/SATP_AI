@@ -532,7 +532,12 @@ def runPbkCycle(now=None, loader=None, sender=None, log=None, path=None, quotes=
                     refreshPbkQuotes(rows, positions, reason="PBK시세", now=now)
                 except Exception as err:
                     _safeLog(log, f"[PBK01] 시세 구독 실패 {type(err).__name__}")
-                quotes = quotesFromCache([row.get("stkCd") for row in rows] + list(owned), now=now)
+                from trading.pbkQuotePlan import quoteClockAfterPoll
+
+                quotes = quotesFromCache(
+                    [row.get("stkCd") for row in rows] + list(owned),
+                    now=quoteClockAfterPoll(now),
+                )
         usable = {}
         for code, quote in (quotes or {}).items():
             if isinstance(quote, dict) and quote.get("fresh") is False:
