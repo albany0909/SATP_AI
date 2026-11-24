@@ -133,14 +133,14 @@ def _hasQuote(raw):
     return raw is not None and str(raw).strip() != ""
 
 
-def _holdLivePx(tick, apiCur):
+def _holdLivePx(tick, apiCur, now=None, inKrx=None):
     """
     보유 평가용 현재가.
-    0B(실시간·복원) 우선, dayClose(일봉 시드)면 계좌 kt00004 cur_prc 를 쓴다.
-    재시작 후 낡은 일봉으로 수익률이 뒤집히는 것을 막는다.
+    당일 장중 KRX 또는 더 새로운 curPrc. dayClose(일봉 시드)면 계좌 kt00004 cur_prc 를 쓴다.
+    전일 krx 종가로 평가가 고정되지 않게 한다.
     """
     info = tick or {}
-    prcRaw, _flu = _dispQuote(info)
+    prcRaw, _flu = _dispQuote(info, now=now, inKrx=inKrx)
     live = _absPxNum(prcRaw)
     try:
         api = abs(int(apiCur or 0))
@@ -156,46 +156,35 @@ def _holdLivePx(tick, apiCur):
     return api
 
 
-def _dispQuote(tick):
+def _dispQuote(tick, now=None, inKrx=None):
     """
     그리드 현재가·등락.
-    KRX 정규장 안에는 KRX, 장전·장마감·휴장에는 NXT(없으면 마지막 KRX).
-    등락률은 선택한 거래소 값이 비면 다른 거래소·캐시 값을 쓴다.
+    krxPrc 는 당일이고 장중 시각일 때만 쓴다. 전일이거나 curPrc 가 더 새것이면 curPrc.
+    장외에는 NXT 가 있으면 그것을 쓰고, 등락률은 표시 현재가의 전일대비로 다시 계산한다.
     """
     info = tick or {}
-    krxPrc, nxtPrc = info.get("krxPrc"), info.get("nxtPrc")
-    krxFlu, nxtFlu = info.get("krxFlu"), info.get("nxtFlu")
-    fluAny = (
-        krxFlu
-        if _hasQuote(krxFlu)
-        else (
-            nxtFlu
-            if _hasQuote(nxtFlu)
-            else (info.get("fluRt") if _hasQuote(info.get("fluRt")) else None)
-        )
-    )
-    inKrx = False
-    try:
-        from datetime import datetime
+    today = ""
+    if inKrx is None:
+        try:
+            from datetime import datetime
 
-        from config.krHoliday import isTradingDay
-        from config.settingsStore import isWithinMktHours
+            from config.krHoliday import isTradingDay
+            from config.settingsStore import isWithinMktHours
 
-        now = datetime.now()
-        inKrx = isTradingDay(now) and isWithinMktHours()
-    except Exception:
-        inKrx = True
-    if inKrx:
-        if _hasQuote(krxPrc):
-            return krxPrc, krxFlu if _hasQuote(krxFlu) else fluAny
-        if _hasQuote(nxtPrc):
-            return nxtPrc, nxtFlu if _hasQuote(nxtFlu) else fluAny
-    else:
-        if _hasQuote(nxtPrc):
-            return nxtPrc, nxtFlu if _hasQuote(nxtFlu) else fluAny
-        if _hasQuote(krxPrc):
-            return krxPrc, krxFlu if _hasQuote(krxFlu) else fluAny
-    return info.get("curPrc"), fluAny
+            moment = now or datetime.now()
+            today = moment.strftime("%Y%m%d")
+            inKrx = isTradingDay(moment) and isWithinMktHours(moment.strftime("%H:%M"))
+        except Exception:
+            inKrx = True
+            if now is not None:
+                today = now.strftime("%Y%m%d")
+    elif now is not None:
+        today = now.strftime("%Y%m%d")
+    if not today:
+        today = str(info.get("tickYmd") or info.get("krxYmd") or "")
+    from trading.pbkQuotePlan import selectHoldQuote
+
+    return selectHoldQuote(info, today, bool(inKrx))
 
 
 def _fmtManWon(raw):

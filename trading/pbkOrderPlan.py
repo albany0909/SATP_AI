@@ -57,6 +57,13 @@ def inBuySession(hm):
     return bool(text) and BUY_FROM <= text < BUY_UNTIL
 
 
+def inStopMinute(hm, stopHm="151500"):
+    """손절을 보는 분. 15:15 대."""
+    text = _hm(hm)
+    stop = _hm(stopHm)
+    return bool(text and stop) and text[:4] == stop[:4]
+
+
 def buyLimitPx(ask, line, chasePct=0):
     """min(매도 1호가, 이평 상한). 추격 0이면 이평을 호가 단위로 올린 값까지."""
     from utils.krxTick import ceilToKrxTick, floorToKrxTick
@@ -272,6 +279,25 @@ def buildLiveActions(
             _skip(code, "실체결없음")
             continue
         quote = (quotes or {}).get(code) or {}
+        if inStopMinute(textHm):
+            from trading.pbkQuotePlan import stopInputPx
+
+            stopPx = stopInputPx(quote, ymd)
+            if stopPx is None:
+                _skip(code, "손절보류")
+                continue
+            if stopTriggered(textHm, stopPx, pos.get("avg")):
+                actions.append({
+                    "side": "SELL",
+                    "stkCd": code,
+                    "leg": "sell",
+                    "qty": qty,
+                    "limitPx": floorPx(stopPx),
+                    "fillPx": stopPx,
+                    "trdeTp": "0",
+                    "reason": "손절",
+                })
+            continue
         if not quoteTradable(quote, now):
             _skip(code, "시세 대기")
             continue
@@ -293,17 +319,6 @@ def buildLiveActions(
                 "reason": "f+10",
             })
             continue
-        if stopTriggered(textHm, price, pos.get("avg")):
-            actions.append({
-                "side": "SELL",
-                "stkCd": code,
-                "leg": "sell",
-                "qty": qty,
-                "limitPx": floorPx(price),
-                "fillPx": price,
-                "trdeTp": "0",
-                "reason": "손절",
-            })
 
     if not inBuySession(textHm):
         for row in candidates or []:

@@ -11,7 +11,7 @@ import re
 
 ALG_CD = "PBK01"
 STRAT_ID = "pullbackTwoStep_v1"
-ALG_VER = 5
+ALG_VER = 6
 NAME_KR = "실적 장대양봉 눌림목"
 ENGLISH_NAME = "Earnings Pullback Two Step"
 
@@ -958,14 +958,14 @@ def submitPbkOrder(action, session, broker, paperOnly=True, log=None):
     return broker(action, session)
 
 
-def algVerHistPayload(gitHash="", ymd="2026-11-22"):
+def algVerHistPayload(gitHash="", ymd="2026-11-24"):
     """AI_ALG_VER_HIST 에 넣을 값. 이 함수는 DB 를 열지 않는다."""
     return {
         "algCd": ALG_CD,
         "stratId": STRAT_ID,
         "algVer": ALG_VER,
         "ymd": ymd,
-        "note": "v5 REG01 상승장만 KODEX200(069500) 100%, 하락장은 전량 현금. 전환·최초는 시가. PBK 매수 부족분은 지정가 체결 직후 KODEX 시가매도, 매도대금은 상승장 종가 재매수. 전일까지 60일 +3%면 신규 1차만 쉬고 재진입 없음. v4 코스닥 역배열 1.5배는 현금+KODEX에서 미체결 2차를 뺀 한도. 기존 보유는 600만.",
+        "note": "v6 15:15 손절은 당일 현재가만 본다. 전일 krx 종가로는 판단하지 않고, 현재가가 없으면 손절을 미루고 로그를 남긴다. 보유 화면 현재가·등락률도 그 현재가와 전일종가 기준으로 맞춘다.",
         "gitHash": str(gitHash or "")[:16],
         "src": "manual",
     }

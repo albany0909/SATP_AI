@@ -307,8 +307,191 @@ def pollBatch(rows, ticks, now, registered=None, limit=POLL_PER_CYCLE, staleSec=
     return holdCodes + priTake + restTake
 
 
+def _px(raw):
+    """부호·콤마를 뗀 양수 가격. 없으면 None."""
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        num = abs(float(str(raw).replace(",", "").lstrip("+")))
+    except (TypeError, ValueError):
+        return None
+    return num if num > 0 else None
+
+
+def _pct(raw):
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        return float(str(raw).replace("%", "").replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _ymd(raw):
+    digits = "".join(ch for ch in str(raw or "") if ch.isdigit())
+    return digits[:8] if len(digits) >= 8 else ""
+
+
+def krxTmInSession(tm):
+    """정규장 시각(09:00~15:30). 전일 15:30 도 시각만 보면 참이다. 날짜는 따로 본다."""
+    sec = _hhmmss(tm)
+    if sec is None:
+        return False
+    return 9 * 3600 <= sec <= 15 * 3600 + 30 * 60
+
+
+def krxQuoteDay(info):
+    """krxPrc 가 어느 날 값인지. 폴링이 현재가만 고친 전일 종가는 dayCloseDt."""
+    info = info or {}
+    if _px(info.get("krxPrc")) is None:
+        return ""
+    explicit = _ymd(info.get("krxYmd"))
+    if explicit:
+        return explicit
+    closeDt = _ymd(info.get("dayCloseDt"))
+    tick = _ymd(info.get("tickYmd"))
+    krxSec = _hhmmss(info.get("krxTm"))
+    curSec = _hhmmss(info.get("tm"))
+    src = str(info.get("src") or "")
+    if tick and krxSec is not None and curSec is not None and krxSec == curSec and src in ("0B", "poll"):
+        return tick
+    if closeDt:
+        return closeDt
+    if tick and src == "0B":
+        return tick
+    return ""
+
+
+def curNewerThanKrx(info, today=""):
+    """curPrc 시각이 krxPrc 보다 뒤면 True."""
+    info = info or {}
+    if _px(info.get("curPrc")) is None:
+        return False
+    kday = krxQuoteDay(info)
+    cday = _ymd(info.get("tickYmd"))
+    if not kday:
+        return bool(cday)
+    if cday and cday > kday:
+        return True
+    if cday and cday < kday:
+        return False
+    curSec = _hhmmss(info.get("tm"))
+    krxSec = _hhmmss(info.get("krxTm"))
+    if curSec is None or krxSec is None:
+        return False
+    if not cday or cday == kday:
+        return curSec > krxSec
+    return False
+
+
+def _prevForDisplay(px, info, today, usedKrx):
+    """표시 현재가의 전일 종가. 없으면 None."""
+    info = info or {}
+    prev = _px(info.get("prevClose"))
+    if prev is None:
+        prev = _px(info.get("basePrc"))
+    if prev:
+        return prev
+    kpx = _px(info.get("krxPrc"))
+    kday = krxQuoteDay(info)
+    if kpx is None or not kday or abs(kpx - px) <= 0.5:
+        return None
+    if today and kday < str(today):
+        return kpx
+    if kday == str(today or ""):
+        kflu = _pct(info.get("krxFlu"))
+        if kflu is None:
+            return None
+        denom = 1.0 + kflu / 100.0
+        if denom <= 0:
+            return None
+        return kpx / denom
+    return None
+
+
+def holdChangePct(displayPx, info, today="", usedKrx=False):
+    """표시 현재가의 전일대비(%). 가격과 안 맞는 잔여 등락률은 쓰지 않는다."""
+    px = _px(displayPx)
+    if px is None:
+        return None
+    prev = _prevForDisplay(px, info, today, usedKrx)
+    if prev:
+        return (px - prev) / prev * 100.0
+    if usedKrx or (_px((info or {}).get("krxPrc")) is not None and abs(_px(info.get("krxPrc")) - px) <= 0.5):
+        return _pct((info or {}).get("krxFlu"))
+    return None
+
+
+def selectHoldQuote(info, today="", inKrx=False):
+    """보유 그리드 현재가·등락률.
+
+    krxPrc 는 당일 날짜이고 장중 krxTm 일 때만 쓴다.
+    전일이거나 curPrc 가 더 새것이면 curPrc 를 쓴다.
+    """
+    info = info or {}
+    today = str(today or "")
+    krxOk = (
+        _px(info.get("krxPrc")) is not None
+        and krxQuoteDay(info) == today
+        and krxTmInSession(info.get("krxTm"))
+    )
+    newer = curNewerThanKrx(info, today)
+    usedKrx = False
+    prc = None
+    if not inKrx and _px(info.get("nxtPrc")) is not None:
+        prc = info.get("nxtPrc")
+    elif inKrx and krxOk and not newer:
+        prc = info.get("krxPrc")
+        usedKrx = True
+    elif _px(info.get("curPrc")) is not None and (newer or not krxOk):
+        prc = info.get("curPrc")
+    elif krxOk:
+        prc = info.get("krxPrc")
+        usedKrx = True
+    elif _px(info.get("curPrc")) is not None:
+        prc = info.get("curPrc")
+    elif inKrx and _px(info.get("nxtPrc")) is not None:
+        prc = info.get("nxtPrc")
+    elif not inKrx and _px(info.get("krxPrc")) is not None:
+        prc = info.get("krxPrc")
+    flu = holdChangePct(prc, info, today, usedKrx)
+    return prc, flu
+
+
+def stopInputPx(info, today=""):
+    """15:15 손절에 넣는 현재가. 전일 krx 종가는 넣지 않는다. 모르면 None."""
+    info = info or {}
+    today = _ymd(today)
+    cur = _px(info.get("curPrc"))
+    if cur is None:
+        cur = _px(info.get("price"))
+    krx = _px(info.get("krxPrc"))
+    kday = krxQuoteDay(info)
+    krxOk = krx is not None and bool(today) and kday == today and krxTmInSession(info.get("krxTm"))
+    cday = _ymd(info.get("tickYmd"))
+    src = str(info.get("src") or "")
+    curLive = cur is not None and src in ("0B", "poll") and (not today or cday == today)
+    if curLive and krx is not None and kday and today and kday < today and abs(cur - krx) <= 0.5:
+        curLive = False
+    if curLive and krxOk and not curNewerThanKrx(info, today):
+        curSec = _hhmmss(info.get("tm"))
+        krxSec = _hhmmss(info.get("krxTm"))
+        if curSec is not None and krxSec is not None and krxSec > curSec:
+            return krx
+        return cur
+    if curLive:
+        return cur
+    if krxOk:
+        return krx
+    return None
+
+
 def applyPollPrice(info, price, tm, low=None, now=None, staleSec=None):
-    """더 새로운 오늘 0B 가 있으면 폴링 값으로 덮지 않는다."""
+    """더 새로운 오늘 0B 가 있으면 폴링 값으로 덮지 않는다.
+
+    장중 시각이면 KRX 현재가로 보고 krxPrc·krxTm 도 같이 고친다.
+    전일 종가는 prevClose 로 남겨 등락률을 다시 계산한다.
+    """
     from datetime import datetime
 
     current = dict(info or {})
@@ -322,12 +505,36 @@ def applyPollPrice(info, price, tm, low=None, now=None, staleSec=None):
         return current, False
     if px <= 0:
         return current, False
+    today = moment.strftime("%Y%m%d")
+    tmTxt = str(tm or moment.strftime("%H%M%S"))
+    oldDay = krxQuoteDay(current)
+    if _px(current.get("prevClose")) is None and oldDay and oldDay < today:
+        current["prevClose"] = current.get("krxPrc") or current.get("curPrc")
+    elif _px(current.get("prevClose")) is None and oldDay == today:
+        oldFlu = _pct(current.get("krxFlu"))
+        oldKrx = _px(current.get("krxPrc"))
+        if oldFlu is not None and oldKrx:
+            denom = 1.0 + oldFlu / 100.0
+            if denom > 0:
+                current["prevClose"] = oldKrx / denom
     current["curPrc"] = px
     current["src"] = "poll"
-    current["tm"] = str(tm or moment.strftime("%H%M%S"))
-    current["tickYmd"] = moment.strftime("%Y%m%d")
+    current["tm"] = tmTxt
+    current["tickYmd"] = today
     if low not in (None, ""):
         current["lowPrc"] = low
+    if krxTmInSession(tmTxt):
+        current["krxPrc"] = px
+        current["krxTm"] = tmTxt
+        current["krxYmd"] = today
+        flu = holdChangePct(px, current, today, usedKrx=False)
+        if flu is None:
+            current["krxFlu"] = ""
+            current["fluRt"] = ""
+        else:
+            text = f"{flu:+.2f}"
+            current["krxFlu"] = text
+            current["fluRt"] = text
     return current, True
 
 

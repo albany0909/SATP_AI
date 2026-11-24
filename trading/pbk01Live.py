@@ -330,7 +330,7 @@ def quotesFromCache(codes, now=None):
     from datetime import datetime
 
     from trading.pbkOrderPlan import absPx
-    from trading.pbkQuotePlan import quoteIsFresh
+    from trading.pbkQuotePlan import quoteIsFresh, stopInputPx
 
     moment = now or datetime.now()
     out = {}
@@ -340,8 +340,9 @@ def quotesFromCache(codes, now=None):
         return out
     for code in codes or []:
         info = peekWatchLastPx(code) or {}
-        px = absPx(info.get("curPrc") or info.get("krxPrc") or info.get("nxtPrc"))
-        if px is None:
+        live = stopInputPx(info, moment.strftime("%Y%m%d"))
+        px = live if live is not None else absPx(info.get("curPrc"))
+        if px is None and absPx(info.get("krxPrc") or info.get("nxtPrc")) is None:
             continue
         fresh = quoteIsFresh(info, moment)
         out[str(code)] = {
@@ -353,6 +354,12 @@ def quotesFromCache(codes, now=None):
             "tickYmd": info.get("tickYmd") or "",
             "fresh": fresh,
             "curPrc": info.get("curPrc"),
+            "krxPrc": info.get("krxPrc"),
+            "krxTm": info.get("krxTm"),
+            "krxYmd": info.get("krxYmd"),
+            "krxFlu": info.get("krxFlu"),
+            "dayCloseDt": info.get("dayCloseDt"),
+            "prevClose": info.get("prevClose"),
         }
     return out
 
@@ -1067,6 +1074,8 @@ def placePaperCycle(result, broker=None, session=None, log=None, sender=None, pa
     for row in plan["skips"]:
         if row.get("reason") == "대금미달":
             _logAmtHold(row.get("stkCd"), log=log)
+        elif row.get("reason") == "손절보류":
+            _safeLog(log, f"[PBK01] 손절 보류 {row.get('stkCd')} 현재가 없음")
         elif row.get("reason") in ("시세 대기", "슬롯한도", "시간외", "매도대기", "잔고불일치"):
             _safeLog(log, f"[PBK01] 스킵 {row.get('stkCd')} {row.get('reason')}")
         if row.get("reason") == "시세 대기" and row.get("stkCd"):

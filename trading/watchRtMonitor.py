@@ -322,6 +322,7 @@ def _seedDayCloseQuotes(codes):
                             "fluRt": fluTxt,
                             "krxPrc": prcTxt,
                             "krxFlu": fluTxt,
+                            "krxYmd": tradeDt,
                             "tm": "153000",
                             "krxTm": "153000",
                             "exch": "KRX",
@@ -406,6 +407,7 @@ def _seedDayCloseFromSmaApi(cds):
                 "fluRt": fluTxt,
                 "krxPrc": prcTxt,
                 "krxFlu": fluTxt,
+                "krxYmd": tradeDt,
                 "tm": "153000",
                 "krxTm": "153000",
                 "exch": "KRX",
@@ -1177,6 +1179,7 @@ def _onWsMessage(msg):
             else:
                 if prcRaw is not None:
                     info["krxPrc"] = prcRaw
+                    info["krxYmd"] = today
                 if fluRaw is not None:
                     info["krxFlu"] = fluRaw
                 if tmRaw is not None:

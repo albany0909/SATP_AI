@@ -13,6 +13,7 @@ from trading.pbk01Live import announceCandidates, touchesForQuotes
 from trading.pbkQuotePlan import (
     applyPollPrice,
     classifyQuote,
+    selectHoldQuote,
     formatSummary,
     maDistancePct,
     planPbkQuotes,
@@ -492,6 +493,117 @@ class PbkQuotePlanTest(unittest.TestCase):
         self.assertEqual(calls[0][1], "시세시작")
         self.assertIn("300120", calls[0][0])
         self.assertIn("900290", calls[0][0])
+
+    def test_hold_price_skips_prior_krx_close(self):
+        from ui.tradeDeskWin import _dispQuote, _holdLivePx
+
+        prior = {
+            "curPrc": 9580,
+            "krxPrc": 10000,
+            "krxTm": "153000",
+            "krxFlu": "-7.91",
+            "fluRt": "-7.91",
+            "dayCloseDt": "20261123",
+            "krxYmd": "20261123",
+            "src": "poll",
+            "tm": "091800",
+            "tickYmd": "20261124",
+        }
+        prc, flu = selectHoldQuote(prior, "20261124", inKrx=True)
+        self.assertEqual(prc, 9580)
+        self.assertAlmostEqual(flu, -4.2, places=2)
+        shown, shownFlu = _dispQuote(prior, inKrx=True)
+        self.assertEqual(shown, 9580)
+        self.assertAlmostEqual(shownFlu, -4.2, places=2)
+        self.assertEqual(_holdLivePx(prior, 0, inKrx=True), 9580)
+        self.assertNotEqual(round(shownFlu, 2), -7.91)
+
+        todayKrx = {
+            "curPrc": 9700,
+            "krxPrc": 9700,
+            "krxTm": "091800",
+            "krxFlu": "-3.00",
+            "krxYmd": "20261124",
+            "src": "0B",
+            "tm": "091800",
+            "tickYmd": "20261124",
+        }
+        prc, flu = selectHoldQuote(todayKrx, "20261124", inKrx=True)
+        self.assertEqual(prc, 9700)
+        self.assertAlmostEqual(flu, -3.0, places=2)
+
+        off = {
+            "nxtPrc": 9600,
+            "nxtFlu": "-1.00",
+            "krxPrc": 10000,
+            "krxTm": "153000",
+            "krxYmd": "20261123",
+            "curPrc": 9580,
+            "tm": "091800",
+            "tickYmd": "20261124",
+            "src": "poll",
+        }
+        prc, flu = selectHoldQuote(off, "20261124", inKrx=False)
+        self.assertEqual(prc, 9600)
+        self.assertAlmostEqual(flu, -4.0, places=2)
+
+        from datetime import datetime
+
+        polled, changed = applyPollPrice(
+            {
+                "src": "dayClose",
+                "curPrc": 10000,
+                "krxPrc": 10000,
+                "krxTm": "153000",
+                "krxFlu": "-7.91",
+                "dayCloseDt": "20261123",
+                "tm": "153000",
+            },
+            9580,
+            "091800",
+            now=datetime(2026, 11, 24, 9, 18),
+        )
+        self.assertTrue(changed)
+        self.assertEqual(polled["krxPrc"], 9580)
+        self.assertEqual(polled["krxTm"], "091800")
+        self.assertEqual(polled["krxYmd"], "20261124")
+        self.assertEqual(float(polled["prevClose"]), 10000)
+        self.assertAlmostEqual(float(polled["krxFlu"]), -4.2, places=2)
+
+    def test_stop_input_rejects_prior_close(self):
+        from trading.pbkQuotePlan import stopInputPx
+
+        stale = {
+            "curPrc": 7900,
+            "krxPrc": 7900,
+            "krxTm": "153000",
+            "krxYmd": "20261123",
+            "dayCloseDt": "20261123",
+            "src": "dayClose",
+            "tm": "153000",
+            "fresh": True,
+        }
+        self.assertIsNone(stopInputPx(stale, "20261124"))
+        live = {
+            "curPrc": 9000,
+            "krxPrc": 7900,
+            "krxTm": "153000",
+            "krxYmd": "20261123",
+            "dayCloseDt": "20261123",
+            "src": "poll",
+            "tm": "151400",
+            "tickYmd": "20261124",
+        }
+        self.assertEqual(stopInputPx(live, "20261124"), 9000)
+        session = {
+            "krxPrc": 7900,
+            "krxTm": "151500",
+            "krxYmd": "20261124",
+            "src": "0B",
+            "tm": "151500",
+            "tickYmd": "20261124",
+        }
+        self.assertEqual(stopInputPx(session, "20261124"), 7900)
 
 
 if __name__ == "__main__":

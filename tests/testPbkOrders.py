@@ -74,7 +74,7 @@ class PbkOrderPlanTest(unittest.TestCase):
         from trading.pbkOrderPlan import applyPaperResult
         from utils.pbkWatchScreen import unionRows
 
-        self.assertEqual(ALG_VER, 5)
+        self.assertEqual(ALG_VER, 6)
         self.assertEqual(scaledSlot(6_000_000, 1.5), 9_000_000)
         self.assertEqual(slotScale("코스닥", 90, 100), 1.5)
         self.assertEqual(slotScale("거래소", 90, 100), 1.0)
@@ -207,6 +207,34 @@ class PbkOrderPlanTest(unittest.TestCase):
         self.assertEqual(sold["actions"][0]["side"], "SELL")
         stopped = buildLiveActions([], {"041830": _fresh(7900)}, pos, "151500", "20261120")
         self.assertEqual(stopped["actions"][0]["reason"], "손절")
+        priorClose = {
+            "price": 7900,
+            "curPrc": 7900,
+            "krxPrc": 7900,
+            "krxTm": "153000",
+            "krxYmd": "20261123",
+            "dayCloseDt": "20261123",
+            "src": "dayClose",
+            "tm": "153000",
+            "fresh": True,
+        }
+        held = buildLiveActions([], {"041830": priorClose}, pos, "151500", "20261124")
+        self.assertEqual(held["actions"], [])
+        self.assertIn("손절보류", [row["reason"] for row in held["skips"]])
+        newer = {
+            "price": 9000,
+            "curPrc": 9000,
+            "krxPrc": 7900,
+            "krxTm": "153000",
+            "krxYmd": "20261123",
+            "dayCloseDt": "20261123",
+            "src": "poll",
+            "tm": "151400",
+            "tickYmd": "20261124",
+            "fresh": True,
+        }
+        kept = buildLiveActions([], {"041830": newer}, pos, "151500", "20261124")
+        self.assertEqual(kept["actions"], [])
         called = []
 
         def _boom(*_a, **_k):
