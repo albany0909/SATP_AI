@@ -11,7 +11,7 @@ import re
 
 ALG_CD = "PBK01"
 STRAT_ID = "pullbackTwoStep_v1"
-ALG_VER = 6
+ALG_VER = 7
 NAME_KR = "실적 장대양봉 눌림목"
 ENGLISH_NAME = "Earnings Pullback Two Step"
 
@@ -958,14 +958,16 @@ def submitPbkOrder(action, session, broker, paperOnly=True, log=None):
     return broker(action, session)
 
 
-def algVerHistPayload(gitHash="", ymd="2026-11-24"):
+def algVerHistPayload(gitHash="", ymd="2026-11-25"):
     """AI_ALG_VER_HIST 에 넣을 값. 이 함수는 DB 를 열지 않는다."""
+    from trading.pbkCap70 import NOTE_V7
+
     return {
         "algCd": ALG_CD,
         "stratId": STRAT_ID,
         "algVer": ALG_VER,
         "ymd": ymd,
-        "note": "v6 15:15 손절은 당일 현재가만 본다. 전일 krx 종가로는 판단하지 않고, 현재가가 없으면 손절을 미루고 로그를 남긴다. 보유 화면 현재가·등락률도 그 현재가와 전일종가 기준으로 맞춘다.",
+        "note": NOTE_V7,
         "gitHash": str(gitHash or "")[:16],
         "src": "manual",
     }

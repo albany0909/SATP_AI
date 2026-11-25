@@ -1023,7 +1023,7 @@ def touchWaitCodes():
     return list(_touchWaitCds)
 
 
-def placePaperCycle(result, broker=None, session=None, log=None, sender=None, path=None, now=None, chaseMaxPct=None, requireBroker=False, askFetch=None, cash=None, pauseNew=False, blockedNew=None, parkRoom=None):
+def placePaperCycle(result, broker=None, session=None, log=None, sender=None, path=None, now=None, chaseMaxPct=None, requireBroker=False, askFetch=None, cash=None, pauseNew=False, blockedNew=None, parkRoom=None, slotLimit=None, capGate=None):
     """신선한 터치만 모의 주문. 놓친 터치는 파일에만 남긴다."""
     from strategies.impl.pullbackTwoStep import PaperOnlyError
     from trading.pbkOrderPlan import applyPaperResult, buildLiveActions, pbkChaseMaxPct
@@ -1068,6 +1068,8 @@ def placePaperCycle(result, broker=None, session=None, log=None, sender=None, pa
         pauseNew=pauseNew,
         blockedNew=blockedNew,
         parkRoom=parkRoom,
+        slotLimit=5 if slotLimit is None else slotLimit,
+        capGate=capGate,
     )
     for row in plan["missed"]:
         _safeLog(log, f"[PBK01] 당일 터치 놓침 {row.get('stkCd')} {row.get('lineName')} 괴리 {row.get('gapPct')}%")
@@ -1081,6 +1083,10 @@ def placePaperCycle(result, broker=None, session=None, log=None, sender=None, pa
             _logAmtHold(row.get("stkCd"), log=log)
         elif row.get("reason") == "손절보류":
             _safeLog(log, f"[PBK01] 손절 보류 {row.get('stkCd')} 현재가 없음")
+        elif row.get("reason") == "상승장쉬기":
+            _safeLog(log, f"[PBK01] skip BULL60_SKIP #{row.get('n') or '-'} {row.get('stkCd')}")
+        elif str(row.get("reason") or "").startswith(("MAX_SLOT", "CAP_FULL", "NO_FUND", "CAP_")):
+            _safeLog(log, f"[PBK01] skip {row.get('reason')} #{row.get('n') or '-'} {row.get('stkCd')}")
         elif row.get("reason") in ("시세 대기", "슬롯한도", "시간외", "매도대기", "잔고불일치"):
             _safeLog(log, f"[PBK01] 스킵 {row.get('stkCd')} {row.get('reason')}")
         if row.get("reason") == "시세 대기" and row.get("stkCd"):
@@ -1089,10 +1095,36 @@ def placePaperCycle(result, broker=None, session=None, log=None, sender=None, pa
     useBroker = broker or paperBroker
     sess = session if session is not None else _paperSession()
     failed = set()
+    funded = set()
+    fundBy = {str(row.get("stkCd") or ""): row for row in (plan.get("fundSells") or [])}
     for action in plan["actions"]:
         code = str(action.get("stkCd") or "")
         if action.get("side") == "BUY" and code in failed:
             continue
+        fund = fundBy.get(code) if action.get("side") == "BUY" else None
+        if fund and code not in funded:
+            funded.add(code)
+            sell = {
+                "side": "SELL",
+                "stkCd": "069500",
+                "qty": int(fund.get("qty") or 0),
+                "limitPx": int(fund.get("limitPx") or 0),
+                "trdeTp": "0",
+                "reason": "FUND_SELL_KODEX",
+            }
+            try:
+                sold = useBroker(sell, sess) or {}
+            except Exception as err:
+                _safeLog(log, f"[PBK01] FUND_SELL_KODEX {code} 실패 {type(err).__name__}")
+                failed.add(code)
+                continue
+            _safeLog(log, f"[PBK01] FUND_SELL_KODEX|{code}|{int(fund.get('won') or 0)}")
+            if not sold.get("ok") and not sold.get("sent"):
+                failed.add(code)
+                _safeLog(log, f"[PBK01] skip NO_FUND #{action.get('n') or '-'} {code}")
+                continue
+        if action.get("slot6"):
+            _safeLog(log, f"[PBK01] slot6=1 {code}")
         positions = applyPaperResult(positions, action, "pending", ymd=ymd)
         _saveBook(filePath, ymd, candidates, positions)
         try:
@@ -1406,6 +1438,7 @@ def fetchPaperBook(session=None, accountFetch=None, openFetch=None, cntrFetch=No
         "account": parseAccountHolds(acct.get("body") or {}),
         "orders": parseOpenOrders(opened.get("body") or {}),
         "fills": fills,
+        "body": acct.get("body") or {},
     }
 
 
@@ -1543,6 +1576,99 @@ def logUnfilledRemainder(path=None, hm="", ymd=""):
     return rows
 
 
+_capLoggedYmd = ""
+_capAlertYmd = ""
+
+
+def refreshCap70(now=None, positions=None, regime="", kodexBars=None, kodexPx=0, account=None):
+    """오늘 한도를 한 번 정한다. 이미 있으면 그 E 를 유지한다. DB 는 열지 않는다."""
+    global _capLoggedYmd, _capAlertYmd
+    from trading.pbkCap70 import fundSellEnabled, reservedWon, settleCapDay
+    from trading.pbkKodexPark import priorCloses
+    from utils.pbk01Store import latestByKind, pbkPath
+
+    moment = now or datetime.now()
+    day = moment.strftime("%Y%m%d")
+    path = pbkPath("pbk01_state.jsonl")
+    saved = latestByKind(path, "state") or {}
+    park = dict(saved.get("park") or {})
+    blocked = []
+    for pos in positions or []:
+        if isinstance(pos, dict) and pos.get("amtOk") is False:
+            blocked.append(pos.get("stkCd"))
+    prior = park.get("cap70") if isinstance(park.get("cap70"), dict) else {}
+    have = str(prior.get("ymd") or "") == day and prior.get("ok") and prior.get("E")
+    acct = account
+    if acct is None and not have and moment.strftime("%H%M%S") >= "085000":
+        try:
+            snap = fetchPaperBook()
+        except Exception:
+            snap = {"ok": False}
+        if snap.get("ok"):
+            holds = []
+            for row in (snap.get("body") or {}).get("stk_acnt_evlt_prst") or []:
+                if isinstance(row, dict):
+                    holds.append(row)
+            acct = {"body": snap.get("body") or {}, "holds": holds}
+        else:
+            acct = {}
+    closes = priorCloses(kodexBars or [], day)
+    todayExpo = 0
+    for pos in positions or []:
+        if not isinstance(pos, dict):
+            continue
+        for key in ("leg1", "leg2"):
+            leg = pos.get(key) if isinstance(pos.get(key), dict) else {}
+            if str(leg.get("ymd") or "")[:8] != day:
+                continue
+            try:
+                todayExpo += int(float(leg.get("fillPx") or 0) * int(leg.get("qty") or leg.get("filledQty") or 0))
+            except (TypeError, ValueError):
+                continue
+    got = settleCapDay(
+        park,
+        day,
+        moment.strftime("%H%M%S"),
+        acct or {},
+        regime,
+        closes,
+        reservedWon(positions, blocked),
+        fundSellEnabled(),
+        kodexPx,
+        todayExpo=todayExpo,
+    )
+    if got.get("alert") and _capAlertYmd != day:
+        _capAlertYmd = day
+        text = f"[PBK01] CAP70 평가 없음 {got.get('reason')} 신규 안 함"
+        _safeLog(None, text)
+        try:
+            from telegram.telSend import sendTelegramMsg
+
+            sendTelegramMsg(text)
+        except Exception:
+            _safeLog(None, "[PBK01] 텔레그램 전송 실패 RuntimeError")
+    for line in got.get("logs") or []:
+        if str(line).startswith("CAP70|") and _capLoggedYmd == day:
+            continue
+        _safeLog(None, f"[PBK01] {line}")
+        if str(line).startswith("CAP70|"):
+            _capLoggedYmd = day
+    state = got.get("state") or park
+    if got.get("ok"):
+        try:
+            _saveBook(
+                path,
+                saved.get("announcedYmd") or "",
+                saved.get("candidates") or [],
+                saved.get("positions") or positions or [],
+                park=state,
+            )
+        except Exception as err:
+            _safeLog(None, f"[PBK01] CAP70 기록 실패 {type(err).__name__}")
+    got["state"] = state
+    return got
+
+
 def _beatLoop():
     """스캔이 오래 걸려도 1분마다 생존 로그를 남긴다."""
     while True:
@@ -1584,6 +1710,47 @@ def _loop():
                 )
             except Exception:
                 ctx = {}
+            cap = {}
+            try:
+                cap = refreshCap70(
+                    datetime.now(),
+                    positions=(result or {}).get("positions"),
+                    regime=ctx.get("regime") or "",
+                    kodexBars=ctx.get("kodexBars"),
+                    kodexPx=ctx.get("open") or 0,
+                )
+            except Exception as err:
+                _safeLog(None, f"[PBK01] CAP70 실패 {type(err).__name__}")
+                cap = {"ok": False, "reason": "TR", "alert": True}
+            ctx["cap70"] = (cap or {}).get("cap70") or {}
+            ctx["capOk"] = bool((cap or {}).get("ok"))
+            from trading.pbkCap70 import MAX_SLOTS, makeCapGate, shadowV6
+
+            if (cap or {}).get("ok"):
+                held = 0
+                for pos in (result or {}).get("positions") or []:
+                    if int((pos or {}).get("qty") or 0) > 0 or (pos or {}).get("leg1"):
+                        held += 1
+                gate = makeCapGate(cap["cap70"], held, kodexPx=ctx.get("open") or 0)
+                slotLimit = MAX_SLOTS
+            elif (cap or {}).get("wait"):
+                gate = lambda info: {
+                    "skip": "CAP_WAIT",
+                    "n": (info or {}).get("n"),
+                    "stkCd": (info or {}).get("stkCd"),
+                    "H": None,
+                    "S": None,
+                }
+                slotLimit = MAX_SLOTS
+            else:
+                gate = lambda info: {
+                    "skip": "CAP_NODATA",
+                    "n": (info or {}).get("n"),
+                    "stkCd": (info or {}).get("stkCd"),
+                    "H": None,
+                    "S": None,
+                }
+                slotLimit = MAX_SLOTS
             placed = placePaperCycle(
                 result,
                 sender=_send,
@@ -1593,7 +1760,15 @@ def _loop():
                 pauseNew=bool(ctx.get("pause")),
                 blockedNew=ctx.get("skipped"),
                 parkRoom=ctx.get("room"),
+                slotLimit=slotLimit,
+                capGate=gate,
             ) or {}
+            try:
+                names = [row.get("stkCd") for row in (result or {}).get("candidates") or []]
+                taken = [row.get("stkCd") for row in (placed.get("actions") or []) if row.get("side") == "BUY"]
+                _safeLog(None, f"[PBK01] {shadowV6(names, ctx.get('regime'), paperCash(), ctx.get('open'), taken)}")
+            except Exception:
+                pass
             try:
                 _followKodexPark(ctx, placed, result)
             except Exception as err:
@@ -1622,11 +1797,65 @@ def _loop():
         time.sleep(30)
 
 
+def _followKodexStep(ctx, placed, result, cap):
+    """상승장 전액 주차 대신 L/3 목표. 한도만 줄면 팔지 않는다."""
+    from trading.pbkCap70 import planKodexOrders
+
+    spent = 0
+    for action in (placed or {}).get("actions") or []:
+        if str(action.get("side") or "") != "BUY":
+            continue
+        px = action.get("limitPx") or action.get("fillPx") or 0
+        spent += int(float(px) * int(action.get("qty") or 0))
+    cash = max(0, int(cap.get("cashD2") or cap.get("orderable") or 0) - spent)
+    px = (ctx or {}).get("open") or cap.get("kodexPx") or 0
+    level = int(cap.get("L") or 0)
+    prev = cap.get("prevL")
+    orders, target = planKodexOrders(
+        level,
+        prev,
+        cap.get("room"),
+        cap.get("kodexQty"),
+        px,
+        cash,
+        bear=bool(cap.get("bear")),
+        levelFell=prev is not None and level < int(prev),
+    )
+    for order in orders:
+        _safeLog(
+            None,
+            f"[PBK01] {order.get('reason')}|{prev}→{level}|{int(order.get('qty') or 0) * int(order.get('limitPx') or 0)}|{order.get('side')}",
+        )
+    if orders:
+        from strategies.impl.pullbackTwoStep import PaperOnlyError
+
+        session = _paperSession()
+        for order in orders:
+            try:
+                got = paperBroker(order, session) or {}
+            except PaperOnlyError:
+                _safeLog(None, f"[PBK01] KODEX 거절 {order.get('reason')} 실전가드")
+                continue
+            except Exception as err:
+                _safeLog(None, f"[PBK01] KODEX 거절 {order.get('reason')} {type(err).__name__}")
+                continue
+            if not got.get("ok") and not got.get("sent"):
+                _safeLog(None, f"[PBK01] KODEX 미전송 {order.get('reason')}")
+    _safeLog(None, f"[PBK01] KODEX target={target} L={level} room={cap.get('room')}")
+    return {"orders": orders, "target": target}
+
+
 def _followKodexPark(ctx, placed, result):
-    """PBK 체결 뒤 KODEX를 모의로만 맞춘다. 실전 호스트로는 나가지 않는다."""
+    """PBK 체결 뒤 KODEX를 모의로만 맞춘다. 실전 호스트로는 나가지 않는다.
+
+    v7 한도가 있으면 3분할 목표만 맞추고, 당일 주식 매도대금으로는 다시 사지 않는다.
+    """
     from trading.pbkKodexPark import planParkOrders
 
     regime = str((ctx or {}).get("regime") or "")
+    cap = (ctx or {}).get("cap70") if (ctx or {}).get("capOk") else None
+    if isinstance(cap, dict) and cap.get("ok"):
+        return _followKodexStep(ctx, placed, result, cap)
     if not regime:
         return {"orders": []}
     buys = []

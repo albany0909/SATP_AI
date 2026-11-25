@@ -220,6 +220,7 @@ def buildLiveActions(
     pauseNew=False,
     blockedNew=None,
     parkRoom=None,
+    capGate=None,
 ):
     """주문·놓침·건너뜀. 브로커는 호출하지 않고, 과거 가격으로 체결을 만들지 않는다."""
     from strategies.impl.pullbackTwoStep import (
@@ -245,9 +246,11 @@ def buildLiveActions(
     paused = []
     blocked = {str(code) for code in (blockedNew or []) if str(code or "")}
     used = {code for code, pos in byPos.items() if _slotUsed(pos)}
+    curN = None
+    fundSells = []
 
     def _skip(code, reason, leg=None):
-        skips.append({"stkCd": code, "reason": reason, "leg": leg})
+        skips.append({"stkCd": code, "reason": reason, "leg": leg, "n": curN})
 
     def _miss(code, name, leg, lineName, line, basis, touchPx, nowPx, reason="당일 터치 놓침"):
         gap = gapPct(nowPx, line)
@@ -327,7 +330,8 @@ def buildLiveActions(
                 _skip(code, "시간외")
         return {"actions": actions, "missed": missed, "skips": skips, "paused": paused, "exitHint": ""}
 
-    for row in candidates or []:
+    for idx, row in enumerate(candidates or []):
+        curN = idx + 1
         if not isinstance(row, dict):
             continue
         code = str(row.get("stkCd") or "")
@@ -372,8 +376,10 @@ def buildLiveActions(
             market, row.get("ma5"), row.get("ma20"), locked=pos.get("slotBoost"), legacy=legacy,
         )
         budget = scaledSlot(slotKrw, scale)
-        if abs(scale - 1.5) < 1e-9 and parkRoom is not None:
+        if abs(scale - 1.5) < 1e-9 and parkRoom is not None and capGate is None:
             budget = min(budget, max(0, int(parkRoom)))
+        fundSell = None
+        slot6 = False
         want = []
         if not _legBlocked(pos, 1):
             hit, basis = _hit(price, low, row.get("ma5"))
@@ -387,8 +393,21 @@ def buildLiveActions(
         if not want:
             continue
         if not owns:
+            if capGate is not None:
+                verdict = capGate({
+                    "stkCd": code,
+                    "n": curN,
+                    "scale": scale,
+                }) or {}
+                if verdict.get("skip"):
+                    _skip(code, verdict.get("skip"))
+                    continue
+                if verdict.get("budget") is not None:
+                    budget = int(verdict["budget"])
+                fundSell = verdict
+                slot6 = bool(verdict.get("slot6"))
             if len(used) >= int(slotLimit):
-                _skip(code, "슬롯한도")
+                _skip(code, "슬롯한도" if capGate is None else "MAX_SLOT")
                 continue
             used.add(code)
         ask = absPx(quote.get("ask") if quote.get("ask") is not None else quote.get("ask1"))
@@ -416,6 +435,13 @@ def buildLiveActions(
             if leftCash is not None:
                 spend = int(qty) * int(limit)
                 leftCash = max(0, leftCash - spend - spend * 15 // 10000)
+            if fundSell and fundSell.get("fundSellQty") and leg == want[0][0]:
+                fundSells.append({
+                    "stkCd": code,
+                    "qty": int(fundSell["fundSellQty"]),
+                    "limitPx": int(fundSell.get("fundSellPx") or 0),
+                    "won": int(fundSell.get("fundSellWon") or 0),
+                })
             actions.append({
                 "side": "BUY",
                 "stkCd": code,
@@ -433,8 +459,10 @@ def buildLiveActions(
                 "signalDt": row.get("signalDt") or pos.get("signalDt") or "",
                 "expireDt": row.get("expireDt") or pos.get("expireDt") or "",
                 "hm": textHm,
+                "slot6": 1 if slot6 else 0,
+                "n": curN,
             })
-    return {"actions": actions, "missed": missed, "skips": skips, "paused": paused}
+    return {"actions": actions, "missed": missed, "skips": skips, "paused": paused, "fundSells": fundSells}
 
 
 def _knownName(name, code):

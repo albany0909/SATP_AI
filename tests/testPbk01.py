@@ -241,7 +241,7 @@ class Pbk01Test(unittest.TestCase):
 
         spec = loadStratSpec("pullbackTwoStep_v1")
         self.assertEqual(spec["algCd"], "PBK01")
-        self.assertEqual(spec["version"], 6)
+        self.assertEqual(spec["version"], 7)
         self.assertFalse(spec["enabled"])
         self.assertTrue(spec["params"]["paperOnly"])
         text = formatCandidateLog([{
