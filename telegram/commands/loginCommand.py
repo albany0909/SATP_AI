@@ -256,8 +256,10 @@ def handleLogin(mode, force=False):
     _syncDeskTradeMode(mode)
     expiresText = runtimeState.formatExpiresText(mode)
 
+    from utils.logRedact import maskToken
+
     termLog(f"[{modeLabel}] 로그인 성공")
-    termLog(f"[{modeLabel}] 토큰: {token}")
+    termLog(f"[{modeLabel}] 토큰: {maskToken(token)}")
     termLog(f"[{modeLabel}] 만료: {expiresText}")
     status = runtimeState.loginStatusText()
     termLog(f"[세션] {status}")

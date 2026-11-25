@@ -74,8 +74,10 @@ def renewOneMode(mode):
     runtimeState.setLoginState(token, mode, expiresDt=expiresDt, tokenType=tokenType)
     expiresText = runtimeState.formatExpiresText(mode)
 
+    from utils.logRedact import maskToken
+
     termLog(f"[{modeLabel}] 토큰 갱신 성공")
-    termLog(f"[{modeLabel}] 토큰: {token}")
+    termLog(f"[{modeLabel}] 토큰: {maskToken(token)}")
     termLog(f"[{modeLabel}] 만료: {expiresText}")
     restartWsHub()
     return True, f"[{modeLabel}] 토큰 갱신 성공 (만료: {expiresText})"

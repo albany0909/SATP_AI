@@ -25,9 +25,21 @@ _TG_TOKEN = re.compile(
 _BEARER = re.compile(
     r"(?i)\b(bearer|appkey|app_key)\b(\s*[:=]\s*|\s+)([A-Za-z0-9\-._~+/=]{8,})"
 )
+# '토큰:' '토큰 :' 'token=' 처럼 라벨 뒤에 붙는 접근 토큰
+_LABELED = re.compile(
+    r"(?i)(토큰|token|access_token|authorization)\s*[:=]\s*([A-Za-z0-9_\-\.~+/=]{8,})"
+)
 
 _INSTALLED = False
 _ORIG_ADD_HANDLER = None
+
+
+def maskToken(token):
+    """로그에 남길 토큰 표시. 앞 4자와 길이만 두고 나머지는 뺀다."""
+    text = "" if token is None else str(token)
+    if len(text) <= 4:
+        return "***"
+    return f"{text[:4]}…(len={len(text)})"
 
 
 def redactSecrets(text):
@@ -39,6 +51,7 @@ def redactSecrets(text):
     text = _TG_PATH.sub("/bot***", text)
     text = _TG_TOKEN.sub("***", text)
     text = _BEARER.sub(lambda m: f"{m.group(1)} ***", text)
+    text = _LABELED.sub(lambda m: f"{m.group(1)}: ***", text)
     return text
 
 

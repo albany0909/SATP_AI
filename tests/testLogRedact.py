@@ -37,6 +37,16 @@ class LogRedactTest(unittest.TestCase):
             got = redactSecrets(f"url=/bot{token}/getUpdates token {token}")
             self.assertNotIn(token, got)
             self.assertIn("/bot***/getUpdates", got)
+        access = "AbCd" + ("x" * 40)
+        for line in (
+            f"[모의투자] 토큰: {access}",
+            f"[실투자] 토큰 : {access}",
+            f"token={access}",
+            f"access_token: {access}",
+        ):
+            masked = redactSecrets(line)
+            self.assertNotIn(access, masked)
+            self.assertIn("***", masked)
 
     def test_pool_timeout_and_desk_log_hide_path_token(self):
         """호스트 없이 url: /bot<더미>/getUpdates 로 찍힌 수신 오류."""
@@ -122,6 +132,37 @@ class LogRedactTest(unittest.TestCase):
         self.assertIn("bot***", text)
         self.assertIn("수신 루프 오류", text)
         self.assertIn("RuntimeError", text)
+
+    def test_login_token_line_is_masked_and_scan_hides_value(self):
+        from io import StringIO
+        from contextlib import redirect_stdout
+
+        from tools.scanLogSecrets import main as scanMain
+        from tools.scanLogSecrets import suspectLine
+        from utils.logRedact import maskToken
+
+        access = "ZzYy" + ("q" * 36)
+        shown = maskToken(access)
+        self.assertNotIn(access, shown)
+        self.assertIn("(len=", shown)
+        self.assertNotIn(access, redactSecrets(f"[모의투자] 토큰: {access}"))
+        self.assertNotIn(access, redactSecrets(f"[실투자] 토큰 : {access}"))
+        self.assertFalse(suspectLine(f"[모의투자] 토큰: {shown}"))
+        self.assertTrue(suspectLine(f"[실투자] 토큰: {access}"))
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "SATP_20261125.log"
+            path.write_text(
+                f"[모의투자] 토큰: {access}\n[모의투자] 토큰: {shown}\n",
+                encoding="utf-8",
+            )
+            buf = StringIO()
+            with redirect_stdout(buf):
+                code = scanMain([str(path)])
+            text = buf.getvalue()
+        self.assertEqual(code, 0)
+        self.assertNotIn(access, text)
+        self.assertIn("의심 1", text)
+        self.assertIn("의심 줄 1", text)
 
 
 if __name__ == "__main__":
