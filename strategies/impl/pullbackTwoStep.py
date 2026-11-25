@@ -11,7 +11,7 @@ import re
 
 ALG_CD = "PBK01"
 STRAT_ID = "pullbackTwoStep_v1"
-ALG_VER = 7
+ALG_VER = 8
 NAME_KR = "실적 장대양봉 눌림목"
 ENGLISH_NAME = "Earnings Pullback Two Step"
 
@@ -960,14 +960,12 @@ def submitPbkOrder(action, session, broker, paperOnly=True, log=None):
 
 def algVerHistPayload(gitHash="", ymd="2026-11-25"):
     """AI_ALG_VER_HIST 에 넣을 값. 이 함수는 DB 를 열지 않는다."""
-    from trading.pbkCap70 import NOTE_V7
-
     return {
         "algCd": ALG_CD,
         "stratId": STRAT_ID,
         "algVer": ALG_VER,
         "ymd": ymd,
-        "note": NOTE_V7,
+        "note": "v8 15:15 이후 첫 사이클에서 -20% 손절을 하루 한 번 본다. 그 분에 사이클이 없어도 장 마감 전까지 판단하고, 재기동 뒤에는 같은 날 다시 보지 않는다. 비율 0.80은 그대로.",
         "gitHash": str(gitHash or "")[:16],
         "src": "manual",
     }

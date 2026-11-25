@@ -941,6 +941,61 @@ class PbkQuotePlanTest(unittest.TestCase):
             mon._lastPx.update(savedPx)
             mon._regCodes[:] = savedCodes
 
+    def test_prior_krx_seed_yields_to_today_nxt(self):
+        seeded = {
+            "src": "0B",
+            "curPrc": 32300,
+            "tm": "153000",
+            "tickYmd": "20261125",
+            "krxPrc": 32300,
+            "krxTm": "153000",
+            "krxYmd": "20261124",
+            "krxFlu": "+5.73",
+            "nxtPrc": 30800,
+            "nxtTm": "100500",
+            "nxtFlu": "-4.64",
+        }
+        prc, flu = selectHoldQuote(seeded, "20261125", inKrx=True)
+        self.assertEqual(prc, 30800)
+        self.assertAlmostEqual(flu, -4.64, places=2)
+        from trading.pbkQuotePlan import stopInputPx
+
+        self.assertIsNone(stopInputPx(seeded, "20261125"))
+
+    def test_stop_catchup_after_1515_and_long_scan_clock(self):
+        from datetime import datetime
+
+        from trading.pbkOrderPlan import buildLiveActions, dueStopCheck
+        from trading.pbkQuotePlan import quoteClockAfterPoll, quoteIsFresh
+
+        self.assertFalse(dueStopCheck("151434", "20261125", ""))
+        self.assertTrue(dueStopCheck("151531", "20261125", ""))
+        self.assertTrue(dueStopCheck("151601", "20261125", ""))
+        self.assertFalse(dueStopCheck("151601", "20261125", "20261125"))
+        self.assertFalse(dueStopCheck("153101", "20261125", ""))
+        pos = [{"stkCd": "041830", "qty": 10, "avg": 10000, "leg1": {"qty": 10, "fillPx": 10000}}]
+        quote = {
+            "price": 7900, "curPrc": 7900, "ask": 7900, "fresh": True,
+            "src": "poll", "tickYmd": "20261125", "tm": "151601",
+        }
+        missed = buildLiveActions([], {"041830": quote}, pos, "151601", "20261125")
+        self.assertEqual(missed["actions"], [])
+        caught = buildLiveActions([], {"041830": quote}, pos, "151601", "20261125", stopCheck=True)
+        self.assertEqual(caught["actions"][0]["reason"], "손절")
+        self.assertEqual(caught["stopStats"]["stops"], 1)
+        start = datetime(2026, 11, 25, 9, 0, 0)
+        later = datetime(2026, 11, 25, 9, 3, 1)
+        self.assertEqual(quoteClockAfterPoll(start, later), later)
+        aged = {"src": "poll", "curPrc": 1, "tm": "090000", "tickYmd": "20261125"}
+        self.assertFalse(quoteIsFresh(aged, later))
+        from tools.checkSameDayReuse import kt00010Body
+
+        body = kt00010Body()
+        self.assertEqual(body["stk_cd"], "069500")
+        self.assertEqual(body["trde_tp"], "2")
+        self.assertTrue(body["uv"])
+        self.assertNotEqual(body["stk_cd"], "")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

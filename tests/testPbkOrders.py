@@ -74,7 +74,7 @@ class PbkOrderPlanTest(unittest.TestCase):
         from trading.pbkOrderPlan import applyPaperResult
         from utils.pbkWatchScreen import unionRows
 
-        self.assertEqual(ALG_VER, 7)
+        self.assertEqual(ALG_VER, 8)
         self.assertEqual(scaledSlot(6_000_000, 1.5), 9_000_000)
         self.assertEqual(slotScale("코스닥", 90, 100), 1.5)
         self.assertEqual(slotScale("거래소", 90, 100), 1.0)
@@ -235,6 +235,26 @@ class PbkOrderPlanTest(unittest.TestCase):
         }
         kept = buildLiveActions([], {"041830": newer}, pos, "151500", "20261124")
         self.assertEqual(kept["actions"], [])
+        logs = []
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "pbk01_state.jsonl"
+            path.write_text("{}\n", encoding="utf-8")
+            from datetime import datetime
+
+            import trading.pbk01Live as live
+
+            empty = {"enabled": True, "positions": [], "candidates": [], "ymd": "20261125", "hm": "151434", "quotes": {}}
+            live.placePaperCycle(
+                empty, broker=lambda *_a, **_k: {"ok": True}, path=path, log=logs.append,
+                decisionNow=datetime(2026, 11, 25, 15, 16, 1),
+            )
+            self.assertTrue(any("손절판단 20261125 대상 0" in line for line in logs))
+            logs.clear()
+            live.placePaperCycle(
+                empty, broker=lambda *_a, **_k: {"ok": True}, path=path, log=logs.append,
+                decisionNow=datetime(2026, 11, 25, 15, 17, 0),
+            )
+            self.assertFalse(any("손절판단" in line for line in logs))
         called = []
 
         def _boom(*_a, **_k):

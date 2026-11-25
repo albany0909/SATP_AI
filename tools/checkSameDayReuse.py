@@ -64,6 +64,23 @@ def reuseHint(fields):
     return "D+2와 주문가능이 같음"
 
 
+def kt00010Body(stkCd="069500", price="10000"):
+    """조회 바디. stk_cd·trde_tp·uv 는 필수이고, 이 호출은 주문을 내지 않는다."""
+    code = "".join(ch for ch in str(stkCd or "") if ch.isdigit())
+    if len(code) < 6:
+        code = "069500"
+    code = code[-6:]
+    uv = "".join(ch for ch in str(price or "") if ch.isdigit()) or "10000"
+    return {
+        "stk_cd": code,
+        "trde_tp": "2",
+        "uv": uv,
+        "trde_qty": "",
+        "io_amt": "",
+        "exp_buy_unp": "",
+    }
+
+
 def _post(host, token, tokenType, apiId, body):
     import requests
 
@@ -111,7 +128,9 @@ def readPaperCash(session=None, poster=None):
         return {"ok": False, "reason": "NO_TOKEN"}
     send = poster or _post
     code1, body1 = send(host, sess["token"], sess.get("tokenType"), "kt00001", {"qry_tp": "3"})
-    code10, body10 = send(host, sess["token"], sess.get("tokenType"), "kt00010", {"io_amt": "", "stk_cd": "", "trde_tp": "2"})
+    code10, body10 = send(
+        host, sess["token"], sess.get("tokenType"), "kt00010", kt00010Body(),
+    )
     fields = pickCash(body1)
     fields.update({key: val for key, val in pickCash(body10).items() if fields.get(key) is None})
     ok = code1 == 200 and int(body1.get("return_code") or 0) == 0

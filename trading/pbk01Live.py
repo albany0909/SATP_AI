@@ -527,15 +527,22 @@ def runPbkCycle(now=None, loader=None, sender=None, log=None, path=None, quotes=
             quotes = kept
         else:
             if quotes is None:
-                try:
-                    refreshPbkQuotes(rows, positions, reason="PBK시세", now=now)
-                except Exception as err:
-                    _safeLog(log, f"[PBK01] 시세 구독 실패 {type(err).__name__}")
                 from trading.pbkQuotePlan import quoteClockAfterPoll
 
+                seenAt = quoteClockAfterPoll(now)
+                try:
+                    gap = (seenAt - now).total_seconds()
+                except Exception:
+                    gap = 0
+                if gap >= 60:
+                    _safeLog(log, f"[PBK01] 스캔 {int(gap)}초 보유 시세 다시 받음")
+                try:
+                    refreshPbkQuotes(rows, positions, reason="PBK시세", now=seenAt)
+                except Exception as err:
+                    _safeLog(log, f"[PBK01] 시세 구독 실패 {type(err).__name__}")
                 quotes = quotesFromCache(
                     [row.get("stkCd") for row in rows] + list(owned),
-                    now=quoteClockAfterPoll(now),
+                    now=seenAt,
                 )
         usable = {}
         for code, quote in (quotes or {}).items():
@@ -1022,7 +1029,7 @@ def touchWaitCodes():
     return list(_touchWaitCds)
 
 
-def placePaperCycle(result, broker=None, session=None, log=None, sender=None, path=None, now=None, chaseMaxPct=None, requireBroker=False, askFetch=None, cash=None, pauseNew=False, blockedNew=None, parkRoom=None, slotLimit=None, capGate=None):
+def placePaperCycle(result, broker=None, session=None, log=None, sender=None, path=None, now=None, chaseMaxPct=None, requireBroker=False, askFetch=None, cash=None, pauseNew=False, blockedNew=None, parkRoom=None, slotLimit=None, capGate=None, decisionNow=None):
     """신선한 터치만 모의 주문. 놓친 터치는 파일에만 남긴다."""
     from strategies.impl.pullbackTwoStep import PaperOnlyError
     from trading.pbkOrderPlan import applyPaperResult, buildLiveActions, pbkChaseMaxPct
@@ -1054,6 +1061,21 @@ def placePaperCycle(result, broker=None, session=None, log=None, sender=None, pa
             if got not in (None, ""):
                 quote["ask"] = got
             quotes[code] = quote
+    decisionHm = hm
+    if decisionNow is not None:
+        decisionHm = decisionNow.strftime("%H%M%S")
+    closeHm = "153000"
+    try:
+        from config.settingsStore import getMktHours
+
+        _openHm, _closeHm = getMktHours()
+        closeHm = str(_closeHm).replace(":", "") + "00"
+    except Exception:
+        closeHm = "153000"
+    checkedYmd = str((saved.get("park") or {}).get("stopCheckedYmd") or "")
+    from trading.pbkOrderPlan import dueStopCheck
+
+    stopCheck = dueStopCheck(decisionHm, ymd, checkedYmd, closeHm)
     plan = buildLiveActions(
         candidates,
         quotes,
@@ -1069,7 +1091,21 @@ def placePaperCycle(result, broker=None, session=None, log=None, sender=None, pa
         parkRoom=parkRoom,
         slotLimit=5 if slotLimit is None else slotLimit,
         capGate=capGate,
+        stopCheck=stopCheck,
     )
+    if stopCheck:
+        stats = plan.get("stopStats") or {}
+        _safeLog(
+            log,
+            f"[PBK01] 손절판단 {ymd} 대상 {int(stats.get('targets') or 0)} "
+            f"손절 {int(stats.get('stops') or 0)} 보류 {int(stats.get('held') or 0)}",
+        )
+        park = dict(saved.get("park") or {})
+        park["stopCheckedYmd"] = ymd
+        try:
+            _saveBook(filePath, saved.get("announcedYmd") or ymd, candidates, positions, park=park)
+        except Exception as err:
+            _safeLog(log, f"[PBK01] 손절판단 기록 실패 {type(err).__name__}")
     for row in plan["missed"]:
         _safeLog(log, f"[PBK01] 당일 터치 놓침 {row.get('stkCd')} {row.get('lineName')} 괴리 {row.get('gapPct')}%")
         try:
@@ -1761,6 +1797,7 @@ def _loop():
                 parkRoom=ctx.get("room"),
                 slotLimit=slotLimit,
                 capGate=gate,
+                decisionNow=datetime.now(),
             ) or {}
             try:
                 names = [row.get("stkCd") for row in (result or {}).get("candidates") or []]

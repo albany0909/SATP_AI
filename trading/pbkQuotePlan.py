@@ -450,9 +450,46 @@ def _sameDayFid(info, today, px, usedKrx):
         return flu
     nxt = _px(info.get("nxtPrc"))
     nflu = _pct(info.get("nxtFlu"))
-    if nflu is not None and nxt is not None and abs(nxt - px) <= 0.5 and src == "0B" and tick == today:
+    if nflu is not None and nxt is not None and abs(nxt - px) <= 0.5 and nxtPrintToday(info, today):
         return nflu
     return None
+
+
+def staleKrxSeed(info, today):
+    """전일 KRX 종가가 오늘 tickYmd 만 달고 있는 시드."""
+    today = str(today or "")
+    kday = krxQuoteDay(info)
+    if not kday or not today or kday >= today:
+        return False
+    krx = _px((info or {}).get("krxPrc"))
+    cur = _px((info or {}).get("curPrc"))
+    if krx is None:
+        return False
+    if cur is not None and abs(cur - krx) > 0.5:
+        return False
+    tm = _hhmmss((info or {}).get("tm"))
+    kt = _hhmmss((info or {}).get("krxTm"))
+    if tm is None or kt is None:
+        return True
+    return tm == kt
+
+
+def nxtPrintToday(info, today):
+    """오늘 NXT 체결가. 전일 15:30 스탬프는 제외."""
+    info = info or {}
+    today = str(today or "")
+    if _px(info.get("nxtPrc")) is None or not today:
+        return False
+    nday = _ymd(info.get("nxtYmd"))
+    if nday:
+        return nday == today
+    if _ymd(info.get("tickYmd")) != today or _hhmmss(info.get("nxtTm")) is None:
+        return False
+    krxTm = str(info.get("krxTm") or "").zfill(6)[:6]
+    nxtTm = str(info.get("nxtTm") or "").zfill(6)[:6]
+    if krxQuoteDay(info) < today and nxtTm == krxTm and nxtTm.startswith("1530"):
+        return False
+    return True
 
 
 def _prevForDisplay(px, info, today, usedKrx):
@@ -510,12 +547,14 @@ def selectHoldQuote(info, today="", inKrx=False):
     elif inKrx and krxOk and not newer:
         prc = info.get("krxPrc")
         usedKrx = True
-    elif _px(info.get("curPrc")) is not None and (newer or not krxOk):
+    elif inKrx and not krxOk and nxtPrintToday(info, today):
+        prc = info.get("nxtPrc")
+    elif _px(info.get("curPrc")) is not None and not staleKrxSeed(info, today) and (newer or not krxOk):
         prc = info.get("curPrc")
     elif krxOk:
         prc = info.get("krxPrc")
         usedKrx = True
-    elif _px(info.get("curPrc")) is not None:
+    elif _px(info.get("curPrc")) is not None and not (inKrx and staleKrxSeed(info, today)):
         prc = info.get("curPrc")
     elif inKrx and _px(info.get("nxtPrc")) is not None:
         prc = info.get("nxtPrc")

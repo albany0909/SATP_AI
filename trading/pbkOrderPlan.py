@@ -64,6 +64,17 @@ def inStopMinute(hm, stopHm="151500"):
     return bool(text and stop) and text[:4] == stop[:4]
 
 
+def dueStopCheck(hm, ymd, checkedYmd, closeHm="153000"):
+    """15:15 이후 장 마감까지의 첫 판단. 오늘 이미 봤으면 False."""
+    text = _hm(hm)
+    close = _hm(closeHm)
+    if not text or text < "151500":
+        return False
+    if close and text > close:
+        return False
+    return str(checkedYmd or "") != str(ymd or "")
+
+
 def buyLimitPx(ask, line, chasePct=0):
     """min(매도 1호가, 이평 상한). 추격 0이면 이평을 호가 단위로 올린 값까지."""
     from utils.krxTick import ceilToKrxTick, floorToKrxTick
@@ -221,6 +232,7 @@ def buildLiveActions(
     blockedNew=None,
     parkRoom=None,
     capGate=None,
+    stopCheck=False,
 ):
     """주문·놓침·건너뜀. 브로커는 호출하지 않고, 과거 가격으로 체결을 만들지 않는다."""
     from strategies.impl.pullbackTwoStep import (
@@ -233,6 +245,7 @@ def buildLiveActions(
         marketName,
         scaledSlot,
         slotScale,
+        STOP_RATIO,
         stopTriggered,
     )
 
@@ -248,6 +261,17 @@ def buildLiveActions(
     used = {code for code, pos in byPos.items() if _slotUsed(pos)}
     curN = None
     fundSells = []
+    stopStats = {"targets": 0, "stops": 0, "held": 0}
+
+    def _stopHit(price, avg):
+        try:
+            px = float(price)
+            base = float(avg)
+        except (TypeError, ValueError):
+            return False
+        if base <= 0 or px <= 0:
+            return False
+        return px <= base * STOP_RATIO
 
     def _skip(code, reason, leg=None):
         skips.append({"stkCd": code, "reason": reason, "leg": leg, "n": curN})
@@ -282,14 +306,18 @@ def buildLiveActions(
             _skip(code, "실체결없음")
             continue
         quote = (quotes or {}).get(code) or {}
-        if inStopMinute(textHm):
+        if stopCheck or inStopMinute(textHm):
             from trading.pbkQuotePlan import stopInputPx
 
+            stopStats["targets"] += 1
             stopPx = stopInputPx(quote, ymd)
             if stopPx is None:
+                stopStats["held"] += 1
                 _skip(code, "손절보류")
                 continue
-            if stopTriggered(textHm, stopPx, pos.get("avg")):
+            fired = _stopHit(stopPx, pos.get("avg")) if stopCheck else stopTriggered(textHm, stopPx, pos.get("avg"))
+            if fired:
+                stopStats["stops"] += 1
                 actions.append({
                     "side": "SELL",
                     "stkCd": code,
@@ -328,7 +356,15 @@ def buildLiveActions(
             code = str((row or {}).get("stkCd") or "")
             if code:
                 _skip(code, "시간외")
-        return {"actions": actions, "missed": missed, "skips": skips, "paused": paused, "exitHint": ""}
+        return {
+            "actions": actions,
+            "missed": missed,
+            "skips": skips,
+            "paused": paused,
+            "exitHint": "",
+            "fundSells": fundSells,
+            "stopStats": stopStats,
+        }
 
     for idx, row in enumerate(candidates or []):
         curN = idx + 1
@@ -462,7 +498,14 @@ def buildLiveActions(
                 "slot6": 1 if slot6 else 0,
                 "n": curN,
             })
-    return {"actions": actions, "missed": missed, "skips": skips, "paused": paused, "fundSells": fundSells}
+    return {
+        "actions": actions,
+        "missed": missed,
+        "skips": skips,
+        "paused": paused,
+        "fundSells": fundSells,
+        "stopStats": stopStats,
+    }
 
 
 def _knownName(name, code):
