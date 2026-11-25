@@ -359,7 +359,6 @@ def quotesFromCache(codes, now=None):
             "krxYmd": info.get("krxYmd"),
             "krxFlu": info.get("krxFlu"),
             "dayCloseDt": info.get("dayCloseDt"),
-            "prevClose": info.get("prevClose"),
         }
     return out
 

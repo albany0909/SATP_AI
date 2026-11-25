@@ -431,41 +431,61 @@ def curNewerThanKrx(info, today=""):
     return False
 
 
-def _prevForDisplay(px, info, today, usedKrx):
-    """표시 현재가의 전일 종가. 없으면 None."""
+def _sameDayFid(info, today, px, usedKrx):
+    """장중 0B 등락률(FID 12). 표시 가격과 같은 날의 값만."""
     info = info or {}
-    prev = _px(info.get("prevClose"))
-    if prev is None:
-        prev = _px(info.get("basePrc"))
-    if prev:
-        return prev
+    today = str(today or "")
+    src = str(info.get("src") or "")
+    tick = _ymd(info.get("tickYmd"))
+    kday = krxQuoteDay(info)
+    krx = _px(info.get("krxPrc"))
+    kflu = _pct(info.get("krxFlu"))
+    if kflu is not None and kday == today and krx is not None and abs(krx - px) <= 0.5:
+        return kflu
+    if usedKrx and kflu is not None and kday == today:
+        return kflu
+    flu = _pct(info.get("fluRt"))
+    cur = _px(info.get("curPrc"))
+    if flu is not None and src == "0B" and tick == today and cur is not None and abs(cur - px) <= 0.5:
+        return flu
+    nxt = _px(info.get("nxtPrc"))
+    nflu = _pct(info.get("nxtFlu"))
+    if nflu is not None and nxt is not None and abs(nxt - px) <= 0.5 and src == "0B" and tick == today:
+        return nflu
+    return None
+
+
+def _prevForDisplay(px, info, today, usedKrx):
+    """전일 종가. FID 12 가 없을 때만 쓴다. 역산값은 쓰지 않는다."""
+    info = info or {}
     kpx = _px(info.get("krxPrc"))
     kday = krxQuoteDay(info)
-    if kpx is None or not kday or abs(kpx - px) <= 0.5:
-        return None
-    if today and kday < str(today):
+    if kpx is not None and kday and today and kday < str(today) and abs(kpx - px) > 0.5:
         return kpx
-    if kday == str(today or ""):
-        kflu = _pct(info.get("krxFlu"))
-        if kflu is None:
-            return None
-        denom = 1.0 + kflu / 100.0
-        if denom <= 0:
-            return None
-        return kpx / denom
+    base = _px(info.get("basePrc"))
+    if base and abs(base - px) > 0.5:
+        return base
+    prevDay = _ymd(info.get("prevCloseYmd"))
+    prev = _px(info.get("prevClose"))
+    if prev and prevDay == str(today or "") and abs(prev - px) > 0.5:
+        return prev
     return None
 
 
 def holdChangePct(displayPx, info, today="", usedKrx=False):
-    """표시 현재가의 전일대비(%). 가격과 안 맞는 잔여 등락률은 쓰지 않는다."""
+    """표시 현재가의 전일대비(%).
+
+    장중 0B 등락률을 먼저 쓴다. prevClose 는 그날 기준가로 찍힌 때만 마지막 대체다.
+    """
     px = _px(displayPx)
     if px is None:
         return None
+    fid = _sameDayFid(info, today, px, usedKrx)
+    if fid is not None:
+        return fid
     prev = _prevForDisplay(px, info, today, usedKrx)
     if prev:
         return (px - prev) / prev * 100.0
-    if usedKrx or (_px((info or {}).get("krxPrc")) is not None and abs(_px(info.get("krxPrc")) - px) <= 0.5):
-        return _pct((info or {}).get("krxFlu"))
     return None
 
 
@@ -537,7 +557,7 @@ def applyPollPrice(info, price, tm, low=None, now=None, staleSec=None):
     """더 새로운 오늘 0B 가 있으면 폴링 값으로 덮지 않는다.
 
     장중 시각이면 KRX 현재가로 보고 krxPrc·krxTm 도 같이 고친다.
-    전일 종가는 prevClose 로 남겨 등락률을 다시 계산한다.
+    등락률 역산으로 prevClose 를 만들지 않는다.
     """
     from datetime import datetime
 
@@ -555,15 +575,13 @@ def applyPollPrice(info, price, tm, low=None, now=None, staleSec=None):
     today = moment.strftime("%Y%m%d")
     tmTxt = str(tm or moment.strftime("%H%M%S"))
     oldDay = krxQuoteDay(current)
-    if _px(current.get("prevClose")) is None and oldDay and oldDay < today:
-        current["prevClose"] = current.get("krxPrc") or current.get("curPrc")
-    elif _px(current.get("prevClose")) is None and oldDay == today:
-        oldFlu = _pct(current.get("krxFlu"))
-        oldKrx = _px(current.get("krxPrc"))
-        if oldFlu is not None and oldKrx:
-            denom = 1.0 + oldFlu / 100.0
-            if denom > 0:
-                current["prevClose"] = oldKrx / denom
+    priorPx = None
+    if oldDay and oldDay < today:
+        priorPx = _px(current.get("krxPrc") or current.get("curPrc"))
+    carried = _ymd(current.get("tickYmd")) or oldDay
+    if carried and carried != today:
+        current.pop("prevClose", None)
+        current.pop("prevCloseYmd", None)
     current["curPrc"] = px
     current["src"] = "poll"
     current["tm"] = tmTxt
@@ -574,7 +592,9 @@ def applyPollPrice(info, price, tm, low=None, now=None, staleSec=None):
         current["krxPrc"] = px
         current["krxTm"] = tmTxt
         current["krxYmd"] = today
-        flu = holdChangePct(px, current, today, usedKrx=False)
+        flu = None
+        if priorPx:
+            flu = (px - priorPx) / priorPx * 100.0
         if flu is None:
             current["krxFlu"] = ""
             current["fluRt"] = ""

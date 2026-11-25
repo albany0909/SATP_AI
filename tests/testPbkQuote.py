@@ -567,7 +567,7 @@ class PbkQuotePlanTest(unittest.TestCase):
         self.assertEqual(polled["krxPrc"], 9580)
         self.assertEqual(polled["krxTm"], "091800")
         self.assertEqual(polled["krxYmd"], "20261124")
-        self.assertEqual(float(polled["prevClose"]), 10000)
+        self.assertNotIn("prevClose", polled)
         self.assertAlmostEqual(float(polled["krxFlu"]), -4.2, places=2)
 
     def test_stop_input_rejects_prior_close(self):
@@ -852,6 +852,94 @@ class PbkQuotePlanTest(unittest.TestCase):
         stopped = buildLiveActions([], {"041830": freshPoll}, pos, "151500", "20261124", now=stopAt)
         self.assertEqual(stopped["actions"][0]["reason"], "손절")
         self.assertEqual(stopped["actions"][0]["fillPx"], 7900)
+
+    def test_fid12_beats_dirty_prev_close(self):
+        from trading.pbkQuotePlan import holdChangePct
+
+        dirty = {
+            "src": "0B",
+            "curPrc": 9580,
+            "krxPrc": 9580,
+            "krxTm": "093000",
+            "krxYmd": "20261125",
+            "krxFlu": "-3.68",
+            "fluRt": "-3.68",
+            "tickYmd": "20261125",
+            "tm": "093000",
+            "prevClose": 8710,
+        }
+        flu = holdChangePct(9580, dirty, "20261125", usedKrx=True)
+        self.assertAlmostEqual(flu, -3.68, places=2)
+        prc, shown = selectHoldQuote(dirty, "20261125", inKrx=True)
+        self.assertEqual(prc, 9580)
+        self.assertAlmostEqual(shown, -3.68, places=2)
+
+    def test_restore_drops_prev_close_and_new_day_clears_it(self):
+        import trading.watchRtMonitor as mon
+
+        savedFlag = mon._pxCacheLoaded
+        savedPx = dict(mon._lastPx)
+        savedCodes = list(mon._regCodes)
+        try:
+            with tempfile.TemporaryDirectory() as folder:
+                path = Path(folder) / "watchLastPx.json"
+                path.write_text(json.dumps({
+                    "quotes": {
+                        "900290": {
+                            "curPrc": "9580",
+                            "src": "0B",
+                            "tm": "093000",
+                            "tickYmd": "20261124",
+                            "krxPrc": "9580",
+                            "krxFlu": "-3.68",
+                            "krxYmd": "20261124",
+                            "krxTm": "093000",
+                            "prevClose": 8710,
+                        },
+                    },
+                }), encoding="utf-8")
+                mon._pxCacheLoaded = False
+                mon._lastPx.clear()
+                with patch.object(mon, "_PX_CACHE_PATH", path):
+                    mon._loadLastPxCache()
+                restored = mon._lastPx["900290"]
+                self.assertNotIn("prevClose", restored)
+                self.assertAlmostEqual(
+                    selectHoldQuote(restored, "20261124", inKrx=True)[1],
+                    -3.68,
+                    places=2,
+                )
+            mon._lastPx.clear()
+            mon._regCodes[:] = ["900290"]
+            mon._lastPx["900290"] = {
+                "curPrc": "10000",
+                "src": "0B",
+                "tm": "153000",
+                "tickYmd": "20261124",
+                "krxPrc": "10000",
+                "krxFlu": "+9.96",
+                "krxYmd": "20261124",
+                "krxTm": "153000",
+                "prevClose": 8710,
+                "prevCloseYmd": "20261124",
+            }
+            with patch.object(mon, "_flushLastPxCache", lambda *_a, **_k: None), patch(
+                "trading.maTouchLive.onMaTouchTick", lambda *_a, **_k: None,
+            ), patch("trading.watchRtMonitor.datetime") as clock:
+                clock.now.return_value.strftime.return_value = "20261125"
+                mon._onWsMessage({"trnm": "REAL", "data": [{
+                    "type": "0B",
+                    "item": "900290",
+                    "values": {"10": "9632", "12": "-3.68", "20": "090100"},
+                }]})
+            self.assertNotIn("prevClose", mon._lastPx["900290"])
+            self.assertEqual(mon._lastPx["900290"]["krxFlu"], "-3.68")
+            self.assertEqual(mon._lastPx["900290"]["tickYmd"], "20261125")
+        finally:
+            mon._pxCacheLoaded = savedFlag
+            mon._lastPx.clear()
+            mon._lastPx.update(savedPx)
+            mon._regCodes[:] = savedCodes
 
 
 if __name__ == "__main__":

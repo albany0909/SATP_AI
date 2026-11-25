@@ -128,6 +128,9 @@ def _loadLastPxCache():
                 stamped = quoteStampDay(info)
                 if stamped:
                     info["tickYmd"] = stamped
+                # 파일의 prevClose 는 날짜가 바뀌면 틀린 등락률을 되돌린다. 복원하지 않는다.
+                info.pop("prevClose", None)
+                info.pop("prevCloseYmd", None)
                 _lastPx[cd] = info
                 restored += 1
         if restored:
@@ -172,6 +175,8 @@ def _flushLastPxCache(force=False):
                 row.pop("tickYmd", None)
             elif not row.get("tickYmd"):
                 row["tickYmd"] = datetime.now().strftime("%Y%m%d")
+            row.pop("prevClose", None)
+            row.pop("prevCloseYmd", None)
             snap[cd] = row
         pending = _pxSavePending
         _pxSavePending = False
@@ -535,6 +540,20 @@ def fillMissingFluQuotes(codes, pxByCd=None, force=False):
             if flu is None:
                 continue
             _applyFlu(cd, f"{float(flu):+.2f}")
+            try:
+                from utils.liveOhlcSnap import peekLiveOhlc
+
+                snap = peekLiveOhlc(cd) or {}
+                base = snap.get("basePrc")
+                if base:
+                    with _lock:
+                        info = dict(_lastPx.get(cd) or {})
+                        if str(info.get("prevCloseYmd") or "")[:8] != today:
+                            info["prevClose"] = base
+                            info["prevCloseYmd"] = today
+                            _lastPx[cd] = info
+            except Exception:
+                pass
             # 공식값으로 채웠으면 dayClose 오등락 잔상을 끊는다
             with _lock:
                 info = dict(_lastPx.get(cd) or {})
@@ -1385,6 +1404,12 @@ def _onWsMessage(msg):
                 _unmatchedTicks += 1
                 continue
             info = dict(_lastPx.get(stkCd) or {})
+            from trading.pbkQuotePlan import quoteStampDay
+
+            carried = quoteStampDay(info) or str(info.get("tickYmd") or "")[:8]
+            if carried and carried != today:
+                info.pop("prevClose", None)
+                info.pop("prevCloseYmd", None)
             tmRaw = _nzQuote(vals.get("20"))
             if cachedQuoteIsNewer(info, today, tmRaw):
                 continue
