@@ -4,7 +4,7 @@
   "name": "실적 장대양봉 눌림목",
   "englishName": "Earnings Pullback Two Step",
   "status": "test",
-  "version": 8,
+  "version": 9,
   "enabled": false,
   "timeframe": "D",
   "docPath": "strategies/docs/pullbackTwoStep_v1.md",
@@ -41,7 +41,7 @@
     "exit": "첫 매수일 f를 0번째로 세어 f+10 거래일 시가에 전량 매도. f+11이 아니다. 익절은 없다.",
     "stop": "장중 손절 없음. 15:15 이후 장 마감까지 첫 사이클에서 하루 한 번, 당일 현재가가 평단×0.80 이하일 때만 전량 매도. 그 분에 사이클이 없어도 놓치지 않는다. 재기동 후에는 같은 날 다시 판단하지 않는다. 전일 krx 종가는 쓰지 않는다. 현재가를 모르면 그 종목의 손절은 미루고 로그만 남긴다. 그 전이면 저가가 더 낮아도 팔지 않는다.",
     "exclude": "하락장 절반 비중과 급락 다음날 매수 휴식은 넣지 않는다. KODEX200은 REG01 상승장에서만 3단계로 산다. 하락장은 L=0이라 목표 0까지 줄이고 CD금리 ETF는 사지 않는다. 한도가 줄었다는 이유만으로 KODEX를 팔지 않는다. 당일 주식 매도대금은 그날 KODEX 재매수에 쓰지 않는다.",
-    "cap": "E는 D+2 추정예수금+주식 평가+KODEX 평가. 08:50에 한 번 정하고 장중에는 그 E를 유지한다. 평가가 0이거나 TR이 실패하면 신규만 멈추고 손절·청산은 계속한다. 직전 E는 재사용하지 않는다. pbkFundSellKodex 기본 true면 주문가능금액이 슬롯보다 작을 때 KODEX를 먼저 판다."
+    "cap": "E는 D+2 추정예수금+주식 평가+KODEX 평가. 08:50에 한 번 정하고 장중에는 그 E를 유지한다. 주식 노출은 아침 보유 평가(stkBase)+오늘 낸 매수 주문(실체결 우선)이고 사이클마다 누적하지 않는다. 오늘 낸 2차 주문은 예약에서 뺀다. 평가가 0이거나 TR이 실패하면 신규만 멈추고 손절·청산은 계속한다. 직전 E는 재사용하지 않는다. pbkFundSellKodex 기본 true면 주문가능금액이 슬롯보다 작을 때 KODEX를 먼저 판다."
   },
   "fill": {
     "entryPrice": "min(open, priorMa)",
@@ -55,5 +55,5 @@
     "stratLive.PBK01.paperOnly": true,
     "pbkFundSellKodex": true
   },
-  "notes": "v8 15:15 이후 하루 한 번 손절. 비율 0.80은 그대로. v7 한도·슬롯·KODEX는 유지. 기본 비활성. AI_ALG_VER_HIST 는 배포 때 recordAlgVerBump 로 넣는다."
+  "notes": "v9 한도 누적 수정: stkBase+오늘 주문, 실체결 기준, 오늘 2차 예약 제외. v8 15:15 이후 하루 한 번 손절. 비율 0.80은 그대로. v7 한도·슬롯·KODEX는 유지. 기본 비활성. AI_ALG_VER_HIST 는 배포 때 recordAlgVerBump 로 넣는다."
 }

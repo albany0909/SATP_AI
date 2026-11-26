@@ -111,7 +111,7 @@ class PbkCap70Test(unittest.TestCase):
         down, _zero = planKodexOrders(0, 2, 3_000_000, 10, 10000, 0, bear=True, levelFell=True)
         self.assertEqual(down[0]["side"], "SELL")
         sameDay = settleCapDay(
-            {"cap70": {"ok": True, "ymd": "20261125", "E": 49_250_000, "stkExpo": 10_000_000, "kodexVal": 0, "orderable": 8_000_000, "cashD2": 8_000_000, "L": 1}},
+            {"cap70": {"ok": True, "ymd": "20261125", "E": 49_250_000, "stkBase": 10_000_000, "stkExpo": 10_000_000, "kodexVal": 0, "orderable": 8_000_000, "cashD2": 8_000_000, "L": 1}},
             "20261125",
             "103000",
             {"d2_entra": "1"},

@@ -1615,6 +1615,25 @@ _capLoggedYmd = ""
 _capAlertYmd = ""
 
 
+def _firstCapBase(path, day):
+    """오늘 처음 저장된 CAP70 스냅샷의 stkExpo. 그 줄은 08:50 계좌 값 그대로다. 없으면 None."""
+    from utils.pbk01Store import readRows
+
+    for row in readRows(path):
+        if row.get("kind") != "state":
+            continue
+        cap = (row.get("park") or {}).get("cap70")
+        if not isinstance(cap, dict) or str(cap.get("ymd") or "") != day or not cap.get("ok"):
+            continue
+        if cap.get("stkBase") not in (None, ""):
+            return int(cap["stkBase"])
+        try:
+            return int(float(cap.get("stkExpo") or 0))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def refreshCap70(now=None, positions=None, regime="", kodexBars=None, kodexPx=0, account=None):
     """오늘 한도를 한 번 정한다. 이미 있으면 그 E 를 유지한다. DB 는 열지 않는다."""
     global _capLoggedYmd, _capAlertYmd
@@ -1632,6 +1651,13 @@ def refreshCap70(now=None, positions=None, regime="", kodexBars=None, kodexPx=0,
         if isinstance(pos, dict) and pos.get("amtOk") is False:
             blocked.append(pos.get("stkCd"))
     prior = park.get("cap70") if isinstance(park.get("cap70"), dict) else {}
+    baseHint = None
+    if str(prior.get("ymd") or "") == day and prior.get("ok") and prior.get("E") and prior.get("stkBase") in (None, ""):
+        # v8 이하가 쌓은 옛 스냅샷. stkExpo 는 사이클마다 부풀었으므로 쓰지 않고 오늘 첫 기록을 기준으로 삼는다.
+        baseHint = _firstCapBase(path, day)
+        if baseHint is None or baseHint > int(prior.get("stkExpo") or 0):
+            baseHint = None
+            prior = {}
     have = str(prior.get("ymd") or "") == day and prior.get("ok") and prior.get("E")
     acct = account
     if acct is None and not have and moment.strftime("%H%M%S") >= "085000":
@@ -1648,29 +1674,26 @@ def refreshCap70(now=None, positions=None, regime="", kodexBars=None, kodexPx=0,
         else:
             acct = {}
     closes = priorCloses(kodexBars or [], day)
-    todayExpo = 0
-    for pos in positions or []:
-        if not isinstance(pos, dict):
-            continue
-        for key in ("leg1", "leg2"):
-            leg = pos.get(key) if isinstance(pos.get(key), dict) else {}
-            if str(leg.get("ymd") or "")[:8] != day:
-                continue
-            try:
-                todayExpo += int(float(leg.get("fillPx") or 0) * int(leg.get("qty") or leg.get("filledQty") or 0))
-            except (TypeError, ValueError):
-                continue
+    from trading.pbkCap70 import todayBuys
+
+    bought = todayBuys(positions, day)
+    todayExpo = bought["total"]
+    parkIn = park
+    if not have and isinstance(park.get("cap70"), dict) and park["cap70"].get("ymd") == day:
+        parkIn = {**park, "cap70": {}}
     got = settleCapDay(
-        park,
+        parkIn,
         day,
         moment.strftime("%H%M%S"),
         acct or {},
         regime,
         closes,
-        reservedWon(positions, blocked),
+        reservedWon(positions, blocked, today=day),
         fundSellEnabled(),
         kodexPx,
         todayExpo=todayExpo,
+        todayFilled=bought["filled"],
+        baseHint=baseHint,
     )
     if got.get("alert") and _capAlertYmd != day:
         _capAlertYmd = day

@@ -11,7 +11,7 @@ import re
 
 ALG_CD = "PBK01"
 STRAT_ID = "pullbackTwoStep_v1"
-ALG_VER = 8
+ALG_VER = 9
 NAME_KR = "실적 장대양봉 눌림목"
 ENGLISH_NAME = "Earnings Pullback Two Step"
 
@@ -965,7 +965,7 @@ def algVerHistPayload(gitHash="", ymd="2026-11-25"):
         "stratId": STRAT_ID,
         "algVer": ALG_VER,
         "ymd": ymd,
-        "note": "v8 15:15 이후 첫 사이클에서 -20% 손절을 하루 한 번 본다. 그 분에 사이클이 없어도 장 마감 전까지 판단하고, 재기동 뒤에는 같은 날 다시 보지 않는다. 비율 0.80은 그대로.",
+        "note": "v9 모의 전용. 한도 누적 오류 수정. 주식 노출은 아침 보유 평가(stkBase)에 오늘 주문분만 더하고 사이클마다 다시 쌓지 않는다. 오늘 주문 노출은 실체결(brokerQty·brokerAvg) 기준이고 값이 없을 때만 fillPx를 쓴다. 오늘 이미 낸 2차 주문은 예약에서 뺀다. 재기동 때 stkBase 없는 옛 스냅샷은 오늘 첫 기록으로 복원한다. 한도 70%·6슬롯 규칙은 그대로.",
         "gitHash": str(gitHash or "")[:16],
         "src": "manual",
     }

@@ -18,6 +18,10 @@ KODEX_BAND = 0.9
 KODEX_MIN_DIFF = 100_000
 CAP_HM = "085000"
 
+NOTE_V9 = (
+    "v9 모의 전용. 한도 누적 오류 수정. 주식 노출은 아침 보유 평가(stkBase)에 오늘 주문분만 더하고 사이클마다 다시 쌓지 않는다. 오늘 주문 노출은 실체결(brokerQty·brokerAvg) 기준이고 값이 없을 때만 fillPx를 쓴다. 오늘 이미 낸 2차 주문은 예약에서 뺀다. 재기동 때 stkBase 없는 옛 스냅샷은 오늘 첫 기록으로 복원한다. 한도 70%·6슬롯 규칙은 그대로."
+)
+
 NOTE_V7 = (
     "v7 모의 전용. 총평가 E의 70%가 한도. 신규는 최대 6슬롯, 머리룸 600만 미만이면 안 산다. "
     "KODEX200은 상승장에서 3단계(5거래일·MA20/MA60)로만 사고, 상승장 전액 주차는 하지 않는다. "
@@ -82,8 +86,11 @@ def nominalSlot(scale):
     return BOOST_SLOT if boosted else SLOT_SIZE
 
 
-def reservedWon(positions, blockedCodes=None, slotKrw=SLOT_SIZE):
-    """아직 안 산 2차. 대금 미달로 막힌 종목은 예약 0."""
+def reservedWon(positions, blockedCodes=None, slotKrw=SLOT_SIZE, today=""):
+    """아직 안 산 2차. 대금 미달로 막힌 종목은 예약 0.
+
+    today 가 있으면 오늘 이미 주문한 2차는 뺀다. 그 금액은 todayBuys 에 들어 있다.
+    """
     from strategies.impl.pullbackTwoStep import legMoney, scaledSlot
 
     blocked = {str(code) for code in (blockedCodes or [])}
@@ -95,6 +102,8 @@ def reservedWon(positions, blockedCodes=None, slotKrw=SLOT_SIZE):
         if code in blocked or pos.get("amtOk") is False:
             continue
         leg2 = pos.get("leg2") if isinstance(pos.get("leg2"), dict) else {}
+        if today and leg2 and str(leg2.get("ymd") or "")[:8] == str(today)[:8]:
+            continue
         filled = int(leg2.get("filledQty") or 0)
         remain = int(leg2.get("remainQty") or 0)
         if leg2.get("settled") and filled > 0 and remain <= 0:
@@ -112,6 +121,83 @@ def reservedWon(positions, blockedCodes=None, slotKrw=SLOT_SIZE):
             filledWon = 0
         total += max(0, int(planned) - filledWon)
     return total
+
+
+def _legPx(leg):
+    for key in ("fillPx", "limitPx"):
+        try:
+            px = float(leg.get(key) or 0)
+        except (TypeError, ValueError):
+            px = 0.0
+        if px > 0:
+            return px
+    return 0.0
+
+
+def todayBuys(positions, day):
+    """오늘 낸 매수 주문의 노출. 실체결은 brokerQty·brokerAvg, 미체결 몫과 값이 없을 때만 fillPx.
+
+    total = 체결분(실제 평균) + 아직 안 찬 주문분(계획가). filled = 체결분만.
+    오늘 주문이 없거나 청산·해제된 종목은 0. 08:50 보유에 들어 있던 수량은 세지 않는다.
+    """
+    today = str(day or "")[:8]
+    total = 0
+    filled = 0
+    for pos in positions or []:
+        if not isinstance(pos, dict) or pos.get("closed") or pos.get("released"):
+            continue
+        planQty = 0
+        planWon = 0.0
+        priorQty = 0
+        priorWon = 0.0
+        for key in ("leg1", "leg2"):
+            leg = pos.get(key) if isinstance(pos.get(key), dict) else {}
+            if not leg:
+                continue
+            px = _legPx(leg)
+            if str(leg.get("ymd") or "")[:8] == today:
+                try:
+                    qty = int(leg.get("qty") or leg.get("filledQty") or 0)
+                except (TypeError, ValueError):
+                    qty = 0
+                if qty > 0:
+                    planQty += qty
+                    planWon += qty * px
+            elif leg.get("settled"):
+                try:
+                    got = int(leg.get("filledQty") or 0)
+                except (TypeError, ValueError):
+                    got = 0
+                priorQty += max(0, got)
+                priorWon += max(0, got) * px
+        if planQty <= 0:
+            continue
+        planAvg = planWon / planQty
+        brokerQty = pos.get("brokerQty")
+        try:
+            avg = float(pos.get("brokerAvg") or 0)
+        except (TypeError, ValueError):
+            avg = 0.0
+        if brokerQty is None or avg <= 0:
+            total += int(planWon)
+            continue
+        try:
+            held = int(brokerQty or 0)
+        except (TypeError, ValueError):
+            held = 0
+        gotQty = min(planQty, max(0, held - priorQty))
+        if gotQty <= 0:
+            total += int(planWon)
+            continue
+        gotPx = avg
+        if priorQty > 0:
+            cost = avg * held - priorWon
+            mixed = cost / gotQty
+            gotPx = mixed if planAvg > 0 and 0.5 * planAvg <= mixed <= 1.5 * planAvg else planAvg
+        gotWon = int(gotQty * gotPx)
+        total += gotWon + int(max(0, planQty - gotQty) * planAvg)
+        filled += gotWon
+    return {"total": int(total), "filled": int(filled)}
 
 
 def splitHoldValues(holds, kodexPx=None):
@@ -454,20 +540,29 @@ def shadowV6(names, regime, cash, px, taken):
     return f"V6SHADOW|slot5|nocap|buys={','.join(want)}|kodexQty={kodex}|v7={held}|orders=0"
 
 
-def settleCapDay(saved, ymd, hm, account, regime, closes, reserved, fundSell=True, kodexPx=0, todayExpo=0):
+def settleCapDay(saved, ymd, hm, account, regime, closes, reserved, fundSell=True, kodexPx=0, todayExpo=0, todayFilled=None, baseHint=None):
     """그날 E 는 한 번만. 08:50 전이고 오늘 값이 없으면 기다린다.
 
     저장된 오늘 E 가 있으면 장중에 다시 계산하지 않는다.
+    주식 노출은 stkBase(오늘 아침 보유 평가) + todayExpo(오늘 주문). 매 사이클 stkBase 에서 다시 계산해 누적하지 않는다.
+    stkBase 가 없는 옛 스냅샷은 baseHint(오늘 첫 기록)가 있을 때만 이어 쓰고, 없으면 다시 계산한다.
     """
     saved = dict(saved or {})
     day = str(ymd or "")
     textHm = "".join(ch for ch in str(hm or "") if ch.isdigit()).zfill(6)[-6:]
     prior = saved.get("cap70") if isinstance(saved.get("cap70"), dict) else {}
     reuse = str(prior.get("ymd") or "") == day and prior.get("ok") and prior.get("E")
+    if reuse and prior.get("stkBase") in (None, ""):
+        hint = _intOrNone(baseHint)
+        if hint is None or hint < 0:
+            reuse = False
     if not reuse and textHm < CAP_HM:
         return {"ok": False, "wait": True, "reason": "CAP_WAIT", "cap70": prior, "logs": [], "state": saved}
     if reuse:
         equity = dict(prior)
+        base = _intOrNone(prior.get("stkBase"))
+        if base is None:
+            base = _intOrNone(baseHint)
     else:
         equity = equityFromBody(account.get("body") if isinstance(account, dict) and "body" in account else account, account.get("holds") if isinstance(account, dict) else None)
         if not equity.get("ok"):
@@ -480,9 +575,9 @@ def settleCapDay(saved, ymd, hm, account, regime, closes, reserved, fundSell=Tru
                 "state": saved,
                 "alert": True,
             }
-    stk = int(equity.get("stkExpo") or 0)
-    if reuse:
-        stk += int(todayExpo or 0)
+        # 계좌 평가에는 오늘 체결분이 이미 들어 있다. 기준값은 그것을 뺀 아침 보유.
+        base = max(0, int(equity.get("stkExpo") or 0) - int(todayFilled or 0))
+    stk = int(base or 0) + int(todayExpo or 0)
     kodexVal = int(equity.get("kodexVal") or 0)
     res = int(reserved or 0)
     expo = exposureOf(stk, res, kodexVal)
@@ -499,6 +594,8 @@ def settleCapDay(saved, ymd, hm, account, regime, closes, reserved, fundSell=Tru
         "ymd": day,
         "E": int(equity["E"]),
         "cap": capWon(equity["E"]),
+        "stkBase": int(base or 0),
+        "todayExpo": int(todayExpo or 0),
         "stkExpo": stk,
         "reserved": res,
         "kodexVal": kodexVal,
@@ -525,6 +622,15 @@ def settleCapDay(saved, ymd, hm, account, regime, closes, reserved, fundSell=Tru
     if state.get("restored") and not reuse:
         logs.append(f"KODEX_LEVEL_RESTORE|L={level}")
     return {"ok": True, "wait": False, "reason": "", "cap70": snap, "logs": logs, "state": state, "alert": False}
+
+
+def _intOrNone(raw):
+    if raw in (None, ""):
+        return None
+    try:
+        return int(float(raw))
+    except (TypeError, ValueError):
+        return None
 
 
 def makeCapGate(snap, slots, kodexQty=0, kodexPx=0):
