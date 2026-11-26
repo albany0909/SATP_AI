@@ -60,13 +60,29 @@ def deskLogFilePath(ymd=None) -> Path:
     return deskLogsDir() / f"SATP_{day}.log"
 
 
+def closeDeskFileLog():
+    """일자 파일 핸들을 닫는다. 테스트의 임시 폴더가 Windows에서 지워지려면 필요하다."""
+    global _lastYmd, _lastFp
+    with _lock:
+        if _lastFp is not None:
+            try:
+                _lastFp.flush()
+                _lastFp.close()
+            except Exception:
+                pass
+            _lastFp = None
+        _lastYmd = ""
+
+
 def appendDeskFileLog(line, tag=""):
     """
     매매창 로그 한 줄을 당일 파일에 append (재시작해도 같은 SATP_YYYYMMDD.log 이어쓰기).
     tag 예: TRADE / ERR / TERM / RUN
     """
     global _lastYmd, _lastFp
-    text = str(line or "").rstrip("\n")
+    from utils.logRedact import redactSecrets
+
+    text = redactSecrets(str(line or "")).rstrip("\n")
     if not text.strip():
         return
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -76,8 +92,13 @@ def appendDeskFileLog(line, tag=""):
     try:
         with _lock:
             path = deskLogFilePath(ymd)
-            # 일자 바뀌면 핸들 교체
-            if _lastFp is not None and ymd != _lastYmd:
+            # 일자나 경로가 바뀌면 핸들 교체
+            same = (
+                _lastFp is not None
+                and ymd == _lastYmd
+                and Path(getattr(_lastFp, "name", "") or "") == Path(path)
+            )
+            if _lastFp is not None and not same:
                 try:
                     _lastFp.close()
                 except Exception:

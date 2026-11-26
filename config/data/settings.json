@@ -42,15 +42,28 @@
     },
     "LDR01": {
       "enabled": false,
-      "paperOnly": false
+      "paperOnly": true
     },
     "MMG01": {
       "enabled": false,
-      "paperOnly": false
+      "paperOnly": true
     },
     "RAM01": {
       "enabled": false,
       "paperOnly": false
+    },
+    "ATR01": {
+      "enabled": false,
+      "paperOnly": true
+    },
+    "PBK01": {
+      "enabled": false,
+      "paperOnly": true,
+      "capitalKrw": 30000000,
+      "slotCount": 5,
+      "scanHm": "08:40",
+      "universeLoad": true,
+      "dartLookbackDays": 120
     }
   },
   "batchSched": {

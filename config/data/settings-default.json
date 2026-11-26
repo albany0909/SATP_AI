@@ -6,14 +6,14 @@
   "tprPct": 5,
   "slrPct": -10,
   "maTouchLive": {
-    "enabled": true,
-    "paperOnly": false,
+    "enabled": false,
+    "paperOnly": true,
     "buyAmt5": 1000000,
     "buyAmt10": 1000000,
     "buyAmt15": 1000000
   },
   "deskTradeExch": "KRX",
-  "deskTradeMode": "real",
+  "deskTradeMode": "paper",
   "deskRole": "main",
   "deskDataViaServer": false,
   "stpServerUrl": "http://satp1.iptime.org:8080/STP/tran",
@@ -23,13 +23,34 @@
   ],
   "stratLive": {
     "MTS01": {
+      "enabled": false,
       "buyAmt5": 1000000,
       "buyAmt10": 1000000,
       "buyAmt15": 1000000
     },
     "MSE01": {
       "enabled": false,
-      "buyAmtWon": 2000000
+      "buyAmtWon": 2000000,
+      "paperOnly": true
+    },
+    "LDR01": {
+      "paperOnly": true
+    },
+    "MMG01": {
+      "paperOnly": true
+    },
+    "ATR01": {
+      "enabled": false,
+      "paperOnly": true
+    },
+    "PBK01": {
+      "enabled": false,
+      "paperOnly": true,
+      "capitalKrw": 30000000,
+      "slotCount": 5,
+      "scanHm": "08:40",
+      "universeLoad": true,
+      "dartLookbackDays": 120
     }
   },
   "batchSched": {

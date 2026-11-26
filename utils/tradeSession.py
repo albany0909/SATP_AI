@@ -48,7 +48,7 @@ def isModeLoggedIn(mode=None):
     return runtimeState.isPaperLoggedIn()
 
 
-def getOrdSession(paperOnly=False):
+def getOrdSession(paperOnly=True):
     """
     주문용 (hostUrl, token, tokenType) 또는 None.
     paperOnly=True 이고 모드가 real 이면 None (실전 주문 금지).
@@ -110,7 +110,7 @@ def getWsTradeSession():
     return None
 
 
-def allowAutoOrders(paperOnly=False):
+def allowAutoOrders(paperOnly=True):
     """자동매매 주문을 내도 되는지."""
     return getOrdSession(paperOnly=paperOnly) is not None
 

@@ -44,6 +44,53 @@ ON DUPLICATE KEY UPDATE
 """
 
 
+_INSERT_IGNORE_SQL = """
+INSERT IGNORE INTO AI_DAY_STK_PRC (
+  STK_CD, TRADE_DT, INDC_TP,
+  OPEN_PRC, HIGH_PRC, LOW_PRC, CLOSE_PRC,
+  PRED_RT, FLU_RT, TRDE_QTY, AMT_MN,
+  CRD_RT, IND_VAL, ORGN_VAL, FOR_QTY, FRGN_VAL, PRM_VAL,
+  FOR_RT, FOR_POSS, FOR_WGHT,
+  FOR_NETPRPS, ORGN_NETPRPS, IND_NETPRPS, CRD_REMN_RT
+) VALUES (
+  %(STK_CD)s, %(TRADE_DT)s, %(INDC_TP)s,
+  %(OPEN_PRC)s, %(HIGH_PRC)s, %(LOW_PRC)s, %(CLOSE_PRC)s,
+  %(PRED_RT)s, %(FLU_RT)s, %(TRDE_QTY)s, %(AMT_MN)s,
+  %(CRD_RT)s, %(IND_VAL)s, %(ORGN_VAL)s, %(FOR_QTY)s, %(FRGN_VAL)s, %(PRM_VAL)s,
+  %(FOR_RT)s, %(FOR_POSS)s, %(FOR_WGHT)s,
+  %(FOR_NETPRPS)s, %(ORGN_NETPRPS)s, %(IND_NETPRPS)s, %(CRD_REMN_RT)s
+)
+"""
+
+
+def insertIgnoreDayStkPrcRows(rows):
+    """없는 날짜만 넣는다. 이미 있는 AI_DAY_STK_PRC 행은 고치지 않는다."""
+    if not rows:
+        return {"ok": True, "upsertCnt": 0, "insertOnly": True}
+    conn = None
+    try:
+        conn = openDbConn()
+        with conn.cursor() as cur:
+            cur.executemany(_INSERT_IGNORE_SQL, rows)
+            affected = cur.rowcount
+        conn.commit()
+        termLog(f"[AI_DAY_STK_PRC] INSERT IGNORE {len(rows)}건 (affected={affected})")
+        return {"ok": True, "upsertCnt": int(affected or 0), "insertOnly": True, "affected": affected}
+    except Exception as err:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return {"ok": False, "errMsg": f"DB 적재 실패: {err}", "upsertCnt": 0, "insertOnly": True}
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def upsertDayStkPrcRows(rows):
     """
     일별주가 row 목록을 AI_DAY_STK_PRC에 UPSERT.

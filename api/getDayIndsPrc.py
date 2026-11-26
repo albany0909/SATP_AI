@@ -264,32 +264,46 @@ def fetchDayIndsPrcRange(
     reachedPastStart = False
     pageUsed = 0
     restartCnt = 0
+    from utils.chartUnifFetch import fetchWithRetry
 
     while pageUsed < MAX_CONT_PAGES and restartCnt <= MAX_RESTARTS:
         if pageUsed > 0:
             time.sleep(waitSec)
 
-        try:
-            res = getDayIndsPrc(
-                hostUrl,
-                token,
-                code,
-                qryDt,
-                contYn=contYn,
-                nextKey=nextKey,
-                tokenType=tokenType,
-            )
-        except Exception as err:
-            return {"ok": False, "errMsg": f"요청 실패: {err}"}
+        def _onePage():
+            try:
+                res = getDayIndsPrc(
+                    hostUrl,
+                    token,
+                    code,
+                    qryDt,
+                    contYn=contYn,
+                    nextKey=nextKey,
+                    tokenType=tokenType,
+                )
+            except Exception as err:
+                return {"ok": False, "errMsg": f"요청 실패: {err}"}
+            ok, parsed = _parseBody(res)
+            if not ok:
+                return {
+                    "ok": False,
+                    "errMsg": parsed.get("errMsg"),
+                    "body": parsed.get("body"),
+                    "status": getattr(res, "status_code", None),
+                }
+            return {"ok": True, "parsed": parsed, "res": res}
 
-        pageUsed += 1
-        ok, parsed = _parseBody(res)
-        if not ok:
+        part = fetchWithRetry(_onePage, label=f"{code} ka20006")
+        if not part.get("ok"):
             return {
                 "ok": False,
-                "errMsg": parsed.get("errMsg"),
-                "body": parsed.get("body"),
+                "errMsg": part.get("errMsg"),
+                "body": part.get("body"),
             }
+        parsed = part["parsed"]
+        res = part["res"]
+
+        pageUsed += 1
 
         rows = parsed.get("inds_dt_pole_qry") or []
         pageOldest = None

@@ -58,6 +58,149 @@ def upsertDayIndsPrcRows(rows):
                 pass
 
 
+_INSERT_IGNORE_SQL = """
+INSERT IGNORE INTO AI_DAY_INDS_PRC (
+  MKT_TP, INDS_CD, TRADE_DT,
+  OPEN_PRC, HIGH_PRC, LOW_PRC, CLOSE_PRC,
+  TRDE_QTY, TRDE_PRICA, INDS_NM, SRC_TR
+) VALUES (
+  %(MKT_TP)s, %(INDS_CD)s, %(TRADE_DT)s,
+  %(OPEN_PRC)s, %(HIGH_PRC)s, %(LOW_PRC)s, %(CLOSE_PRC)s,
+  %(TRDE_QTY)s, %(TRDE_PRICA)s, %(INDS_NM)s, %(SRC_TR)s
+)
+"""
+
+KOSPI_MKT = "KR"
+KOSPI_CD = "001"
+
+
+def _missingTable(err):
+    text = str(err)
+    return "1146" in text or "doesn't exist" in text.lower() or "존재하지" in text
+
+
+def insertIgnoreDayIndsPrcRows(rows):
+    """없는 날짜만 넣는다. 이미 있는 AI_DAY_INDS_PRC 행은 고치거나 지우지 않는다."""
+    if not rows:
+        return {"ok": True, "upsertCnt": 0, "insertOnly": True}
+    conn = None
+    try:
+        conn = openDbConn()
+        with conn.cursor() as cur:
+            cur.executemany(_INSERT_IGNORE_SQL, rows)
+            affected = cur.rowcount
+        conn.commit()
+        termLog(f"[AI_DAY_INDS_PRC] INSERT IGNORE {len(rows)}건 (affected={affected})")
+        return {
+            "ok": True,
+            "upsertCnt": int(affected or 0),
+            "insertOnly": True,
+            "affected": affected,
+            "store": "AI_DAY_INDS_PRC",
+        }
+    except Exception as err:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return {
+            "ok": False,
+            "errMsg": f"DB 적재 실패: {err}",
+            "upsertCnt": 0,
+            "missingTable": _missingTable(err),
+        }
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def listKospiTradeDates(startDt, endDt, indsCd=KOSPI_CD):
+    """기간 안에 이미 있는 코스피 일자. 테이블이 없으면 missingTable."""
+    conn = None
+    try:
+        conn = openDbConn()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT TRADE_DT
+                FROM AI_DAY_INDS_PRC
+                WHERE MKT_TP=%s AND INDS_CD=%s AND TRADE_DT BETWEEN %s AND %s
+                """,
+                (KOSPI_MKT, str(indsCd), str(startDt), str(endDt)),
+            )
+            rows = cur.fetchall() or []
+        dates = {str(row.get("TRADE_DT") or "")[:8] for row in rows}
+        dates.discard("")
+        return {"ok": True, "dates": dates, "store": "AI_DAY_INDS_PRC"}
+    except Exception as err:
+        return {
+            "ok": False,
+            "errMsg": str(err),
+            "missingTable": _missingTable(err),
+            "dates": set(),
+        }
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def loadKospiDayBars(asOf=None, indsCd=KOSPI_CD):
+    """저장된 코스피 일봉 종가. 판정일 이후는 빼고, 테이블이 없으면 missingTable."""
+    conn = None
+    params = [KOSPI_MKT, str(indsCd)]
+    where = "WHERE MKT_TP=%s AND INDS_CD=%s"
+    day = str(asOf or "").replace("-", "")[:8]
+    if len(day) == 8 and day.isdigit():
+        where += " AND TRADE_DT<=%s"
+        params.append(day)
+    try:
+        conn = openDbConn()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT TRADE_DT, CLOSE_PRC
+                FROM AI_DAY_INDS_PRC
+                {where}
+                ORDER BY TRADE_DT
+                """,
+                params,
+            )
+            rows = cur.fetchall() or []
+        bars = []
+        for row in rows:
+            ymd = str(row.get("TRADE_DT") or "")[:8]
+            if len(ymd) != 8:
+                continue
+            try:
+                close = float(row["CLOSE_PRC"]) if row.get("CLOSE_PRC") is not None else None
+            except (TypeError, ValueError):
+                close = None
+            if close is None:
+                continue
+            bars.append({"tradeDt": ymd, "close": close})
+        return {"ok": True, "bars": bars, "store": "AI_DAY_INDS_PRC"}
+    except Exception as err:
+        return {
+            "ok": False,
+            "errMsg": str(err),
+            "missingTable": _missingTable(err),
+            "bars": [],
+        }
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def _normIndsCd3(raw):
     """업종코드 3자리. DB에 1 로 들어가 있어도 001 로 맞춘다."""
     digits = "".join(ch for ch in str(raw or "") if ch.isdigit())

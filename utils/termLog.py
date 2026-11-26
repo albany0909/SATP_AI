@@ -115,8 +115,11 @@ def termLog(msg):
     여러 줄이면 각 줄 앞에 동일 시각을 붙인다.
     실패·예외 문구는 매매창 오류 탭에도 올린다.
     """
+    from utils.logRedact import installSecretFilters, redactSecrets
+
+    installSecretFilters()
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    text = "" if msg is None else str(msg)
+    text = redactSecrets("" if msg is None else str(msg))
     if _rateLimited(text):
         return
     # 빈 줄도 시각만 남기지 않도록 strip 하지 않고 줄 단위로 처리

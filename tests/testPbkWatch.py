@@ -1,0 +1,401 @@
+"""관심종목 화면은 PBK 후보·보유만. 수집 목록과 백업은 따로 둔다."""
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from strategies.impl.pullbackTwoStep import formatBoardLine, formatCandidateLog
+from utils.pbkWatchScreen import (
+    HOLD_BG,
+    NEAR_BG,
+    TOUCH_BG,
+    applyScreenFill,
+    leg1Filled,
+    nextBuyLine,
+    pbkNearPct,
+    pbkRowTone,
+    backupWatchOnce,
+    bootWatchSelection,
+    collectionCodes,
+    ensurePbkTab,
+    ensureWatchBackup,
+    annotateScreenBars,
+    formatPx,
+    loadScreenRows,
+    maGapText,
+    masAndClose,
+    scrollBarWanted,
+    lookupStkNames,
+    mergeScreenFills,
+    readWatchBackup,
+    resetScreenFills,
+    restoreLegacyWatch,
+    isLiveScreenQuote,
+    screenPrice,
+    screenUsesLiveQuote,
+    sortRoleGroups,
+    touchDelta,
+    unionRows,
+    watchScreenOn,
+)
+from utils.watchDayPrcLoad import collectWatchHoldCds
+
+
+class PbkWatchScreenTest(unittest.TestCase):
+    def test_union_labels_and_paper_guard(self):
+        rows = unionRows(
+            [{"stkCd": "005930", "stkNm": "삼성", "signalDt": "20261104", "expireDt": "20261202"}],
+            [{"stkCd": "009830", "qty": 10, "leg1": {"qty": 1}}],
+            [{"stkCd": "005930", "stkNm": "삼성", "qtyNum": 3}, {"stkCd": "000660", "qty": 0}],
+        )
+        by = {row["stkCd"]: row["role"] for row in rows}
+        self.assertEqual(by["005930"], "보유")
+        self.assertEqual(by["009830"], "보유")
+        self.assertNotIn("000660", by)
+        self.assertEqual([row["stkCd"] for row in rows], ["005930", "009830"])
+        self.assertTrue(watchScreenOn({"deskTradeMode": "paper", "stratLive": {"PBK01": {}}}))
+        self.assertFalse(watchScreenOn({"deskTradeMode": "real", "stratLive": {"PBK01": {}}}))
+        self.assertFalse(watchScreenOn({
+            "deskTradeMode": "paper",
+            "stratLive": {"PBK01": {"watchScreen": False}},
+        }))
+        paper = {"deskTradeMode": "paper", "stratLive": {"PBK01": {"watchScreen": True}}}
+        self.assertEqual(bootWatchSelection("surge", ["pbk", "surge"], paper), "pbk")
+        saved = {"deskTradeMode": "paper", "stratLive": {"PBK01": {"watchScreen": False}}}
+        self.assertEqual(bootWatchSelection("surge", ["pbk", "surge"], saved), "surge")
+        opened = ensurePbkTab([{"key": "surge", "name": "급등주", "bg": "#80DEEA"}], paper)
+        self.assertEqual(opened[0]["key"], "pbk")
+        self.assertEqual(bootWatchSelection("surge", opened, paper), "pbk")
+
+    def test_backup_once_and_collection_stays_wide(self):
+        legacy = [
+            {"STK_CD": "005930", "STK_NM": "삼성전자", "GRP_CD": "WEB"},
+            {"STK_CD": "000660", "STK_NM": "SK하이닉스", "GRP_CD": "RANK"},
+        ]
+        with tempfile.TemporaryDirectory() as folder:
+            first = ensureWatchBackup(folder, reader=lambda: legacy)
+            self.assertEqual(first["cnt"], 2)
+            saved = json.loads(Path(first["path"]).read_text(encoding="utf-8"))
+            self.assertEqual(saved[0]["STK_CD"], "005930")
+            self.assertEqual(saved[0]["GRP_CD"], "WEB")
+            again = backupWatchOnce([{"STK_CD": "111111"}], folder)
+            self.assertEqual(again["skipped"], "exists")
+            self.assertEqual(readWatchBackup(folder)[1]["STK_NM"], "SK하이닉스")
+            empty = ensureWatchBackup(folder, reader=lambda: [])
+            self.assertEqual(empty["skipped"], "exists")
+        screen = unionRows([{"stkCd": "263860"}], [], [])
+        wide = collectionCodes(legacy)
+        self.assertIn("005930", wide)
+        self.assertIn("069500", wide)
+        self.assertIn("001", wide)
+        self.assertNotIn("263860", wide)
+        self.assertEqual(screen[0]["stkCd"], "263860")
+        self.assertIn("listActiveWatch", Path("utils/watchDayPrcLoad.py").read_text(encoding="utf-8"))
+        self.assertIn("def collectWatchHoldCds", Path("utils/watchDayPrcLoad.py").read_text(encoding="utf-8"))
+        self.assertTrue(callable(collectWatchHoldCds))
+        delta = touchDelta(["005930", "000660"], ["263860", "005930"], ["000660"])
+        self.assertEqual(delta["added"], ["263860"])
+        self.assertEqual(delta["removed"], [])
+        drop = touchDelta(["263860"], [], [])
+        self.assertEqual(drop["removed"], ["263860"])
+        self.assertIn("def restoreLegacyWatch", Path("utils/pbkWatchScreen.py").read_text(encoding="utf-8"))
+        self.assertTrue(callable(restoreLegacyWatch))
+
+    def test_screen_reads_saved_candidates(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "pbk01_state.jsonl"
+            path.write_text(json.dumps({
+                "kind": "state",
+                "candidates": [{"stkCd": "263860", "signalDt": "20261112", "expireDt": "20261231"}],
+                "positions": [{"stkCd": "009830", "qty": 4, "leg1": {"qty": 1}}],
+            }) + "\n", encoding="utf-8")
+            rows = loadScreenRows(path, accountHolds=[{"stkCd": "035420", "qtyNum": 2, "stkNm": "네이버"}])
+            by = {row["stkCd"]: row["role"] for row in rows}
+            self.assertEqual(by["263860"], "후보")
+            self.assertEqual(by["009830"], "보유")
+            self.assertEqual(by["035420"], "보유")
+
+    def test_board_line_and_live_price(self):
+        line = formatBoardLine(
+            [{"stkCd": "263860", "ma5": 32000}, {"stkCd": "005930"}],
+            [{"stkCd": "009830", "qty": 4}],
+            "08:40:12",
+        )
+        self.assertEqual(line, "[PBK01] 후보 2건 · 보유 1/5 · 최근 재스캔 08:40")
+        self.assertNotIn("\n", line)
+        self.assertNotIn("263860", line)
+        detail = formatCandidateLog([{"stkCd": "263860", "ma5": 32000, "ma20": 30000, "expireDt": "20261231"}])
+        self.assertIn("263860", detail)
+        self.assertEqual(formatPx(13800000000), "13,800,000,000")
+        self.assertEqual(formatPx(None), "-")
+        self.assertEqual(formatPx("-32700"), "32,700")
+        self.assertEqual(formatPx("+32700"), "32,700")
+        self.assertEqual(formatPx(0), "-")
+        self.assertEqual(formatPx(""), "-")
+        live = screenPrice({"src": "0B", "curPrc": "-32700"}, closePx=25800, inSession=True)
+        self.assertEqual(live, 32700)
+        self.assertEqual(formatPx(live), "32,700")
+        down = {"role": "후보", "holding": False, "ma5": 32000, "ma20": 28000}
+        self.assertEqual(pbkRowTone(down, live, None, 3)["tone"], "near")
+        live = screenPrice({"src": "0B", "curPrc": "33300"}, closePx=25800, inSession=True)
+        closed = screenPrice({"src": "0B", "curPrc": "33300"}, closePx=25800, inSession=False)
+        self.assertEqual(live, 33300)
+        self.assertEqual(closed, 25800)
+        seeded = screenPrice({"src": "dayClose", "curPrc": "25800"}, inSession=False)
+        self.assertEqual(seeded, 25800)
+        self.assertIsNone(screenPrice({"src": "0B", "curPrc": "33300"}, inSession=False))
+        self.assertFalse(isLiveScreenQuote({"src": "dayClose", "curPrc": "25800"}))
+        self.assertTrue(isLiveScreenQuote({"src": "0B", "curPrc": "33300"}))
+        self.assertTrue(isLiveScreenQuote({"curPrc": "33300"}))
+        from datetime import datetime
+        sunday = datetime(2026, 11, 22, 9, 4)
+        holiday = datetime(2026, 12, 25, 10, 0)
+        monday = datetime(2026, 11, 23, 10, 0)
+        self.assertFalse(screenUsesLiveQuote(sunday))
+        self.assertFalse(screenUsesLiveQuote(holiday))
+        with patch("config.settingsStore.isWithinMktHours", return_value=False):
+            self.assertFalse(screenUsesLiveQuote(monday))
+        with patch("config.settingsStore.isWithinMktHours", return_value=True):
+            self.assertTrue(screenUsesLiveQuote(monday))
+            self.assertFalse(screenUsesLiveQuote(sunday))
+        self.assertEqual(maGapText(12340, 11945), "(-3.2%)")
+        self.assertEqual(maGapText(12340, 12340), "")
+        self.assertEqual(maGapText(12340, None), "")
+        rows = unionRows(
+            [{"stkCd": "263860", "ma5": 32000, "ma20": 30000, "expireDt": "20261231"}],
+            [],
+            [],
+        )
+        self.assertEqual(rows[0]["ma5"], 32000)
+        self.assertEqual(rows[0]["ma20"], 30000)
+        self.assertEqual(scrollBarWanted(False, True), {"showBar": False, "showHandle": False})
+        self.assertEqual(scrollBarWanted(True, False), {"showBar": True, "showHandle": False})
+        self.assertEqual(scrollBarWanted(True, True), {"showBar": True, "showHandle": True})
+        bars = [{"tradeDt": f"202611{day:02d}", "close": 1000 + day} for day in range(1, 26)]
+        ma5, ma20, close = masAndClose(bars, "20261125")
+        self.assertEqual(close, 1025)
+        self.assertIsNotNone(ma5)
+        self.assertIsNotNone(ma20)
+        held = [
+            {"stkCd": "300120", "role": "보유", "ma5": None, "ma20": None},
+            {"stkCd": "005930", "role": "후보", "ma5": 1, "ma20": 2},
+        ]
+        annotateScreenBars(held, {"300120": bars, "005930": bars}, "20261125")
+        self.assertEqual(held[0]["closePx"], 1025)
+        self.assertEqual(held[0]["ma5"], 1023)
+        self.assertEqual(held[1]["ma5"], 1)
+        self.assertEqual(held[1]["ma20"], 2)
+        self.assertEqual(maGapText(1023, 1025), "")
+        self.assertEqual(maGapText(1023, 1000), "(-2.2%)")
+
+    def test_name_falls_through_master_watch_then_kiwoom(self):
+        calls = []
+
+        def master(codes):
+            calls.append(("master", list(codes)))
+            return {"005930": "삼성전자"}
+
+        def watch(codes):
+            calls.append(("watch", list(codes)))
+            return {"000660": "SK하이닉스"}
+
+        def fileNames(codes):
+            calls.append(("file", list(codes)))
+            return {}
+
+        def kiwoom(codes):
+            calls.append(("kiwoom", list(codes)))
+            return {"263860": "지니언스"}
+
+        got = lookupStkNames(
+            ["005930", "000660", "263860", "999999"],
+            masterFn=master,
+            watchFn=watch,
+            kiwoomFn=kiwoom,
+            fileFn=fileNames,
+            cache={},
+        )
+        self.assertEqual(got["005930"], "삼성전자")
+        self.assertEqual(got["000660"], "SK하이닉스")
+        self.assertEqual(got["263860"], "지니언스")
+        self.assertEqual(got["999999"], "999999")
+        self.assertEqual(calls[0][0], "master")
+        self.assertNotIn("005930", calls[1][1])
+        self.assertEqual(calls[2][0], "file")
+        self.assertEqual(calls[3][1], ["263860", "999999"])
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "pbk01_state.jsonl"
+            path.write_text(json.dumps({
+                "kind": "state",
+                "candidates": [{"stkCd": "263860", "ma5": 32000}],
+                "positions": [],
+            }) + "\n", encoding="utf-8")
+            rows = loadScreenRows(path, names={"263860": "지니언스"})
+            self.assertEqual(rows[0]["stkNm"], "지니언스")
+            kept = loadScreenRows(path, names={})
+            self.assertEqual(kept[0]["stkNm"], "263860")
+            named = lookupStkNames(
+                ["483350"],
+                masterFn=lambda _codes: {},
+                watchFn=lambda _codes: {},
+                fileFn=lambda _codes: {"483350": "딜리셔스"},
+                kiwoomFn=lambda _codes: {"483350": "키움이름"},
+                cache={},
+            )
+            self.assertEqual(named["483350"], "딜리셔스")
+            fromKiwoom = lookupStkNames(
+                ["483350"],
+                masterFn=lambda _codes: {},
+                watchFn=lambda _codes: {},
+                fileFn=lambda _codes: {},
+                kiwoomFn=lambda _codes: {"483350": "딜리셔스"},
+                cache={},
+            )
+            self.assertEqual(fromKiwoom["483350"], "딜리셔스")
+
+    def test_fill_flips_to_hold_and_flat_keeps_candidate(self):
+        resetScreenFills()
+        base = unionRows(
+            [
+                {"stkCd": "005930", "stkNm": "삼성", "ma5": 70000, "expireDt": "20261231"},
+                {"stkCd": "000660", "stkNm": "하이닉스", "ma5": 200000, "expireDt": "20261231"},
+            ],
+            [],
+            [],
+        )
+        self.assertEqual([row["role"] for row in base], ["후보", "후보"])
+        known = [row["stkCd"] for row in base]
+        self.assertEqual(applyScreenFill("매수", "005930", 3, known=known), 3)
+        self.assertIsNone(applyScreenFill("매수", "999999", 1, known=known))
+        held = mergeScreenFills(base)
+        by = {row["stkCd"]: row["role"] for row in held}
+        self.assertEqual(by["005930"], "보유")
+        self.assertEqual(by["000660"], "후보")
+        self.assertEqual(held[0]["stkCd"], "005930")
+        self.assertEqual(applyScreenFill("매도", "005930", 3, known=known), 0)
+        flat = mergeScreenFills(base)
+        self.assertEqual([row["stkCd"] for row in flat], ["000660", "005930"])
+        self.assertEqual({row["stkCd"]: row["role"] for row in flat}["005930"], "후보")
+        only = unionRows([], [{"stkCd": "009830", "qty": 4, "leg1": {"qty": 1}}], [])
+        self.assertEqual(applyScreenFill("매도", "009830", 4, known=["009830"]), 0)
+        gone = mergeScreenFills(only)
+        self.assertEqual(gone, [])
+        priced = sortRoleGroups(
+            [
+                {"role": "후보", "stkCd": "000660", "ma5": 9},
+                {"role": "보유", "stkCd": "005930", "ma5": 1},
+                {"role": "보유", "stkCd": "035420", "ma5": 5},
+            ],
+            lambda row: row["ma5"],
+            descending=True,
+        )
+        self.assertEqual([row["stkCd"] for row in priced], ["035420", "005930", "000660"])
+        resetScreenFills()
+
+    def test_row_tone_near_touch_and_hold_priority(self):
+        cand = {"role": "후보", "holding": False, "ma5": 100, "ma20": 80}
+        self.assertEqual(nextBuyLine(cand)[0], "ma5")
+        self.assertEqual(pbkRowTone(cand, 103, None, 3)["tone"], "near")
+        self.assertEqual(pbkRowTone(cand, 103, None, 3)["bg"], NEAR_BG)
+        self.assertEqual(pbkRowTone(cand, 103.1, None, 3)["tone"], "none")
+        self.assertEqual(pbkRowTone(cand, 100, None, 3)["tone"], "touch")
+        self.assertEqual(pbkRowTone(cand, 110, 99, 3)["bg"], TOUCH_BG)
+        held = {"role": "보유", "holding": True, "ma5": 100, "ma20": 80, "leg1": {"qty": 1}}
+        self.assertTrue(leg1Filled(held))
+        self.assertEqual(nextBuyLine(held)[0], "ma20")
+        self.assertEqual(pbkRowTone(held, 70, 70, 3)["tone"], "hold")
+        self.assertEqual(pbkRowTone(held, 70, 70, 3)["bg"], HOLD_BG)
+        second = {"role": "후보", "holding": False, "ma5": 100, "ma20": 80, "leg1": {"qty": 2}}
+        self.assertEqual(nextBuyLine(second)[0], "ma20")
+        self.assertEqual(pbkRowTone(second, 82, None, 3)["tone"], "near")
+        self.assertEqual(pbkRowTone(second, 70, None, 3)["tone"], "touch")
+        self.assertEqual(pbkNearPct({}), 3.0)
+        self.assertEqual(pbkNearPct({"pbkNearPct": 1.5}), 1.5)
+        with tempfile.TemporaryDirectory() as folder:
+            live = Path(folder) / "settings.json"
+            live.write_text(json.dumps({"deskTradeMode": "paper", "keep": 1}), encoding="utf-8")
+            import config.settingsStore as store
+
+            with patch.object(store, "_SETTINGS_PATH", live), patch.object(
+                store, "_DEFAULT_PATH", Path(folder) / "missing-default.json",
+            ):
+                self.assertEqual(pbkNearPct(store.loadSettings()), 3.0)
+            self.assertEqual(json.loads(live.read_text(encoding="utf-8")), {"deskTradeMode": "paper", "keep": 1})
+        self.assertEqual(pbkRowTone(cand, 101.2, None, 1.0)["tone"], "none")
+        self.assertEqual(pbkRowTone(cand, 101, None, 1.0)["tone"], "near")
+
+    def test_letter_code_and_old_tick_and_skip_log(self):
+        from datetime import datetime, timedelta
+
+        from utils.chartBarPlan import chartSkipOnce, unifiedStkCd
+
+        self.assertEqual(unifiedStkCd("222800"), "222800_AL")
+        self.assertEqual(unifiedStkCd("0035S0"), "0035S0_AL")
+        self.assertEqual(unifiedStkCd("0158S0"), "0158S0_AL")
+        self.assertEqual(unifiedStkCd("0162D0"), "0162D0_AL")
+        self.assertEqual(unifiedStkCd("039490_AL"), "039490_AL")
+        self.assertEqual(unifiedStkCd("0035"), "")
+        seen = set()
+        self.assertTrue(chartSkipOnce("0035S0", "거부", "20261120", seen))
+        self.assertFalse(chartSkipOnce("0035S0", "거부", "20261120", seen))
+        self.assertTrue(chartSkipOnce("0035S0", "거부", "20261121", seen))
+
+        import trading.watchRtMonitor as mon
+
+        ymd = datetime.now().strftime("%Y%m%d")
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+        self.assertTrue(mon.cachedQuoteIsNewer(
+            {"tm": "143706", "tickYmd": ymd}, ymd, "125123",
+        ))
+        self.assertFalse(mon.cachedQuoteIsNewer(
+            {"tm": "235900", "tickYmd": yesterday}, ymd, "000100",
+        ))
+        savedPx = dict(mon._lastPx)
+        savedCodes = list(mon._regCodes)
+        try:
+            mon._lastPx.clear()
+            mon._regCodes[:] = ["101730"]
+            mon._lastPx["101730"] = {
+                "curPrc": "3880", "src": "poll", "tm": "143706", "tickYmd": ymd,
+            }
+            with patch.object(mon, "_flushLastPxCache", lambda *a, **k: None), patch(
+                "trading.maTouchLive.onMaTouchTick", lambda *a, **k: None,
+            ):
+                mon._onWsMessage({"trnm": "REAL", "data": [{
+                    "type": "0B",
+                    "item": "101730",
+                    "values": {"10": "-3540", "20": "125123"},
+                }]})
+                self.assertEqual(mon._lastPx["101730"]["curPrc"], "3880")
+                self.assertEqual(mon._lastPx["101730"]["src"], "poll")
+                mon._onWsMessage({"trnm": "REAL", "data": [{
+                    "type": "0B",
+                    "item": "101730",
+                    "values": {"10": "-3600", "20": "150000"},
+                }]})
+                self.assertEqual(mon._lastPx["101730"]["curPrc"], "-3600")
+                self.assertEqual(mon._lastPx["101730"]["src"], "0B")
+                mon._lastPx["101730"] = {
+                    "curPrc": "1000", "src": "poll", "tm": "235900", "tickYmd": yesterday,
+                }
+                mon._onWsMessage({"trnm": "REAL", "data": [{
+                    "type": "0B",
+                    "item": "101730",
+                    "values": {"10": "-1100", "20": "000100"},
+                }]})
+                self.assertEqual(mon._lastPx["101730"]["curPrc"], "-1100")
+                self.assertEqual(mon._lastPx["101730"]["tickYmd"], ymd)
+        finally:
+            mon._lastPx.clear()
+            mon._lastPx.update(savedPx)
+            mon._regCodes[:] = savedCodes
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

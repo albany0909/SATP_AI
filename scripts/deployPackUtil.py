@@ -78,6 +78,13 @@ def shouldSkipRel(relPosix: str, *, allowPyc=False, skipRuntime=True) -> bool:
         return True
     if name.startswith("_tmp"):
         return True
+    # 로컬 설정·런타임 상태는 배포 zip에 넣지 않는다. 없는 설정은 default로 만든다.
+    if "_bak" in parts:
+        return True
+    if name == "settings.json" or name.startswith("settings.json.bak"):
+        return True
+    if name.endswith(".jsonl"):
+        return True
     low = name.lower()
     for suf in SKIP_SUFFIXES:
         if low.endswith(suf):

@@ -4,7 +4,7 @@
   "name": "주도주 피라미딩",
   "status": "paper",
   "version": 2,
-  "enabled": true,
+  "enabled": false,
   "timeframe": "D",
   "docPath": "strategies/docs/leaderScale_v1.md",
   "universe": {

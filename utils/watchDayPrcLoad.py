@@ -13,6 +13,47 @@ from utils.stkCdUtil import normStkCd
 from utils.termLog import termLog
 
 
+def _mergeLoad(base, extra):
+    out = dict(base or {})
+    extra = extra or {}
+    for key in ("stkCnt", "loadedCnt", "skipCnt", "failCnt", "upsertCnt"):
+        out[key] = int(out.get(key) or 0) + int(extra.get(key) or 0)
+    fails = list(out.get("fails") or []) + list(extra.get("fails") or [])
+    if fails:
+        out["fails"] = fails
+    out["ok"] = bool(out.get("ok", True)) and bool(extra.get("ok", True))
+    return out
+
+
+def maybeBackfillRegimeBars(counter=None, loader=None, options=None):
+    """봉이 200개 미만이고 autoBackfill 이 켜져 있으면 데스크에서 한 번만 12개월을 채운다."""
+    if getattr(maybeBackfillRegimeBars, "done", False):
+        return {"ok": True, "skipped": "once"}
+    maybeBackfillRegimeBars.done = True
+    from utils.marketRegime import loadMarketRegimeOptions
+    from utils.stkCdUtil import normStkCd
+
+    opts = options if options is not None else loadMarketRegimeOptions()
+    if not opts.get("autoBackfill"):
+        return {"ok": True, "skipped": "autoBackfill"}
+    symbol = normStkCd(opts.get("symbol"))
+    if not symbol:
+        return {"ok": False, "errMsg": "국면 종목 없음"}
+    if counter is None:
+        from utils.rankDayPrcLoad import _existDayBarStat, _rangeYmd
+
+        startDt, endDt = _rangeYmd(months=12)
+        counter = lambda cd: _existDayBarStat(cd, startDt, endDt).get("cnt") or 0
+    cnt = int(counter(symbol) or 0)
+    if cnt >= 200:
+        return {"ok": True, "skipped": "enough", "cnt": cnt}
+    if loader is None:
+        from utils.rankDayPrcLoad import loadDayPrcForRankStks
+
+        loader = loadDayPrcForRankStks
+    return loader([symbol], months=12, insertOnly=True, refetchLastDay=False)
+
+
 def collectWatchHoldCds():
     """실계좌 관심(WATCH/TRADE) ∪ 활성 관심종목 코드."""
     cds = []
@@ -62,7 +103,28 @@ def collectWatchHoldCds():
     except Exception as err:
         termLog(f"[watchDayPrc] 보유원장 목록 실패: {err}")
 
+    try:
+        from utils.marketRegime import loadMarketRegimeOptions
+
+        _add(loadMarketRegimeOptions().get("symbol"))
+    except Exception as err:
+        termLog(f"[watchDayPrc] 국면 종목 추가 실패: {err}")
+
     return cds
+
+
+def _appendKospiToday(ymd):
+    """장마감 일봉 적재 때 코스피 지수 오늘 봉만 추가한다. 24개월 백필은 하지 않는다."""
+    try:
+        from utils.kospiIdxLoad import appendKospiIdxToday
+
+        got = appendKospiIdxToday(ymd)
+        if not got.get("ok"):
+            termLog(f"[kospiIdx] {got.get('errMsg')}")
+        return got
+    except Exception as err:
+        termLog(f"[kospiIdx] 오늘 일봉 추가 실패: {err}")
+        return {"ok": False, "errMsg": str(err)}
 
 
 def loadDayPrcForWatchHolds(
@@ -75,8 +137,21 @@ def loadDayPrcForWatchHolds(
     관심·실계좌 종목 일봉 증분 적재.
     skipIfEnough=True → maxDt 이후분만 조회. refetchLastDay로 당일봉 정정.
     """
-    cds = collectWatchHoldCds()
+    from utils.chartBarPlan import collectSurgeChartCds, mergeLoadCodes
+
+    cds = mergeLoadCodes(collectWatchHoldCds(), collectSurgeChartCds())
     ymd = str(endDt or datetime.now().strftime("%Y%m%d"))[:8]
+    regime = []
+    try:
+        from utils.marketRegime import loadMarketRegimeOptions
+
+        regimeCd = normStkCd(loadMarketRegimeOptions().get("symbol"))
+        if regimeCd:
+            regime = [regimeCd]
+            if regimeCd not in cds:
+                cds.append(regimeCd)
+    except Exception as err:
+        termLog(f"[watchDayPrc] 국면 종목 확인 실패: {err}")
     if not cds:
         return {
             "ok": True,
@@ -87,16 +162,38 @@ def loadDayPrcForWatchHolds(
             "upsertCnt": 0,
             "summary": "[관심일봉] 대상 없음",
             "tradeDt": ymd,
+            "kospi": _appendKospiToday(ymd),
         }
-    termLog(f"[watchDayPrc] 관심·실계좌 {len(cds)}종 · 증분 적재 시작 ({ymd})")
-    result = loadDayPrcForRankStks(
-        cds,
-        months=months,
-        endDt=ymd,
-        skipIfEnough=True,
-        refetchLastDay=bool(refetchLastDay),
-        onProgress=onProgress,
-    )
+    termLog(f"[watchDayPrc] 관심·급등 {len(cds)}종 · 증분 적재 시작 ({ymd})")
+    others = [cd for cd in cds if cd not in regime]
+    result = {
+        "ok": True,
+        "stkCnt": 0,
+        "loadedCnt": 0,
+        "skipCnt": 0,
+        "failCnt": 0,
+        "upsertCnt": 0,
+    }
+    if others:
+        result = loadDayPrcForRankStks(
+            others,
+            months=months,
+            endDt=ymd,
+            skipIfEnough=True,
+            refetchLastDay=bool(refetchLastDay),
+            onProgress=onProgress,
+        )
+    if regime:
+        added = loadDayPrcForRankStks(
+            regime,
+            months=months,
+            endDt=ymd,
+            skipIfEnough=True,
+            refetchLastDay=False,
+            insertOnly=True,
+            onProgress=onProgress,
+        )
+        result = _mergeLoad(result, added)
     result = dict(result or {})
     result["tradeDt"] = ymd
     result["source"] = "watchHold"
@@ -108,4 +205,14 @@ def loadDayPrcForWatchHolds(
             f"실패 {result.get('failCnt') or 0}"
         )
         termLog(result["summary"])
+    try:
+        from utils.chartBarLoad import loadWeekMonthForCodes
+
+        pole = loadWeekMonthForCodes(cds, refetch=False, endDt=ymd)
+        if pole.get("summary"):
+            termLog(pole.get("summary"))
+        result["pole"] = pole
+    except Exception as err:
+        termLog(f"[watchDayPrc] 주월봉 실패: {err}")
+    result["kospi"] = _appendKospiToday(ymd)
     return result

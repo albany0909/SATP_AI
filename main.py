@@ -195,6 +195,25 @@ def _bootLogin():
         except Exception:
             bootMode = "paper"
     try:
+        from config.settingsStore import settingsWereRecovered
+        from trading.pbk01Live import isPbkEnabled
+        from utils.realBootGuard import decideBootMode, warnRealBlocked
+
+        recovered, _why = settingsWereRecovered()
+        decision = decideBootMode(bootMode, isPbkEnabled(), recovered)
+        if decision.get("blocked"):
+            def _send(text):
+                from telegram.telSend import sendTelegramMsg
+
+                sendTelegramMsg(text)
+
+            warnRealBlocked(decision.get("reason"), sender=_send)
+            bootMode = decision.get("mode") or "paper"
+    except Exception as err:
+        termLog(f"[기동] 실전 가드 실패 — 모의로 전환: {err}")
+        if str(bootMode).lower() in ("real", "live", "실전"):
+            bootMode = "paper"
+    try:
         from config.settingsStore import setDeskTradeMode
 
         setDeskTradeMode(bootMode)
@@ -269,7 +288,37 @@ def _startMainBatchSchedulers():
     termLog("[기동] main 배치·스케줄 기동 완료")
 
 
+_faultLogHandle = None
+
+
+def _armFaultHandler():
+    """네이티브 크래시 스택을 당일 로그 파일에 남긴다."""
+    import faulthandler
+
+    global _faultLogHandle
+    try:
+        from utils.deskFileLog import deskLogFilePath
+
+        path = deskLogFilePath()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(path, "a", encoding="utf-8", errors="replace")
+    except Exception:
+        handle = sys.stderr
+    try:
+        faulthandler.enable(file=handle, all_threads=True)
+    except Exception:
+        return
+    _faultLogHandle = handle
+
+
 def main():
+    try:
+        from utils.logRedact import installSecretFilters
+
+        installSecretFilters()
+    except Exception:
+        pass
+    _armFaultHandler()
     # Cursor/개발: 로그인 없이 main. 로그인 런처 기동은 client.
     if _fromLoginLauncher():
         os.environ["SATP_DESK_ROLE"] = "client"

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from api.getDayStkPrc import INDC_TP_QTY, fetchDayStkPrcRange
 from utils.dayPrcLoadService import acquireKiwoomSession
-from utils.dayStkPrcStore import upsertDayStkPrcRows
+from utils.dayStkPrcStore import insertIgnoreDayStkPrcRows, upsertDayStkPrcRows
 from utils.dbConn import openDbConn
 from utils.stkCdUtil import normStkCd
 from utils.termLog import termLog
@@ -72,6 +72,10 @@ def _lastTradingDayOnOrBefore(ymd):
     return str(ymd)
 
 
+def _dayAfter(ymd):
+    return (datetime.strptime(str(ymd), "%Y%m%d") + timedelta(days=1)).strftime("%Y%m%d")
+
+
 def loadDayPrcForRankStks(
     stkCds,
     months=DEFAULT_MONTHS,
@@ -79,6 +83,7 @@ def loadDayPrcForRankStks(
     skipIfEnough=True,
     onProgress=None,
     refetchLastDay=False,
+    insertOnly=False,
 ):
     """
     순위 종목 목록에 대해 최근 months개월 일봉 적재.
@@ -158,7 +163,8 @@ def loadDayPrcForRankStks(
             # 장중에 들어온 미완성 당일봉이 그대로 굳지 않게, 장마감 배치는
             # 마지막 거래일 봉을 한 번 더 받아 덮어쓴다 (refetchLastDay=True)
             isLastDayOnly = (
-                refetchLastDay
+                (not insertOnly)
+                and refetchLastDay
                 and stat["maxDt"]
                 and str(stat["maxDt"]) == str(lastTdYmd)
             )
@@ -169,10 +175,13 @@ def loadDayPrcForRankStks(
                     f"(기존 {stat['cnt']}봉 · {stat['maxDt']}까지 최신)"
                 )
                 continue
-            if backfillDone and stat["maxDt"]:
-                # 마지막 적재일부터 재조회 — 그날 봉 정정분도 함께 반영
-                fetchStart = stat["maxDt"]
+            if stat["maxDt"] and (insertOnly or backfillDone):
+                # 국면 종목은 이미 있는 날짜를 다시 쓰지 않는다. 다음 날부터 받는다.
+                fetchStart = _dayAfter(stat["maxDt"]) if insertOnly else stat["maxDt"]
                 isInc = True
+                if insertOnly and fetchStart > endYmd:
+                    skipCnt += 1
+                    continue
 
         # 조회 한도는 실제 호출 사이에만 지키면 된다 (스킵은 DB만 보므로 대기 불필요)
         if called > 0:
@@ -202,7 +211,7 @@ def loadDayPrcForRankStks(
             termLog(f"[rankDayPrc] empty {stkCd}")
             continue
 
-        saved = upsertDayStkPrcRows(rows)
+        saved = insertIgnoreDayStkPrcRows(rows) if insertOnly else upsertDayStkPrcRows(rows)
         if not saved.get("ok"):
             failCnt += 1
             err = saved.get("errMsg") or "DB실패"

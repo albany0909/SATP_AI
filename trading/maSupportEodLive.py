@@ -991,13 +991,20 @@ def _startMmg01():
         termLog(f"[MMG01] 기동 실패: {err}")
 
 
+def heldPositionCount():
+    """원장에 남은 MSE01 종목 수. 조회 실패는 0."""
+    try:
+        from utils.stratOrdLedgerStore import listOpenLedgerStkCds
+
+        return len(listOpenLedgerStkCds(_STRAT_ID) or [])
+    except Exception:
+        return 0
+
+
 def startMaSupportEodLive():
+    """프로세스 기동 시 상태 로드 + 스케줄 스레드. 중지도 매도 루프는 연다."""
     _startMmg01()
-    """프로세스 기동 시 상태 로드 + 스케줄 스레드."""
     global _workerStarted
-    if not _isEnabled():
-        termLog("[이평지지] 비활성 — 기동 생략")
-        return
     _loadParams()
     _loadState()
     if _workerStarted:

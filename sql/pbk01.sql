@@ -1,0 +1,17 @@
+-- PBK01 상태 초안. 앱은 이 파일을 실행하지 않는다.
+-- 테이블을 만들기 전에 사용자 승인이 필요하다.
+-- 그때까지 상태는 config/data/pbk01_state.jsonl 에만 붙인다.
+-- 기존 운영 테이블은 수정하거나 삭제하지 않는다.
+
+-- CREATE TABLE AI_PBK01_STATE (
+--   SNAP_DT    CHAR(8)       NOT NULL,
+--   STK_CD     CHAR(6)       NOT NULL,
+--   SIGNAL_DT  CHAR(8)       NULL,
+--   LEG1_QTY   INT           NULL,
+--   LEG2_QTY   INT           NULL,
+--   AVG_PRC    DECIMAL(18,4) NULL,
+--   FIRST_DT   CHAR(8)       NULL,
+--   EXIT_DT    CHAR(8)       NULL,
+--   CREATED_AT DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+--   PRIMARY KEY (SNAP_DT, STK_CD)
+-- ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

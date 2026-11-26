@@ -4,7 +4,7 @@
   "name": "실계좌관리",
   "status": "live",
   "version": 1,
-  "enabled": true,
+  "enabled": false,
   "timeframe": "intraday",
   "docPath": "strategies/docs/realAcntMgr_v1.md",
   "universe": {

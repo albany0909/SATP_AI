@@ -39,6 +39,25 @@ def runWatchDayPrcNow(force=False):
     return loadDayPrcForWatchHolds(refetchLastDay=True)
 
 
+_pbkYmd = ""
+
+
+def _runPbkUniverse(ymd):
+    global _pbkYmd
+    if _pbkYmd == ymd:
+        return
+    try:
+        from utils.pbkUniverseLoad import runUniverseClose
+
+        got = runUniverseClose(endDt=ymd)
+        if got.get("skipped"):
+            return
+        _pbkYmd = ymd
+        termLog(got.get("summary") or "[PBK01] 전 종목 일봉·공시 적재")
+    except Exception as err:
+        termLog(f"[PBK01] 전 종목 적재 실패: {err}")
+
+
 def _loop():
     global _loadedYmd
     while True:
@@ -56,6 +75,8 @@ def _loop():
                     termLog(got.get("summary") or "[watchDayPrc] ok")
                 else:
                     termLog(f"[watchDayPrc] {got.get('errMsg')}")
+            if _shouldRun(now):
+                _runPbkUniverse(ymd)
         except Exception as err:
             termLog(f"[watchDayPrc] 스케줄 오류: {err}")
         time.sleep(30)
