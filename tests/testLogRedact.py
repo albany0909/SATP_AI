@@ -86,10 +86,12 @@ class LogRedactTest(unittest.TestCase):
                 logger.removeHandler(handler)
             logged = path.read_text(encoding="utf-8")
 
+            import importlib
             import utils.deskFileLog as logs
 
+            if hasattr(logs, "closeDeskFileLog"):
+                logs.closeDeskFileLog()
             patched = logs.appendDeskFileLog
-            import importlib
             importlib.reload(logs)
             day_file = Path(folder) / "SATP_20261123.log"
             try:
@@ -97,9 +99,10 @@ class LogRedactTest(unittest.TestCase):
                 logs.deskLogFilePath = lambda ymd=None: day_file
                 logs.appendDeskFileLog(loop_line, tag="TERM")
                 logs.appendDeskFileLog(f"오프셋 확정 실패(무시): {conn}", tag="TERM")
+                day_text = day_file.read_text(encoding="utf-8")
             finally:
+                logs.closeDeskFileLog()
                 logs.appendDeskFileLog = patched
-            day_text = day_file.read_text(encoding="utf-8")
         self.assertNotIn(secret, logged)
         self.assertNotIn(secret, day_text)
         self.assertIn("/bot***/getUpdates", logged)
