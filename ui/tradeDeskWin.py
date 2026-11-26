@@ -5888,6 +5888,7 @@ class TradeDeskWin(QMainWindow):
             ensureWatchBackup,
             formatPx,
             holdingExitDay,
+            holdRoleLabel,
             keepShownPx,
             legacyWatchRows,
             loadScreenRows,
@@ -5917,7 +5918,7 @@ class TradeDeskWin(QMainWindow):
             frz.setItemDelegateForColumn(4, MaGapDelegate(frz))
         if frz.horizontalHeaderItem(0) is None or frz.horizontalHeaderItem(0).text() != headers[0]:
             frz.setHorizontalHeaderLabels(headers)
-        self._WATCH_FRZ_W = pbkVisibleWidths((72, 72, 110, 80, 80, 80, 88), codeCol=1)
+        self._WATCH_FRZ_W = pbkVisibleWidths((96, 72, 110, 80, 80, 80, 88), codeCol=1)
         frz.setColumnHidden(1, True)
         if tbl is not None:
             tbl.setVisible(False)
@@ -6009,7 +6010,8 @@ class TradeDeskWin(QMainWindow):
                     expireTxt = expire or "-"
                 role = str(row.get("role") or "")
                 held = role == "보유"
-                roleShown = "후보 1.5x" if role == "후보" and row.get("boost") == "1.5x" else role
+                roleLabel = holdRoleLabel(row)
+                roleShown = roleLabel.get("text") or role
                 if held:
                     sellDay = holdingExitDay(row)
                     if len(sellDay) == 8:
@@ -6024,6 +6026,9 @@ class TradeDeskWin(QMainWindow):
                     "ma5": row.get("ma5"),
                     "ma20": row.get("ma20"),
                     "leg1": row.get("leg1"),
+                    "leg2": row.get("leg2"),
+                    "firstBuyDt": row.get("firstBuyDt"),
+                    "exitDt": row.get("exitDt") or expire,
                 }
                 prevCodeItem = frz.item(i, 1)
                 prevCode = str(prevCodeItem.text() if prevCodeItem is not None else "")
@@ -6416,7 +6421,26 @@ class TradeDeskWin(QMainWindow):
             cell = frz.item(row, 6)
             if cell is not None and head is not None and head.text() == "만료일":
                 cell.setForeground(QBrush(QColor("#d32f2f")))
+        self._paintHoldRoleCell(frz, row, meta)
         return str((meta or {}).get("role") or "") != "보유"
+
+    def _paintHoldRoleCell(self, frz, row, meta):
+        """구분 칸의 D-day 색·굵기만 맞춘다. 행을 다시 만들지 않는다."""
+        from utils.pbkWatchScreen import holdRoleLabel
+
+        cell = frz.item(row, 0)
+        if cell is None:
+            return
+        label = holdRoleLabel(meta or {})
+        if cell.text() != label.get("text"):
+            cell.setText(str(label.get("text") or ""))
+        font = cell.font()
+        want = bool(label.get("bold"))
+        if font.bold() != want:
+            font.setBold(want)
+            cell.setFont(font)
+        if label.get("alert"):
+            cell.setForeground(QBrush(QColor("#d32f2f")))
 
     def _savePbkNearPct(self):
         """인접 퍼센트만 저장한다. 다른 설정 키는 건드리지 않는다."""

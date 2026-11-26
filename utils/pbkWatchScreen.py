@@ -203,6 +203,8 @@ def unionRows(candidates, positions, accountHolds):
         row["holding"] = True
         if item.get("leg1"):
             row["leg1"] = item.get("leg1")
+        if item.get("leg2"):
+            row["leg2"] = item.get("leg2")
         if item.get("firstBuyDt"):
             row["firstBuyDt"] = str(item.get("firstBuyDt"))
         if item.get("exitDt"):
@@ -578,16 +580,70 @@ def _px(raw):
     return num
 
 
-def holdingExitDay(row):
-    """보유 예상 매도일. 첫 체결일을 0번째로 센 f+10 거래일. 휴장일은 뺀다."""
+
+def holdingExitDay(row, calendar=None):
+    """보유 예상 매도일. 첫 체결일을 0번째로 센 f+10 거래일. 휴장일은 뺀다.
+
+    날짜 계산은 exitDtFromFirst 만 쓴다. 저장된 exitDt 가 있으면 그대로 쓰고,
+    없으면 firstBuyDt 또는 다리 중 가장 이른 체결일(_firstFillDay)로 구한다.
+    """
     from strategies.impl.pullbackTwoStep import _ymd
+    from trading.pbkOrderPlan import _firstFillDay, exitDtFromFirst
 
     day = _ymd((row or {}).get("exitDt"))
     if day:
         return day
-    from trading.pbkOrderPlan import exitDtFromFirst
+    first = _ymd((row or {}).get("firstBuyDt")) or _firstFillDay(row)
+    return exitDtFromFirst(first, calendar) or ""
 
-    return exitDtFromFirst((row or {}).get("firstBuyDt")) or ""
+
+def holdRoleLabel(row, today="", calendar=None):
+    """관리종목 구분 칸 글자. 후보·1.5x 는 그대로, 보유는 매도일까지 남은 거래일.
+
+    남은 날과 지난 날은 기존 buySpan 으로만 센다. 새 날짜 함수는 없다.
+    D-0 은 '매도일'(빨간 굵게), 지난 날은 '매도지연' 또는 '매도지연 +n'(빨간 굵게),
+    D-1 은 빨간색, 그 외는 D-n. 매도일을 모르면 '보유'.
+    """
+    from datetime import datetime, timedelta
+
+    from strategies.impl.pullbackTwoStep import _ymd, buySpan, holidayCalendar
+
+    role = str((row or {}).get("role") or "")
+    held = role == "보유" or bool((row or {}).get("holding"))
+    if not held:
+        text = "후보 1.5x" if role == "후보" and (row or {}).get("boost") == "1.5x" else role
+        return {"text": text, "alert": False, "bold": False, "remain": None, "late": None}
+    exitDt = holdingExitDay(row, calendar)
+    if not exitDt:
+        return {"text": "보유", "alert": False, "bold": False, "remain": None, "late": None}
+    cur = _ymd(today)
+    if not cur:
+        cur = datetime.now().strftime("%Y%m%d")
+    days = list(calendar or [])
+    if not days:
+        start, end = (cur, exitDt) if cur <= exitDt else (exitDt, cur)
+        end = (datetime.strptime(end, "%Y%m%d") + timedelta(days=14)).strftime("%Y%m%d")
+        days = holidayCalendar(start, end)
+    if cur < exitDt:
+        # 주말·휴장일은 다음 거래일 화면과 같게. 다만 다음 날이 매도일이면 아직 D-1 이다.
+        if cur in days:
+            remain = int(buySpan(cur, exitDt, days) or 0)
+        else:
+            nxt = next((day for day in days if day > cur), "")
+            if not nxt or nxt > exitDt:
+                remain = int(buySpan(cur, exitDt, days) or 0)
+            elif nxt == exitDt:
+                remain = 1
+            else:
+                remain = int(buySpan(nxt, exitDt, days) or 0)
+        return {"text": f"D-{remain}", "alert": remain <= 1, "bold": False, "remain": remain, "late": 0}
+    if cur == exitDt:
+        return {"text": "매도일", "alert": True, "bold": True, "remain": 0, "late": 0}
+    late = int(buySpan(exitDt, cur, days) or 0)
+    text = f"매도지연 +{late}" if late > 0 else "매도지연"
+    return {"text": text, "alert": True, "bold": True, "remain": 0, "late": late}
+
+
 
 
 def formatPx(value):
